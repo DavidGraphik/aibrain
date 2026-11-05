@@ -63,6 +63,16 @@ export class CatalogRuntimeEnforcer {
     return this.principal.workspaceCanExecute && visibleCatalogResources(this.state, this.principal, "connector").some(resource => resource.connectorId === connectorId && allowsCatalogOperation(this.state, this.principal, resource.id, "write"));
   }
 
+  allowsNativeAppWrite(appId: string) {
+    const resources = visibleCatalogResources(this.state, this.principal, "app").filter(resource => resource.appId === appId);
+    return resources.length === 1 && this.principal.workspaceCanExecute
+      && allowsCatalogOperation(this.state, this.principal, resources[0].id, "write");
+  }
+
+  allowsNativeAppRead(appId: string) {
+    return visibleCatalogResources(this.state, this.principal, "app").filter(resource => resource.appId === appId).length === 1;
+  }
+
   filterApps(response: unknown, installed = false) {
     const ids = new Set(visibleCatalogResources(this.state, this.principal, "app").flatMap(({ appId }) => appId ? [appId] : []));
     return filteredByIds(response, installed ? "apps" : "data", ids);
@@ -70,6 +80,27 @@ export class CatalogRuntimeEnforcer {
 
   filterMcpStatus(response: unknown) {
     return filteredMcpStatus(response, new Set(visibleCatalogResources(this.state, this.principal, "mcp").flatMap(({ mcp }) => mcp ? [mcp.server] : [])));
+  }
+
+  /** Thread overrides are the actual native model-tool boundary. Filtering a
+   * discovery response alone does not prevent Codex invoking a configured MCP. */
+  nativeMcpConfig(configuredServers: readonly string[], connectedResourceIds: ReadonlySet<string>, allowWrites = false) {
+    const config: Record<string, boolean | string[]> = {};
+    const visible = visibleCatalogResources(this.state, this.principal, "mcp");
+    for (const server of configuredServers) {
+      if (!/^[A-Za-z0-9_-]+$/.test(server)) throw new CatalogRuntimeDeniedError("CATALOG_MCP_CONFIG_INVALID", "Invalid configured MCP server name.");
+      const matches = visible.filter(resource => resource.mcp?.server === server);
+      const resource = matches.length === 1 ? matches[0] : null;
+      const mcp = resource?.mcp;
+      const write = allowWrites && resource && this.principal.workspaceCanExecute
+        && allowsCatalogOperation(this.state, this.principal, resource.id, "write");
+      const tools = resource && mcp && connectedResourceIds.has(resource.id)
+        ? [...new Set([...mcp.readTools.filter(tool => !mcp.sensitiveWriteTools.includes(tool)),
+          ...(write ? mcp.sensitiveWriteTools : [])])].sort() : [];
+      config[`mcp_servers.${server}.enabled`] = tools.length > 0;
+      config[`mcp_servers.${server}.enabled_tools`] = tools;
+    }
+    return config;
   }
 
   assertMcpTool(params: unknown, managedApproval = false) {

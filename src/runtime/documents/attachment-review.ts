@@ -36,7 +36,10 @@ function partialFindings(text: string) {
       /\b(?:revision|revisio|review)(?:\s+visual)?\s+(?:completa|completo|complete|full)\b/u.test(value) ||
       /\b(?:completa|completo|complete|full)(?:\s+visual)?\s+(?:revision|revisio|review)\b/u.test(value);
     const negatesFull = /\b(?:no|not|cannot|can't)\b.{0,60}\b(?:todas?|todos?|all|every|totes|tots|completa|completo|complete|full)\b/u.test(value);
-    return !claimsFull || negatesFull;
+    const claimsCompletedTranslation = /\b(?:he|hem|han|has|ha|have|has|i've)\s+(?:ya\s+|ja\s+|already\s+)?(?:traducido|traduit|translated)\b/u.test(value) ||
+      /\b(?:traduccion|traduccio|translation)\b.{0,40}\b(?:lista|llesta|completa|completo|complet|completada|completat|entregada|finalizada|terminada|complete|ready|delivered)\b/u.test(value);
+    const negatesTranslation = /\b(?:no|not|cannot|can't)\b.{0,50}\b(?:traducid\w*|traduit\w*|translat\w*|traduccion|traduccio)\b/u.test(value);
+    return (!claimsFull || negatesFull) && (!claimsCompletedTranslation || negatesTranslation);
   }).join("").trim();
 }
 
@@ -210,8 +213,33 @@ export function explicitPartialAttachmentReview(message: string, humanInput = tr
   if (!humanInput || /(?:^|\n)\s*(?:MAIL_BATCH_JSON|LIVE_[A-Z_]+|RESPONSE_WATCHDOG_BATCH_JSON|SIBEMA_BATCH_JSON)\b/iu.test(message)) return false;
   const text = normalizedText(message);
   if (/\b(?:todas?\s+las\s+paginas|all\s+pages|totes\s+les\s+pagines|revision\s+completa|full\s+review)\b/u.test(text)) return false;
+  // A request to translate remains a full-document task even if it begins by
+  // inspecting selected pages. A conditional capability question is not an
+  // instruction to translate or deliver the original.
+  if (/\b(?:traduce(?:lo|la|me)?|traduzcas|tradueix(?:lo|la)?|translate)\b/u.test(text)) return false;
+  if (/\b(?:quiero|necesito|vull|necessito)\b.{0,60}\b(?:traducir|traduir|translation|traduccion|traduccio)\b/u.test(text)) return false;
+  if (/\b(?:revisa|analiza|lee|inspecciona|review|read|inspect|llegeix|analitza)\s+(?:todo|toda|tot|tota|all|the entire|el documento completo|el document sencer)\b/u.test(text)) return false;
+  if (/\b(?:traduccion|traduccio|translation)\s+(?:completa|completo|entera|entero|integral|complete|full)\b/u.test(text)) return false;
+  if (/\b(?:revisa|analiza|lee|inspecciona|llegeix|analitza|review|read|inspect)\b.{0,60}\b(?:el resto|la resta|las demas paginas|les altres pagines|the remaining pages|the rest)\b/u.test(text)) return false;
+  // Accept a capability question, not a separate translation request hidden
+  // after an otherwise partial instruction. Ambiguous translation language
+  // stays under the full-review gate.
+  const withoutCapabilityQuestion=text.replace(/\b(?:explica|indica|dime|digues|diu|tell me|explain)\s+(?:si|if|whether)\s+(?:pots|podries|puedes|podrias|can|could)(?:\s+you)?\s+(?:traducir|traduir|translate)(?:lo|la|it)?\b/gu," ");
+  if (/\b(?:tradu\w*|translat\w*)\b/u.test(withoutCapabilityQuestion)) return false;
   const instruction = text.trim().split("\n")[0]!;
-  // Only an imperative at the start of direct human input can narrow scope.
-  // Quoted prose, blockquotes, code fences and JSON cannot satisfy this form.
-  return /^(?:(?:por favor|please|si us plau)[,\s]+)?(?:(?:revisa|analiza|lee|resume|review|read|inspect|summarize|llegeix|analitza)\s+(?:(?:solo|solamente|unicamente|only|just|nomes)\s+)?(?:(?:la|las|the|les)\s+)?(?:paginas?|pages?|pagines?)\s+\d+\b|(?:solo|solamente|unicamente|only|just|nomes)\s+(?:(?:la|las|the|les)\s+)?(?:paginas?|pages?|pagines?)\s+\d+\b|(?:haz|prepara|realiza|quiero|necesito|prepare|make)\s+(?:(?:una|a|an)\s+)?(?:revision parcial|revisio parcial|partial review)\b)/u.test(instruction);
+  // Exclude quoted source content before recognizing commands after a QA or
+  // search preface. Never infer a request from quoted prose or a code fence.
+  const direct = instruction.replace(/```[^`]*```|`[^`]*`|«[^»]*»|“[^”]*”|"[^"\n]*"/gu, match => " ".repeat(match.length));
+  if (/^\s*(?:>|```|\{)/u.test(direct)) return false;
+  const clauses=direct.split(/(?:[.!?;](?:\s+|$))/u).map(value=>value.trim()).filter(Boolean);
+  const scoped = /^(?:(?:por favor|please|si us plau)[,\s]+)?(?:(?:sin|sense|without)\s+[^,;.!?]{1,180},\s*)?(?:si\s+(?:el|lo|la)\s+(?:trobes|encuentras|find)\s*,\s*)?(?:(?:revisa|analiza|lee|resume|inspecciona|mira|review|read|inspect|summarize|llegeix|analitza)\s+(?:(?:visualmente|visualment|visually)\s+)?(?:(?:solo|solamente|unicamente|only|just|nomes)\s+)?(?:(?:la|las|the|les)\s+)?(?:paginas?|pages?|pagines?)\s+\d+\b|(?:solo|solamente|unicamente|only|just|nomes)\s+(?:(?:la|las|the|les)\s+)?(?:paginas?|pages?|pagines?)\s+\d+\b|(?:haz|prepara|realiza|quiero|necesito|prepare|make)\s+(?:(?:una|a|an)\s+)?(?:revision parcial|revisio parcial|partial review)\b)/u;
+  return clauses.some(clause=>scoped.test(clause));
+}
+
+/** Foreground chat carries an automation-management session too; only the
+ * trusted execution mode distinguishes a user's request from background work. */
+export function attachmentReviewIntent(message: string, backgroundExecution: boolean) {
+  const humanInput = !backgroundExecution;
+  return { translationRequested: explicitTranslationRequest(message, humanInput),
+    partial: explicitPartialAttachmentReview(message, humanInput), required: backgroundExecution };
 }

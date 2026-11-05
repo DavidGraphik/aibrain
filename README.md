@@ -29,6 +29,6 @@ Employee computer-use was retired before this export. Native web research and do
 
 ## Public-source boundary
 
-See [architecture](docs/ARCHITECTURE.md), [configuration](docs/CONFIGURATION.md), [validation](docs/VALIDATION.md) and [migration](docs/MIGRATION.md). Public CI has read-only repository permissions, uses a standard Ubuntu runner and tests/builds source only. It does not publish images, contact production servers or activate deployments.
+See [architecture](docs/ARCHITECTURE.md), [configuration](docs/CONFIGURATION.md), [native connections](docs/NATIVE_CONNECTIONS.md), [validation](docs/VALIDATION.md), [live acceptance](docs/BACKEND_ACCEPTANCE.md) and [migration](docs/MIGRATION.md). Public CI has read-only repository permissions, uses a standard Ubuntu runner and tests/builds source only. It does not publish images, contact production servers or activate deployments.
 
 Third-party notices and copyright statements are retained in `THIRD_PARTY_NOTICES.md` and individual source files. No new project-wide license grant is introduced by this preparation.

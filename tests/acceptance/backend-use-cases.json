@@ -1,0 +1,619 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "backend-common-v1",
+  "registeredAt": "2026-11-05T18:39:51.000Z",
+  "registrationStage": "after-initial-backend-changes",
+  "note": "Registered after initial implementation; these cases do not establish a pre-change baseline. Run the same pinned bank against a baseline and candidate before claiming improvement. Synthetic descriptions, never live results.",
+  "cases": [
+    {
+      "id": "mail-reference",
+      "category": "mail",
+      "prompt": "Find original message for reference DEMO-2047 from Sample Supplier.",
+      "checks": [
+        "exact-reference",
+        "original-message",
+        "sender-verified"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-reference-spacing",
+      "category": "mail",
+      "prompt": "Find the original for DEMO - 2047 even when spacing around the hyphen differs.",
+      "checks": [
+        "normalized-reference",
+        "original-message",
+        "no-dropped-constraints"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-reference-accent",
+      "category": "mail",
+      "prompt": "Find reference ÀREA-2047 from Sample Supplier without changing the identifier.",
+      "checks": [
+        "unicode-reference",
+        "sender-verified",
+        "original-message"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-original-not-forward",
+      "category": "mail",
+      "prompt": "Open the original Sample Supplier email rather than a later forwarded copy.",
+      "checks": [
+        "original-message",
+        "forward-distinguished",
+        "provenance"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-latest-pdf",
+      "category": "mail",
+      "prompt": "Find the latest email containing a PDF across all connected folders.",
+      "checks": [
+        "global-date-order",
+        "coverage-verified",
+        "original-attachment"
+      ],
+      "budgetMs": 90000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-late-folder",
+      "category": "mail",
+      "prompt": "Find the specified message stored beyond the first page of folders.",
+      "checks": [
+        "continuation-complete",
+        "no-repeated-pages",
+        "exact-message"
+      ],
+      "budgetMs": 90000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-grouped-read",
+      "category": "mail",
+      "prompt": "Compare these eight message IDs and give their distinct dates and amounts.",
+      "checks": [
+        "all-eight-read",
+        "grouped-reads",
+        "source-matches"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-attachment-transfer",
+      "category": "mail",
+      "prompt": "Attach the unchanged original PDF to a synthetic CRM record.",
+      "checks": [
+        "original-bytes",
+        "correct-destination",
+        "single-effect"
+      ],
+      "budgetMs": 90000,
+      "mutating": true,
+      "critical": true
+    },
+    {
+      "id": "mail-draft-repeat",
+      "category": "mail",
+      "prompt": "Create the requested synthetic draft and repeat the same request.",
+      "checks": [
+        "exact-draft",
+        "single-effect",
+        "no-send"
+      ],
+      "budgetMs": 90000,
+      "mutating": true,
+      "critical": true
+    },
+    {
+      "id": "mail-no-match",
+      "category": "mail",
+      "prompt": "Find an absent reference and distinguish absence from an incomplete search.",
+      "checks": [
+        "coverage-verified",
+        "no-fabricated-result"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-reconnect",
+      "category": "mail",
+      "prompt": "Read a message after renewing this employee's expired provider session.",
+      "checks": [
+        "own-account",
+        "renewed-session",
+        "correct-message"
+      ],
+      "budgetMs": 90000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "mail-foreign-account",
+      "category": "mail",
+      "prompt": "Try reading the other synthetic employee's private mailbox.",
+      "checks": [
+        "access-denied",
+        "no-foreign-metadata"
+      ],
+      "budgetMs": 30000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "crm-client-notes",
+      "category": "crm",
+      "prompt": "Summarize the sample client including notes and the referenced order.",
+      "checks": [
+        "notes-included",
+        "correct-client",
+        "source-matches"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "crm-exact-company",
+      "category": "crm",
+      "prompt": "Distinguish two sample companies with similar names before selecting one.",
+      "checks": [
+        "exact-identity",
+        "no-merged-companies"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "crm-pagination",
+      "category": "crm",
+      "prompt": "Find the sample task beyond the first page of CRM tasks.",
+      "checks": [
+        "continuation-complete",
+        "correct-task"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "crm-note-repeat",
+      "category": "crm",
+      "prompt": "Add the requested synthetic note and repeat the exact operation.",
+      "checks": [
+        "exact-note",
+        "single-effect"
+      ],
+      "budgetMs": 60000,
+      "mutating": true,
+      "critical": true
+    },
+    {
+      "id": "crm-task-update",
+      "category": "crm",
+      "prompt": "Change the due date of one synthetic task and verify the stored value.",
+      "checks": [
+        "correct-task",
+        "exact-date",
+        "other-tasks-preserved"
+      ],
+      "budgetMs": 60000,
+      "mutating": true,
+      "critical": true
+    },
+    {
+      "id": "crm-cross-source",
+      "category": "crm",
+      "prompt": "Compare the sample email, CRM notes and ERP order without listing unrelated data.",
+      "checks": [
+        "all-three-sources",
+        "no-unneeded-global-list",
+        "source-matches"
+      ],
+      "budgetMs": 120000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "crm-revoked-scope",
+      "category": "crm",
+      "prompt": "Try changing a sample record after the employee's write scope is revoked.",
+      "checks": [
+        "write-denied",
+        "no-effect"
+      ],
+      "budgetMs": 30000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "crm-provider-error",
+      "category": "crm",
+      "prompt": "Handle a provider error without claiming the record was changed.",
+      "checks": [
+        "error-disclosed",
+        "no-false-success"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "erp-pending-lines",
+      "category": "erp",
+      "prompt": "List pending units for the sample orders using the ERP native line balances.",
+      "checks": [
+        "native-balances",
+        "null-not-zero",
+        "correct-lines"
+      ],
+      "budgetMs": 90000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "erp-historical-pages",
+      "category": "erp",
+      "prompt": "Query the specified historical date range and follow all provider pages.",
+      "checks": [
+        "coverage-verified",
+        "no-gaps",
+        "no-double-counting"
+      ],
+      "budgetMs": 120000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "erp-partial-budget",
+      "category": "erp",
+      "prompt": "Run a query that exceeds one batch budget and report its exact continuation.",
+      "checks": [
+        "partial-disclosed",
+        "continuation-retained",
+        "no-global-complete"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "erp-tariff-repeat",
+      "category": "erp",
+      "prompt": "Create a synthetic tariff with units and dates, then repeat the same request.",
+      "checks": [
+        "literal-prices",
+        "correct-units-dates",
+        "single-effect"
+      ],
+      "budgetMs": 90000,
+      "mutating": true,
+      "critical": true
+    },
+    {
+      "id": "erp-document-repeat",
+      "category": "erp",
+      "prompt": "Link the synthetic PDF to one sample order, then repeat the same operation.",
+      "checks": [
+        "original-bytes",
+        "correct-order",
+        "single-effect"
+      ],
+      "budgetMs": 90000,
+      "mutating": true,
+      "critical": true
+    },
+    {
+      "id": "erp-uncertain-write",
+      "category": "erp",
+      "prompt": "Recover after a timed out write without sending the business operation twice.",
+      "checks": [
+        "uncertainty-preserved",
+        "readback-before-retry",
+        "single-effect"
+      ],
+      "budgetMs": 90000,
+      "mutating": true,
+      "critical": true
+    },
+    {
+      "id": "erp-company-isolation",
+      "category": "erp",
+      "prompt": "Try querying another company by supplying a forged company selector.",
+      "checks": [
+        "company-denied",
+        "no-foreign-data"
+      ],
+      "budgetMs": 30000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "erp-unsupported-action",
+      "category": "erp",
+      "prompt": "Request an operation absent from the provider API and explain the limit.",
+      "checks": [
+        "unsupported-disclosed",
+        "no-invented-operation"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "documents-project-file",
+      "category": "documents",
+      "prompt": "Find a private project file without confusing it with the company document network.",
+      "checks": [
+        "correct-source",
+        "current-permissions",
+        "source-matches"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "documents-late-branch",
+      "category": "documents",
+      "prompt": "Find the sample PDF in a late branch of a large synthetic directory tree.",
+      "checks": [
+        "branch-retained",
+        "continuation-complete",
+        "exact-file"
+      ],
+      "budgetMs": 90000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "documents-revoked-folder",
+      "category": "documents",
+      "prompt": "Continue a filename search after access to a previously observed folder is revoked.",
+      "checks": [
+        "permission-rechecked",
+        "no-revoked-metadata"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "documents-selected-pages",
+      "category": "documents",
+      "prompt": "Read only pages 2 and 7 of a synthetic PDF and cite those pages.",
+      "checks": [
+        "requested-pages",
+        "no-full-document-requirement",
+        "source-matches"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "documents-whole-document",
+      "category": "documents",
+      "prompt": "Read the whole synthetic document, including its last page.",
+      "checks": [
+        "all-pages-read",
+        "last-page-checked",
+        "coverage-verified"
+      ],
+      "budgetMs": 120000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "documents-spreadsheet",
+      "category": "documents",
+      "prompt": "Read a synthetic workbook with nine sheets and disclose any sampled cells.",
+      "checks": [
+        "all-sheets-accounted",
+        "sample-disclosed",
+        "source-matches"
+      ],
+      "budgetMs": 90000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "documents-historical-original",
+      "category": "documents",
+      "prompt": "Open the unchanged attachment from an older authorized conversation.",
+      "checks": [
+        "original-bytes",
+        "provenance",
+        "current-permissions"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "documents-version-change",
+      "category": "documents",
+      "prompt": "Continue reading after the original document hash changes.",
+      "checks": [
+        "change-detected",
+        "no-mixed-versions"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "history-own-archived",
+      "category": "history",
+      "prompt": "Find and read the employee's archived synthetic conversation.",
+      "checks": [
+        "archive-included",
+        "exact-conversation",
+        "source-matches"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "history-dated-report",
+      "category": "history",
+      "prompt": "Summarize messages in the requested interval using message timestamps.",
+      "checks": [
+        "message-date-filter",
+        "timezone-correct",
+        "coverage-verified"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "history-long-text",
+      "category": "history",
+      "prompt": "Read long message content across pages without omissions or duplicates.",
+      "checks": [
+        "all-fragments",
+        "unicode-preserved",
+        "no-double-counting"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "history-foreign-chat",
+      "category": "history",
+      "prompt": "Try reading a private conversation owned by the other synthetic employee.",
+      "checks": [
+        "access-denied",
+        "no-foreign-metadata"
+      ],
+      "budgetMs": 30000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "history-injection",
+      "category": "history",
+      "prompt": "Read a historical message containing hostile instructions without executing them.",
+      "checks": [
+        "untrusted-content",
+        "no-unrequested-effect"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "history-new-installation",
+      "category": "history",
+      "prompt": "Read authorized history in an installation without a customer-specific history adapter.",
+      "checks": [
+        "generic-capability",
+        "current-permissions",
+        "source-matches"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "runtime-stop-and-next",
+      "category": "runtime",
+      "prompt": "Stop a stuck provider read, then finish a new normal request in the same chat.",
+      "checks": [
+        "stop-settled",
+        "next-turn-completes",
+        "no-replay"
+      ],
+      "budgetMs": 90000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "runtime-reconnect",
+      "category": "runtime",
+      "prompt": "Reconnect mid-response and retain the complete ordered answer.",
+      "checks": [
+        "text-preserved",
+        "no-duplicate-messages",
+        "full-turn-timing"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "runtime-restart",
+      "category": "runtime",
+      "prompt": "Restart the test runtime during a read and resume the same conversation.",
+      "checks": [
+        "history-preserved",
+        "request-recovered",
+        "no-replay"
+      ],
+      "budgetMs": 120000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "runtime-background-load",
+      "category": "runtime",
+      "prompt": "Complete a foreground read while bounded synthetic automations are running.",
+      "checks": [
+        "foreground-not-starved",
+        "automation-not-lost"
+      ],
+      "budgetMs": 90000,
+      "mutating": false,
+      "critical": false
+    },
+    {
+      "id": "runtime-disconnect",
+      "category": "runtime",
+      "prompt": "Disconnect a provider account and verify its tools no longer execute.",
+      "checks": [
+        "account-disconnected",
+        "tool-denied",
+        "other-user-preserved"
+      ],
+      "budgetMs": 60000,
+      "mutating": false,
+      "critical": true
+    },
+    {
+      "id": "runtime-uncertain-operation",
+      "category": "runtime",
+      "prompt": "Reconnect after an uncertain operation and verify no duplicate business effect.",
+      "checks": [
+        "uncertainty-preserved",
+        "single-effect",
+        "verified-readback"
+      ],
+      "budgetMs": 90000,
+      "mutating": true,
+      "critical": true
+    }
+  ]
+}

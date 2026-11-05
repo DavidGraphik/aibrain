@@ -1,10 +1,8 @@
 // Official UI entity deletes, never an arbitrary API or a child-delete fallback.
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
 import {openSync,closeSync,fstatSync,readSync,realpathSync,readFileSync,constants} from 'node:fs';
-const configuredOrigin=process.env.AIBRAIN_SIBEMA_ORIGIN||'https://erp.example.invalid';
-const nativeOrigin=new URL(configuredOrigin);
-if(nativeOrigin.protocol!=='https:'||nativeOrigin.username||nativeOrigin.password||nativeOrigin.pathname!=='/'||nativeOrigin.search||nativeOrigin.hash)throw Error('SIBEMA_ORIGIN_INVALID');
-const origin=nativeOrigin.origin,actors=new Set(['Trini','Miguel','Nerea']);
+import {sibemaOrigin as origin} from './provider-config.mjs';
+const actors=new Set(['Trini','Miguel','Nerea']);
 export const deletionModuleSha256=createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v),id=v=>Number.isSafeInteger(v)&&v>0;
 const canonical=v=>Array.isArray(v)?v.map(canonical):object(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;

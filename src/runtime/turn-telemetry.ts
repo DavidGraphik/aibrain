@@ -19,6 +19,7 @@ export type TurnTelemetryPhase =
   | "skills"
   | "model_queue"
   | "connector_resolution"
+  | "native_connection_config"
   | "thread_start"
   | "thread_resume"
   | "turn_start";

@@ -8,6 +8,10 @@ import {smtpMessage} from './mail-mime.mjs';
 import {recentOwnedMail,rankMailSearchFolders,orderingMailSearchFolders,orderingMailSearchFoldersV2,prefersHistoricalMailFolders,strongMailSearchFolders,mailSearchCandidateCriteria,isBareMailReference,humanMailSearchPlan,validHumanMailSearchPlan,MailLocatorHints,validMailLocatorPlan,hasMandatoryOwnedMailSender} from './mail-owned-search.mjs';
 import {resolveMailLocator,ownedMailSnapshotReference} from './mail-reference.mjs';
 import {mailReferenceSearchVariants} from './mail-search-query.mjs';
+import {orderedFolderPairs} from './mail-parallel-folders.mjs';
+import {listWithOptionalStatus,validFolderStatus} from './mail-status-list.mjs';
+import {EmptyFolderSearchCache} from './mail-owned-search.mjs';
+import {mailSearchIntentQuery} from './mail-search-intent.mjs';
 
 const fail=(message,code='MAIL_API_INVALID')=>Object.assign(new Error(message),{code});
 const clone=value=>JSON.parse(JSON.stringify(value));
@@ -163,7 +167,7 @@ export function mailApiContract(mailbox){
  const reads={
   discover:{input:object({operation:{const:'discover'}},['operation']),effect:'Return this static contract without connecting to IMAP or SMTP.'},
   folders:{input:object({operation:{const:'folders'}},['operation']),effect:'List every live IMAP folder, including id/path, specialUse, selectable and subscribed.'},
-  search:{input:object({operation:{const:'search'},query:{...string('Search grammar described in searchGrammar.',1000),default:''},limit:{type:'integer',minimum:1,maximum:100,default:20},folder:folderId,freshness:{enum:['live_received_first'],description:'Prioritize the configured live Inbox before remaining folders; no implicit date cutoff or global newest guarantee.'},attachmentMime:string('Exact declared MIME filter, e.g.application/pdf. Metadata candidates only; read original and require pdfHeaderPresent, then file-reader format/status verification. Not a filename filter.',128),cursor:string('Opaque signed continuation. Reuse unchanged with exactly the same query, folder and filters.',16000)},['operation']),effect:'Search all available history across all selectable folders unless folder is explicit. For a targeted message/attachment, read matching IDs now and stop once the requested original is verified. Continue the same query/cursor while needed; complete=true is required for exhaustive results or a mailbox-wide absence claim. Separate folder candidates are unverified metadata, never exact query matches or originals. Errors/work/page limits remain explicit partial coverage. Fresh received results prioritize Inbox but retain other folders and explicitly cannot attest global latest while coverage is partial.'},
+  search:{input:object({operation:{const:'search'},query:{...string('Literal search grammar described in searchGrammar. Mutually exclusive with criteria.',1000),default:''},criteria:object({reference:string('Complete document reference, preserving every character; separator spacing is matched safely.',96),referenceIn:{enum:['text','subject']},companies:{type:'array',minItems:1,maxItems:6,items:string('Mandatory company or client phrase supplied by the human.',160)},from:string('Mandatory sender',160),to:string('Mandatory recipient',160),subject:string('Literal required subject phrase',160),text:string('Literal required text phrase',160),after:string('Inclusive YYYY-MM-DD',10),before:string('Exclusive YYYY-MM-DD',10)}),limit:{type:'integer',minimum:1,maximum:100,default:20},folder:folderId,freshness:{enum:['live_received_first'],description:'Prioritize the configured live Inbox before remaining folders; no implicit date cutoff or global newest guarantee.'},attachmentMime:string('Exact declared MIME filter, e.g.application/pdf. Metadata candidates only; read original and require pdfHeaderPresent, then file-reader format/status verification. Not a filename filter.',128),cursor:string('Opaque signed continuation. Reuse unchanged with exactly the same query, folder and filters.',16000)},['operation']),effect:'Prefer criteria for a lookup with a reference and company/client context: all fields are conjunctive and remain in one stable query. Reuse identical criteria with the returned cursor. Literal query remains supported unchanged. Search all available history across all selectable folders unless folder is explicit. For a targeted message/attachment, read matching IDs now and stop once the requested original is verified. Continue the same query/cursor while needed; complete=true is required for exhaustive results or a mailbox-wide absence claim. Separate folder candidates are unverified metadata, never exact query matches or originals. Errors/work/page limits remain explicit partial coverage. Fresh received results prioritize Inbox but retain other folders and explicitly cannot attest global latest while coverage is partial.'},
   read:{input:object({operation:{const:'read'},messageId,maxTextChars:{type:'integer',minimum:1000,maximum:1000000,default:200000}},['operation','messageId']),effect:'Read full original MIME, parsed headers/body and exact attachment IDs/hashes. Text/html may be truncated with explicit flags.'},
   read_many:{input:object({operation:{const:'read_many'},messageIds:{type:'array',minItems:1,maxItems:20,uniqueItems:true,items:messageId},maxTextChars:{type:'integer',minimum:1000,maximum:200000,default:200000}},['operation','messageIds']),effect:'Read up to20 native IMAP IDs of one folder/generation with one live connection and one readonly lock; total original transfer max30 MiB and native result JSON max256 KiB. Complete text may replace HTML in this view, but HTML can contain distinct information; use mail_api operation read with the same messageId to inspect it. Each result retains exact identity and attachment hashes; errors, an uncertain source transfer or a soft20s budget make complete=false and leave later IDs unprocessed where needed. Retry failed items individually; do not infer absence. Snapshot/proposal IDs use ordinary read.'},
   attachment:{input:object({operation:{const:'attachment'},messageId,attachmentId},['operation','messageId','attachmentId']),effect:'Download the selected original attachment bytes; runtime publishes a private artifact.'},
@@ -207,9 +211,10 @@ export function mailApiContract(mailbox){
 }
 
 export class MailApi {
- constructor({config,store,client,actionDirectory,signatureProvider,now=Date.now,monotonic=()=>performance.now()}){
+ constructor({config,store,client,actionDirectory,signatureProvider,now=Date.now,monotonic=()=>performance.now(),parallelBudgetMs=12000,parallelConnectMs=2000}){
   this.config=config;this.store=store;this.client=client;this.directory=actionDirectory??join(config.dataDirectory,'mail-api-actions');this.now=now;this.monotonic=monotonic;
-  this.signatureProvider=signatureProvider===undefined?(async mailbox=>{const all=JSON.parse(await readFile('/opt/trinalum/workspace/email-signatures.json','utf8'));if(!all[mailbox])throw fail('Verified signature missing');return all[mailbox];}):signatureProvider;
+  if(!Number.isFinite(parallelBudgetMs)||parallelBudgetMs<1||parallelBudgetMs>12000||!Number.isFinite(parallelConnectMs)||parallelConnectMs<1||parallelConnectMs>2000)throw Error('Invalid parallel mail budget');this.parallelBudgetMs=parallelBudgetMs;this.parallelConnectMs=parallelConnectMs;
+  this.signatureProvider=signatureProvider===undefined?(async mailbox=>{const all=JSON.parse(await readFile(this.config.signaturesFile??join(this.config.dataDirectory,'email-signatures.json'),'utf8'));if(!all[mailbox])throw fail('Verified signature missing');return all[mailbox];}):signatureProvider;
  }
  account(mailbox,actor){const email=text(mailbox,'mailbox',320).toLowerCase();const account=this.config.mailboxes.find(item=>item.address.toLowerCase()===email);if(!account)throw fail('Mailbox not allowed','MAILBOX_NOT_ALLOWED');if(actor!=null&&String(actor).toLowerCase()!==account.name.toLowerCase())throw fail('Actor does not own mailbox','MAILBOX_OWNER_MISMATCH');return account;}
  async connected(mailbox,callback){this.account(mailbox);const credential=this.client.requiredCredential(mailbox);return this.client.withImapPassword(mailbox,decryptToken(credential.password_encrypted,this.config.tokenEncryptionKey),callback);}
@@ -325,17 +330,25 @@ export class MailApi {
   });
  }
  async search(mailbox,input,{searchContext=null}={}){
-  const started=this.now(),deadline=started+25000;
-  const query=input.query??'',criteria=compileImapQuery(query),limit=integer(input.limit??20,'limit',1,100),folder=input.folder==null?null:text(input.folder,'folder',1024);
+  const started=this.now();
+  if(input.criteria!==undefined&&input.query!==undefined)throw fail('Use criteria or literal query, never both','MAIL_SEARCH_INTENT_INVALID');
+  const query=input.criteria===undefined?(input.query??''):mailSearchIntentQuery(input.criteria),criteria=compileImapQuery(query),limit=integer(input.limit??20,'limit',1,100),folder=input.folder==null?null:text(input.folder,'folder',1024);
   const freshness=input.freshness??null,attachmentMime=typeof input.attachmentMime==='string'?input.attachmentMime.toLowerCase():input.attachmentMime??null;
   if(freshness!==null&&freshness!=='live_received_first'||attachmentMime!==null&&(typeof attachmentMime!=='string'||attachmentMime.length>128||/[\r\n]/.test(attachmentMime)||! /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(attachmentMime)))throw fail('Invalid freshness or attachment MIME filter');
   const binding=digest({mailbox,query,folder,...(freshness?{freshness}:{}),...(attachmentMime?{attachmentMime}:{})}),old=input.cursor?this.uncursor(input.cursor):null;if(old?.binding&&old.binding!==binding)throw fail('Cursor belongs to a different mailbox or query');
+  const parallelCapable=!folder&&typeof this.client.createImapPassword==='function';
+  const deadline=started+25000;
   return this.connected(mailbox,async imap=>{
-   const listed=(await imap.list()).filter(item=>!item.flags?.has('\\Noselect')&&(!folder||item.path===folder));
+   const listing=await listWithOptionalStatus(imap),listed=listing.entries.filter(item=>!item.flags?.has('\\Noselect')&&!item.flags?.has('\\NonExistent')&&(!folder||item.path===folder));
+   const statusByFolder=listing.statusUsed?new Map(listed.map(item=>[item.path,validFolderStatus(item.status)]).filter(([,status])=>status)):new Map();
+   const statusObservedAt=listing.statusUsed?new Date(this.now()).toISOString():null;
+   let emptyCache=null,cachedEmpty=new Set();const emptyCandidates=[];let emptyStatusSkipped=0,emptyCacheSkipped=0;
+   if(!folder&&listing.statusUsed&&this.config.dataDirectory){try{emptyCache=new EmptyFolderSearchCache(this.config.dataDirectory,mailbox,{now:this.now});cachedEmpty=await emptyCache.matching(criteria,attachmentMime,statusByFolder);}catch{emptyCache=null;cachedEmpty=new Set();}}
+
    const ranked=rankMailSearchFolders(criteria,listed.map(item=>item.path));
    // Continuations own their original plan. A later human "continue" request
    // cannot reorder or invalidate it; legacy cursors keep the legacy plan.
-   const searchPlan=old?(old.searchPlan??null):humanMailSearchPlan(searchContext,criteria,ranked);
+   const searchPlan=old?(old.searchPlan??null):humanMailSearchPlan(searchContext,criteria,ranked,{folderOrdering:'specific-token-v2'});
    if(!validHumanMailSearchPlan(searchPlan))throw fail('Search plan changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');
    const freshReceived=freshness==='live_received_first'||searchPlan?.latestReceived===true;
    const configuredInbox=freshReceived?JSON.parse(this.client.requiredCredential(mailbox).folders_json).inbox??'INBOX':null,inbox=freshReceived?(ranked.find(path=>path===configuredInbox||path.toUpperCase()==='INBOX')??null):null;
@@ -362,8 +375,8 @@ export class MailApi {
    const contextBoundary=contextFolders.length?Math.max(...contextFolders.map(path=>folders.indexOf(path)))+1:0;
    if(folder&&!folders.length)throw fail('Folder not found','MAIL_FOLDER_NOT_FOUND');const catalog=digest(folders);if(old&&old.catalog!==catalog)throw fail('Mailbox folders changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');
    const state=old??{binding,catalog,index:0,beforeUid:null,uidValidity:null,startedAt:new Date(started).toISOString(),searchPlan,folderOrderVersion:'v2',...(locatorPlan?{locatorPlan}:{}),...(sentPlan?{sentPlan}:{})};integer(state.index,'cursor index',0,folders.length);
-   const resultWithPlan=result=>{const warnings=[result.warning];if(searchPlan?.referenceOmitted)warnings.push('This query omits the reference(s) in the human request. The literal query is unchanged; results may be related company mail, not the requested document. Keep the requested reference with its company/client terms, respecting AND/OR, or inspect original attachments before identifying that document.');if(freshReceived)warnings.push('Live received-first ordering is not global chronological ordering. Do not certify the latest across the mailbox from partial coverage; continue the same cursor across remaining folders when needed.');if(attachmentMime)warnings.push('Declared MIME is only a candidate filter, not proof of file bytes. Read originals; a PDF requires pdfHeaderPresent and file-reader format/status verification. Missing MIME matches do not prove that no mislabeled PDF exists.');return {...result,...(freshReceived?{messages:[...result.messages].sort((a,b)=>String(b.date??'').localeCompare(String(a.date??'')))}:{}),coverage:{...result.coverage,...(sentPlan?{ownedSenderFolderPriority:{source:'current_authenticated_sent_folder',prioritizedFolder:sentFolders[0]??null,liveQueryUnchanged:true,remainingFoldersPreserved:true}}:{}),...(locatorPlan?{locatorFolderPriority:{source:'previous_live_search_metadata',foldersPrioritized:locatorFolders.length,liveQueryUnchanged:true,metadataNotResult:true}}:{}),...(searchPlan?{planning:{humanContextForOrdering:hintFolders.length>0,literalQueryPreserved:true,referenceOmitted:searchPlan.referenceOmitted}}:{}),...(freshReceived?{freshness:{plan:'live_received_first',prioritizedInbox:inbox,globalLatestVerified:false,ordering:'folder_then_uid_descending'}}:{}),...(attachmentMime?{attachmentFilter:{declaredMime:attachmentMime,originalBytesVerified:false,checkedMetadataThisPage:metadataChecked,metadataLimit:limit}}:{})},warning:warnings.filter(Boolean).join(' ')||null};};
-   const messages=[],errors=[];let searched=0,metadataChecked=0,stopped=null,ownedCoverage;const candidates=[];
+   const resultWithPlan=result=>{const warnings=[result.warning];if(emptyStatusSkipped||emptyCacheSkipped)warnings.push('Empty-folder status and revalidated negative proofs are point-in-time observations, not a transactional mailbox snapshot. Do not assert mailbox-wide absence or global latest solely from these skips.');if(searchPlan?.referenceOmitted)warnings.push('This query omits the reference(s) in the human request. The literal query is unchanged; results may be related company mail, not the requested document. Keep the requested reference with its company/client terms, respecting AND/OR, or inspect original attachments before identifying that document.');if(freshReceived)warnings.push('Live received-first ordering is not global chronological ordering. Do not certify the latest across the mailbox from partial coverage; continue the same cursor across remaining folders when needed.');if(attachmentMime)warnings.push('Declared MIME is only a candidate filter, not proof of file bytes. Read originals; a PDF requires pdfHeaderPresent and file-reader format/status verification. Missing MIME matches do not prove that no mislabeled PDF exists.');return {...result,...(freshReceived?{messages:[...result.messages].sort((a,b)=>String(b.date??'').localeCompare(String(a.date??'')))}:{}),coverage:{...result.coverage,...(listing.statusUsed?{folderStatusSnapshot:{observedAt:statusObservedAt,validFolders:statusByFolder.size,emptySkipped:emptyStatusSkipped,cachedEmptySkipped:emptyCacheSkipped,fallbackStatusBlocked:listing.fallbackBlocked,pointInTimeOnly:true,globalAbsenceVerified:false}}:{}),...(sentPlan?{ownedSenderFolderPriority:{source:'current_authenticated_sent_folder',prioritizedFolder:sentFolders[0]??null,liveQueryUnchanged:true,remainingFoldersPreserved:true}}:{}),...(locatorPlan?{locatorFolderPriority:{source:'previous_live_search_metadata',foldersPrioritized:locatorFolders.length,liveQueryUnchanged:true,metadataNotResult:true}}:{}),...(searchPlan?{planning:{humanContextForOrdering:hintFolders.length>0,literalQueryPreserved:true,referenceOmitted:searchPlan.referenceOmitted}}:{}),...(freshReceived?{freshness:{plan:'live_received_first',prioritizedInbox:inbox,globalLatestVerified:false,ordering:'folder_then_uid_descending'}}:{}),...(attachmentMime?{attachmentFilter:{declaredMime:attachmentMime,originalBytesVerified:false,checkedMetadataThisPage:metadataChecked,metadataLimit}}:{})},warning:warnings.filter(Boolean).join(' ')||null};};
+   const messages=[],errors=[],metadataLimit=Math.min(limit,20);let searched=0,metadataChecked=0,stopped=null,ownedCoverage;const candidates=[];
    const preferLive=Boolean(folder)||priority.length>0||freshReceived||Boolean(attachmentMime)||prefersHistoricalMailFolders(criteria,new Date(started).toISOString().slice(0,10));
    // A selectable folder from this authenticated connection is already an
    // exact live scope. Do not page the combined Inbox/Sent source catalog first.
@@ -381,10 +394,60 @@ export class MailApi {
      return resultWithPlan({mailbox,query,messages:owned.messages,complete:false,cursor:this.cursor(state),coverage:{source:'recent_owned_snapshots_and_live_imap',ordering:'owned_received_descending_then_live_folder_uid',history:'all_available_no_implicit_date_cutoff',totalFolders:folders.length,completedFolders:0,searchedThisPage:0,ownedSnapshots:owned.coverage,startedAt:state.startedAt,stopped:owned.messages.length?'owned_sources_found':'owned_sources_pending',errors:[]},warning:!owned.messages.length&&isBareMailReference(criteria)?'This is a bare reference. First include company/client names already supplied in the conversation to target their folders; never ask the user for internal IDs. If no such context was supplied, continue this same query/cursor.':owned.messages.length?'Owned source matches found. For a specific requested message or attachment, read these IDs now and stop once the requested original is verified. If more results are needed, continue the same query/cursor; historical coverage remains partial.': 'No match on this bounded page of owned sources. Continue the SAME query and cursor with mail_api operation search before changing query or searching historical folders. Remaining owned sources have not been searched; this page cannot prove absence.'});
     }
    }
-   while(state.index<folders.length&&messages.length<limit){
+   let parallelUsed=false,parallelExecution=null;
+   if(parallelCapable&&!locatorFolders.length&&folders.length-state.index>=2&&(!contextFolders.length||state.index+1<contextBoundary)&&this.now()<deadline-1000){
+    const credential=this.client.requiredCredential(mailbox),password=decryptToken(credential.password_encrypted,this.config.tokenEncryptionKey);let other,connectTimer,parallelStarted=false;parallelExecution={attempted:true,mode:'serial_fallback',reason:'connection_unavailable'};
+    try{
+     other=this.client.createImapPassword(mailbox,password);
+     await Promise.race([other.connect(),new Promise((_,reject)=>{connectTimer=setTimeout(()=>{try{other.close();}catch{}reject(fail('Second mail connection timed out','MAIL_PARALLEL_CONNECT_TIMEOUT'));},Math.max(1,Math.min(this.parallelConnectMs,deadline-this.now())));})]);
+     if(connectTimer)clearTimeout(connectTimer);
+     const initial=state.index,initialBefore=state.beforeUid,initialValidity=state.uidValidity,clients=[imap,other],timing={selectMs:0,searchMs:0};let completedSearches=0;
+     const emptyPageLimit=freshReceived&&attachmentMime?120:30,parallelLimit=contextFolders.length?Math.min(freshReceived&&attachmentMime?120:20,contextBoundary-initial):emptyPageLimit,primaryGates=new Map();
+     parallelStarted=true;const accumulateLatest=Boolean(freshReceived&&attachmentMime);const page=await orderedFolderPairs({folders,start:initial,maxFolders:parallelLimit,continueOnMatches:accumulateLatest,maxMessages:limit,canContinue:()=>!attachmentMime||metadataChecked<metadataLimit,timeoutMs:Math.max(1,Math.min(this.parallelBudgetMs,deadline-this.now())),probe:async({folder:path,index,slot,signal})=>{
+      const client=clients[slot],cancel=()=>{try{client.close();}catch{}};signal.addEventListener('abort',cancel,{once:true});let lock,settlePrimary;
+      // The secondary's fetch budget waits for a result from the earlier
+      // folder, including an authoritative empty STATUS/cache skip.
+      if(attachmentMime&&slot===0){let resolve;const ready=new Promise(r=>{resolve=r;});settlePrimary=resolve;primaryGates.set(index,ready);}
+      const status=statusByFolder.get(path),firstContinued=index===initial&&initialBefore!==null;
+      if(status&&index===initial&&initialValidity&&initialValidity!==status.uidValidity){settlePrimary?.(false);signal.removeEventListener('abort',cancel);throw fail('Folder generation changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');}
+      if(!firstContinued&&status&&(status.messages==='0'||cachedEmpty.has(path))){settlePrimary?.(true);signal.removeEventListener('abort',cancel);return {messages:[],exhausted:true,beforeUid:null,uidValidity:status.uidValidity,statusSkipped:status.messages==='0'?'empty':'cached'};}
+
+      try{
+       let t=performance.now();lock=await client.getMailboxLock(path,{readOnly:true});timing.selectMs+=performance.now()-t;
+       const validity=String(client.mailbox.uidValidity),nextBefore=String(client.mailbox.uidNext);if(index===initial&&initialValidity&&initialValidity!==validity)throw fail('Folder generation changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');
+       let before=index===initial?initialBefore:null;const upper=before?before-1:Number(client.mailbox.uidNext)-1,bounded=scansMessageBodies(criteria)&&Number.isSafeInteger(upper)&&upper>0,lower=bounded?Math.max(1,upper-SEARCH_UID_WINDOW+1):1;
+       const search={...criteria,...(bounded?{uid:`${lower}:${upper}`}:(before?{uid:`1:${before-1}`}:{}) )};t=performance.now();const found=before===1?[]:await client.search(search,{uid:true});timing.searchMs+=performance.now()-t;if(!Array.isArray(found))throw fail('Provider rejected search','MAIL_SEARCH_PROVIDER_FAILED');if(before!==1)completedSearches++;
+       const uids=found.map(Number).filter(Number.isSafeInteger).filter(uid=>uid>0&&(!before||uid<before)).sort((a,b)=>b-a),foundMessages=[];let missingMetadata=false,anyMimeMatch=false;
+       if(attachmentMime&&slot===1){
+        const primary=primaryGates.get(index-1);if(!primary)throw fail('Parallel ordering state missing','MAIL_SEARCH_PROVIDER_FAILED');let onAbort,proceed=false;
+        try{if(!signal.aborted){const aborted=new Promise(resolve=>{onAbort=()=>resolve(false);signal.addEventListener('abort',onAbort,{once:true});});proceed=await Promise.race([primary,aborted]);}}
+        finally{if(onAbort)signal.removeEventListener('abort',onAbort);}
+        if(!proceed||signal.aborted)throw fail('Speculative folder cancelled','MAIL_SEARCH_PROVIDER_FAILED');
+       }
+       for(const uid of uids){
+        if(foundMessages.length>=limit||attachmentMime&&metadataChecked>=metadataLimit)break;
+        const item=await client.fetchOne(uid,{uid:true,envelope:true,flags:true,internalDate:true,size:true,bodyStructure:true},{uid:true});if(attachmentMime)metadataChecked++;before=uid;if(!item){missingMetadata=true;continue;}
+        const message=searchEnvelopeMessage(item,path,validity,uid),mimeMatch=!attachmentMime||message.attachments.some(a=>a.contentType?.toLowerCase()===attachmentMime);
+        if(attachmentMime&&!mimeMatch&&(!message.attachmentMetadataAvailable||message.attachmentMetadataTruncated))throw fail('Attachment metadata unavailable; cannot attest this MIME filter','MAIL_ATTACHMENT_METADATA_UNAVAILABLE');
+        if(mimeMatch)anyMimeMatch=true;if(!mimeMatch||hasOwnedSearchKey(state.seenOwnedKeys,item.envelope?.messageId||ref(path,validity,uid)))continue;foundMessages.push(message);
+       }
+       let exhausted=false;if(!uids.length||before===uids.at(-1)){if(bounded&&lower>1)before=lower;else{exhausted=true;before=null;}}
+       settlePrimary?.(exhausted&&(!foundMessages.length||accumulateLatest)&&(!attachmentMime||metadataChecked<metadataLimit));const cacheCandidate=!firstContinued&&exhausted&&!foundMessages.length&&!missingMetadata&&!anyMimeMatch&&status&&status.uidValidity===validity&&status.uidNext===nextBefore?{folder:path,status}:null;return {messages:foundMessages,exhausted,beforeUid:before,uidValidity:validity,...(cacheCandidate?{cacheCandidate}:{})};
+      }finally{settlePrimary?.(false);signal.removeEventListener('abort',cancel);lock?.release();}
+     }});
+     parallelUsed=true;parallelExecution={attempted:true,mode:'parallel'};searched=completedSearches;
+     for(const p of page.pages){messages.push(...p.messages);if(p.statusSkipped==='empty')emptyStatusSkipped++;if(p.statusSkipped==='cached')emptyCacheSkipped++;if(p.cacheCandidate)emptyCandidates.push(p.cacheCandidate);if(p.exhausted){state.index=p.index+1;state.beforeUid=null;state.uidValidity=null;}else{state.index=p.index;state.beforeUid=p.beforeUid;state.uidValidity=p.uidValidity;}}
+     stopped=attachmentMime&&metadataChecked>=metadataLimit&&!messages.length?'attachment_metadata_page_limit':page.stopped;if(contextFolders.length&&state.index>=contextBoundary&&!messages.length&&page.stopped==='work_budget')stopped='context_exact_empty';if(page.errorCode==='MAIL_SEARCH_CURSOR_EXPIRED')throw fail('Folder generation changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');if(page.stopped==='folder_error')errors.push({folder:folders[page.errorIndex],code:typeof page.errorCode==='string'&&/^MAIL_[A-Z_]+$/.test(page.errorCode)?page.errorCode:'MAIL_SEARCH_FOLDER_FAILED'});
+     state.parallelTiming={connections:2,attemptedFolders:page.attempted,selectMs:Math.round(timing.selectMs),searchMs:Math.round(timing.searchMs)};
+    }catch(error){if(parallelStarted||error.code==='MAIL_SEARCH_CURSOR_EXPIRED')throw error;if(error.code==='MAIL_PARALLEL_CONNECT_TIMEOUT')parallelExecution.reason='connection_timeout';}
+    finally{if(connectTimer)clearTimeout(connectTimer);try{other?.close();}catch{}}
+   }
+   while(!parallelUsed&&state.index<folders.length&&messages.length<limit){
     if(this.now()>deadline||searched>=(contextFolders.length?20:30)){stopped='work_budget';break;}const path=folders[state.index];let lock;
     try{
-     lock=await imap.getMailboxLock(path,{readOnly:true});const validity=String(imap.mailbox.uidValidity);if(state.uidValidity&&state.uidValidity!==validity)throw fail('Folder generation changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');
+     const status=statusByFolder.get(path);if(status&&state.uidValidity&&state.uidValidity!==status.uidValidity)throw fail('Folder generation changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');
+     if(!state.beforeUid&&status&&(status.messages==='0'||cachedEmpty.has(path))){if(status.messages==='0')emptyStatusSkipped++;else emptyCacheSkipped++;state.index++;state.uidValidity=null;continue;}
+     const startedBeforeUid=state.beforeUid;lock=await imap.getMailboxLock(path,{readOnly:true});const validity=String(imap.mailbox.uidValidity),nextBefore=String(imap.mailbox.uidNext);if(state.uidValidity&&state.uidValidity!==validity)throw fail('Folder generation changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');let missingMetadata=false,anyMimeMatch=false;
      const upperUid=state.beforeUid?state.beforeUid-1:Number(imap.mailbox.uidNext)-1;
      const bounded=scansMessageBodies(criteria)&&Number.isSafeInteger(upperUid)&&upperUid>0;
      const lowerUid=bounded?Math.max(1,upperUid-SEARCH_UID_WINDOW+1):1;
@@ -392,20 +455,20 @@ export class MailApi {
      const found=state.beforeUid===1?[]:await imap.search(search,{uid:true});if(!Array.isArray(found))throw fail('Provider rejected search','MAIL_SEARCH_PROVIDER_FAILED');searched++;
      const uids=found.map(Number).filter(Number.isSafeInteger).filter(uid=>uid>0&&(!state.beforeUid||uid<state.beforeUid)).sort((a,b)=>b-a);
      for(const uid of uids){
-      if(messages.length>=limit||this.now()>deadline||attachmentMime&&metadataChecked>=limit)break;
-      const item=await imap.fetchOne(uid,{uid:true,envelope:true,flags:true,internalDate:true,size:true,bodyStructure:true},{uid:true});if(attachmentMime)metadataChecked++;if(!item){state.beforeUid=uid;state.uidValidity=validity;continue;}
+      if(messages.length>=limit||this.now()>deadline||attachmentMime&&metadataChecked>=metadataLimit)break;
+      const item=await imap.fetchOne(uid,{uid:true,envelope:true,flags:true,internalDate:true,size:true,bodyStructure:true},{uid:true});if(attachmentMime)metadataChecked++;if(!item){missingMetadata=true;state.beforeUid=uid;state.uidValidity=validity;continue;}
       const message=searchEnvelopeMessage(item,path,validity,uid),mimeMatch=!attachmentMime||message.attachments.some(a=>a.contentType?.toLowerCase()===attachmentMime);
       if(attachmentMime&&!mimeMatch&&(!message.attachmentMetadataAvailable||message.attachmentMetadataTruncated))throw fail('Attachment metadata unavailable; cannot attest this MIME filter','MAIL_ATTACHMENT_METADATA_UNAVAILABLE');
-      state.beforeUid=uid;state.uidValidity=validity;if(!mimeMatch)continue;
+      state.beforeUid=uid;state.uidValidity=validity;if(mimeMatch)anyMimeMatch=true;if(!mimeMatch)continue;
       if(hasOwnedSearchKey(state.seenOwnedKeys,item.envelope?.messageId||ref(path,validity,uid)))continue;
       messages.push(message);
      }
      if(!uids.length||state.beforeUid===uids.at(-1)){
       if(bounded&&lowerUid>1){state.beforeUid=lowerUid;state.uidValidity=validity;}
-      else{state.index++;state.beforeUid=null;state.uidValidity=null;}
+      else{if(!startedBeforeUid&&!missingMetadata&&!anyMimeMatch&&status&&status.uidValidity===validity&&status.uidNext===nextBefore)emptyCandidates.push({folder:path,status});state.index++;state.beforeUid=null;state.uidValidity=null;}
      }
      if(messages.length){stopped='matches_found';break;}
-     if(attachmentMime&&metadataChecked>=limit){stopped='attachment_metadata_page_limit';break;}
+     if(attachmentMime&&metadataChecked>=metadataLimit){stopped='attachment_metadata_page_limit';break;}
      if(contextFolders.length&&state.index>=contextBoundary){stopped='context_exact_empty';break;}
     }catch(error){if(error.code==='MAIL_SEARCH_CURSOR_EXPIRED')throw error;errors.push({folder:path,code:error.code??'MAIL_SEARCH_FOLDER_FAILED'});stopped='folder_error';break;}finally{lock?.release();}
    }
@@ -413,7 +476,7 @@ export class MailApi {
    // inside a PDF. Candidate metadata is separate from exact matches, confined
    // to folders supported by two mandatory specific query terms, and reuses the
    // same30 SEARCH/25s budget. The exact-query cursor remains untouched.
-   if(!messages.length&&contextFolders.length&&!attachmentMime&&!errors.length&&!state.companyCandidatesOffered){
+   if(!messages.length&&contextFolders.length&&!attachmentMime&&!errors.length&&stopped!=='time_budget'&&!state.companyCandidatesOffered){
     const candidateCriteria=mailSearchCandidateCriteria(criteria),seenCandidates=new Set();
     for(const path of contextFolders){
      if(searched>=30||this.now()>deadline||candidates.length>=limit)break;let lock;
@@ -430,10 +493,12 @@ export class MailApi {
     }
     if(candidates.length){stopped='folder_candidates';state.companyCandidatesOffered=true;}
    }
+   if(emptyCache&&emptyCandidates.length&&!errors.length){try{await emptyCache.remember(criteria,attachmentMime,emptyCandidates);}catch{/* Optional negative cache can only degrade to live search. */}}
    // Learning occurs only after exact fresh matches, never relaxed candidates or snapshots.
    if(locatorHints&&messages.length&&!errors.length){try{await locatorHints.remember(criteria,messages,ranked);}catch{/* Optional cache failure cannot replace the provider outcome. */}}
    const complete=state.index===folders.length&&!errors.length;
-   return resultWithPlan({mailbox,query,messages,...(candidates.length?{candidates}:{}),complete,cursor:complete?null:this.cursor(state),coverage:{source:'live_imap',history:'all_available_no_implicit_date_cutoff',ordering:'query_relevant_folders_then_uid_descending',totalFolders:folders.length,completedFolders:state.index,searchedThisPage:searched,...(ownedCoverage?{ownedSnapshots:ownedCoverage}:{}),...(candidates.length?{candidateLookup:{exactQueryMatched:false,retainedCriteria:mailSearchCandidateCriteria(criteria),relaxedFields:['text','subject','body','from','to','cc','bcc'],uidWindowPerFolder:SEARCH_UID_WINDOW}}:{}),startedAt:state.startedAt,stopped:stopped??(complete?null:'page_limit'),errors},warning:candidates.length?'No exact text/reference match is asserted. Separate candidates contain only unverified metadata from company/client folders; inspect their attachment names and read an owned original before confirming the requested invoice. Do not restart a whole-mailbox reference search.':complete?null:messages.length?'Live matches found. For a specific requested message or attachment, read these IDs now and stop once the requested original is verified. Continue the same query/cursor only if more results are needed; historical coverage is partial.':'Partial results. Continue with the same query and cursor before claiming that no other messages exist.'});
+   const parallelTiming=state.parallelTiming;delete state.parallelTiming;
+   return resultWithPlan({mailbox,query,messages,...(candidates.length?{candidates}:{}),complete,cursor:complete?null:this.cursor(state),coverage:{source:'live_imap',history:'all_available_no_implicit_date_cutoff',ordering:'query_relevant_folders_then_uid_descending',totalFolders:folders.length,completedFolders:state.index,searchedThisPage:searched,...(parallelExecution?{parallelExecution}:{}),...(parallelTiming?{parallelTiming}:{}),...(ownedCoverage?{ownedSnapshots:ownedCoverage}:{}),...(candidates.length?{candidateLookup:{exactQueryMatched:false,retainedCriteria:mailSearchCandidateCriteria(criteria),relaxedFields:['text','subject','body','from','to','cc','bcc'],uidWindowPerFolder:SEARCH_UID_WINDOW}}:{}),startedAt:state.startedAt,stopped:stopped??(complete?null:'page_limit'),errors},warning:candidates.length?'No exact text/reference match is asserted. Separate candidates contain only unverified metadata from company/client folders; inspect their attachment names and read an owned original before confirming the requested invoice. Do not restart a whole-mailbox reference search.':complete?null:messages.length?'Live matches found. For a specific requested message or attachment, read these IDs now and stop once the requested original is verified. Continue the same query/cursor only if more results are needed; historical coverage remains partial.':'Partial results. Continue with the same query and cursor before claiming that no other messages exist.'});
   });
  }
  actionPath(mailbox,actor,actionId){this.account(mailbox,actor);if(!/^[A-Za-z0-9_-]{8,160}$/.test(actionId??''))throw fail('Invalid action id');return join(this.directory,`${sha(`${mailbox}:${actor.toLowerCase()}:${actionId}`)}.json`);}

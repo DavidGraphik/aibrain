@@ -37,6 +37,16 @@ const withoutSpecs = (actual: ReturnType<typeof buildWorkerTurnTools>["dynamicTo
 };
 
 describe("turn module catalogue", () => {
+  it("only announces direct mail providers present in the fresh server connection snapshot", () => {
+    const input = context(); input.availableConnectorIds = [];
+    withoutSpecs(buildWorkerTurnTools(input).dynamicTools, [...GMAIL_DYNAMIC_TOOLS, ...OUTLOOK_DYNAMIC_TOOLS]);
+    input.availableConnectorIds = ["gmail"];
+    containsSpecs(buildWorkerTurnTools(input).dynamicTools, GMAIL_DYNAMIC_TOOLS);
+    withoutSpecs(buildWorkerTurnTools(input).dynamicTools, OUTLOOK_DYNAMIC_TOOLS);
+    input.availableConnectorIds = ["outlook"];
+    containsSpecs(buildWorkerTurnTools(input).dynamicTools, OUTLOOK_DYNAMIC_TOOLS);
+    withoutSpecs(buildWorkerTurnTools(input).dynamicTools, GMAIL_DYNAMIC_TOOLS);
+  });
   it("keeps the stable base catalogue without assuming a live provider connection", () => {
     const plan = buildWorkerTurnTools(context());
     expect(plan.dynamicTools).toEqual([...DOCUMENT_DYNAMIC_TOOLS, ...GMAIL_DYNAMIC_TOOLS, ...OUTLOOK_DYNAMIC_TOOLS]);

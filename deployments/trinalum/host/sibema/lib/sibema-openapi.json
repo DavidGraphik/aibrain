@@ -1,0 +1,3203 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "API de integración Sibema — Empresa de ejemplo",
+    "version": "1.2",
+    "description": "API REST para integrar los sistemas de la empresa configurada con el ERP Sibema: consulta de clientes,\nproveedores, ofertas, pedidos, facturas y contabilidad, y alta de clientes, ofertas (con sus\nPDF), facturas de compra y asientos.\n\n**Novedades de la versión 1.2**\n\n- Entregas parciales de un pedido: `POST /orders/{id}/deliveries`. Cada entrega saca sus\n  kilos de la línea pendiente y queda como una línea más del pedido, con la fecha y el número\n  del ANL; el total del pedido no cambia.\n- Modificar un pedido: `PATCH /orders/{id}` cambia las condiciones y modifica, añade o borra\n  líneas en una sola llamada.\n- Las líneas del pedido traen además `description`, `final_quantity`, `unit_id` y `remarks`.\n\n**Novedades de la versión 1.1**\n\n- Alta de clientes: `POST /customers`.\n- PDF adjuntos a ofertas: `POST /offers/{id}/files`, `GET /offers/{id}/files` y\n  `GET /offers/{id}/files/{fileId}/content`.\n\n## Autenticación\n1. `POST /authenticate` con el usuario y la contraseña de integración que os facilita Sibema.\n2. La respuesta trae el token en `jwttoken`.\n3. Enviad el token en todas las llamadas: `Authorization: Bearer <jwttoken>`.\n\nCuando el token caduque, la API responde `401`: volved a autenticaros y repetid la llamada.\nTodo lo que se consulta o se crea queda limitado a la empresa del usuario de integración.\n\n## Convenciones\n- JSON en UTF-8 con nombres en `snake_case`.\n- **Fechas** (`date`, `valid_from`, `from`, `to`…): `YYYY-MM-DD`.\n- **Instantes** (`created_at`, `updated_at`, `updated_since`): ISO-8601 con zona, p. ej.\n  `2026-09-29T10:15:00+02:00`. La zona de referencia es Europe/Madrid.\n- **Referencias** en escritura: siempre por id (`customer_id`, `product_id`…).\n- En los filtros de fechas `from` y `to` son inclusivos.\n\n## Paginación\nLos listados admiten `page` (desde 0) y `size` (por defecto 50, máximo 200) y devuelven\n`data`, `page`, `size`, `total` y `has_next`. Se ordenan por última modificación, de la\nmás reciente a la más antigua.\n\n## Sincronización incremental\nLos listados principales admiten `updated_since`: devuelven solo lo creado o modificado a\npartir de ese instante. Guardad el `updated_at` más alto recibido y usadlo en la siguiente\nllamada.\n\n## Idempotencia\nLas operaciones de escritura aceptan la cabecera opcional `Idempotency-Key` (un UUID por\noperación). Si repetís una petición con la misma clave, por ejemplo tras un corte de red,\nse devuelve la respuesta original sin volver a ejecutarla. Solo se guardan las respuestas\ncorrectas; una petición que falló se puede reintentar con la misma clave.\n\n## Errores\nTodos los errores de la API devuelven el mismo cuerpo (`Error`):\n\n| HTTP | `code` | Cuándo |\n|---|---|---|\n| 400 | `BAD_REQUEST` | JSON mal formado, parámetro con tipo incorrecto o que falta |\n| 401 | — | Sin token o token caducado |\n| 404 | `NOT_FOUND` | El recurso no existe o no pertenece a vuestra empresa |\n| 422 | `VALIDATION` | Falta un campo obligatorio, una referencia no existe o no se cumple una regla |\n| 500 | `INTERNAL` | Error inesperado; `detail` incluye una referencia para soporte |\n\n## Webhooks\nSibema puede avisaros de los cambios con un `POST` a la URL que nos indiquéis. Ver la\nsección *Webhooks*.\n"
+  },
+  "servers": [
+    {
+      "url": "https://erp.example.invalid/ERPBerma"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Autenticación"
+    },
+    {
+      "name": "Clientes"
+    },
+    {
+      "name": "Proveedores"
+    },
+    {
+      "name": "Ofertas"
+    },
+    {
+      "name": "Pedidos"
+    },
+    {
+      "name": "Facturas"
+    },
+    {
+      "name": "Contabilidad"
+    }
+  ],
+  "paths": {
+    "/authenticate": {
+      "post": {
+        "tags": [
+          "Autenticación"
+        ],
+        "summary": "Obtener token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Credenciales correctas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jwttoken": {
+                      "type": "string",
+                      "description": "Token para la cabecera Authorization: Bearer"
+                    },
+                    "login": {
+                      "type": "string"
+                    },
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credenciales incorrectas (`INVALID_CREDENTIALS`) o usuario desactivado (`USER_DISABLED`)"
+          }
+        }
+      }
+    },
+    "/company/api/v1/customers": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Listar clientes",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Busca en nombre, nombre comercial, NIF y email (sin distinguir mayúsculas ni acentos)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/UpdatedSince"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de clientes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Crear cliente",
+        "description": "Da de alta un cliente. Obligatorios: `name` y `vat_number`.\n\n- El NIF se guarda en mayúsculas.\n- No puede haber dos clientes con el mismo NIF ni con el mismo teléfono: se responde\n  `422` indicando el `customer_id` del cliente que ya existe.\n- La cuenta contable del cliente (430…) se crea automáticamente.\n- Se emite el webhook `customer.created`.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerWrite"
+              },
+              "example": {
+                "name": "Empresa Sintética de Ejemplo S.L.",
+                "commercial_name": "Empresa de ejemplo",
+                "vat_number": "SYNTHETIC-TAX-001",
+                "email": "purchasing@example.test",
+                "phone": "+12025550100",
+                "payment_method_id": 3,
+                "address": {
+                  "street": "Calle de Ejemplo 1",
+                  "postal_code": "00000",
+                  "town_id": 1,
+                  "state_id": 1,
+                  "country_id": 1
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cliente creado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/customers/{id}": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Detalle de un cliente",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cliente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/customers/{id}/contacts": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Personas de contacto del cliente",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contactos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Contact"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/customers/{id}/prices": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Precios especiales del cliente",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Precios",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CustomerPrice"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/customers/{id}/orders": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Pedidos del cliente",
+        "description": "Sin líneas; para verlas, usad `GET /orders/{id}`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de pedidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderPage"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/customers/{id}/offers": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Ofertas del cliente",
+        "description": "Sin líneas; para verlas, usad `GET /offers/{id}`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de ofertas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferPage"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/customers/{id}/topproducts": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Productos más pedidos por el cliente",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Número de productos (por defecto 10, máximo 200)",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Productos ordenados por cantidad total pedida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TopProduct"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/providers": {
+      "get": {
+        "tags": [
+          "Proveedores"
+        ],
+        "summary": "Listar proveedores",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Busca en nombre, nombre comercial, NIF y email",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/UpdatedSince"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de proveedores",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/company/api/v1/providers/{id}": {
+      "get": {
+        "tags": [
+          "Proveedores"
+        ],
+        "summary": "Detalle de un proveedor",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Proveedor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Provider"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/providers/{id}/contacts": {
+      "get": {
+        "tags": [
+          "Proveedores"
+        ],
+        "summary": "Personas de contacto del proveedor",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contactos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Contact"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/providers/{id}/products": {
+      "get": {
+        "tags": [
+          "Proveedores"
+        ],
+        "summary": "Productos y tarifas del proveedor",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Productos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderProduct"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/offers": {
+      "get": {
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Listar ofertas",
+        "description": "Sin líneas; para verlas, usad `GET /offers/{id}`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UpdatedSince"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Creadas desde (YYYY-MM-DD)",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Creadas hasta (YYYY-MM-DD)",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de ofertas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferPage"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Crear oferta",
+        "description": "Obligatorio `customer_id`. Emite el webhook `offer.created`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfferWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Oferta creada, con sus líneas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/offers/{id}": {
+      "get": {
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Detalle de una oferta, con líneas",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oferta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Modificar oferta",
+        "description": "Solo se cambian los campos que enviéis. Si enviáis `lines`, **sustituyen todas** las\nlíneas de la oferta; si no lo enviáis, las líneas no se tocan.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfferWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Oferta modificada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/offers/{id}/convert-to-order": {
+      "post": {
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Generar el pedido de venta desde la oferta",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contractor_id"
+                ],
+                "properties": {
+                  "contractor_id": {
+                    "type": "integer",
+                    "description": "Empresa que emite el pedido"
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Fecha del pedido (por defecto, la de «válida desde» de la oferta y, si no tiene, hoy)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido generado, con `offer_id` apuntando a la oferta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/offers/{id}/files": {
+      "get": {
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Listar los PDF de la oferta",
+        "description": "Sirve para comprobar que un PDF quedó guardado: debe aparecer con su `file_id` y con\n`stored: true`.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF adjuntos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OfferFile"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Adjuntar un PDF a la oferta",
+        "description": "Sube un PDF y lo deja vinculado a la oferta `{id}`. El contenido va en Base64 dentro\ndel JSON; también se acepta con el prefijo `data:application/pdf;base64,`.\n\n- Solo PDF: el contenido debe empezar por la cabecera `%PDF-`.\n- Tamaño máximo: 15 MB (del PDF, antes de codificarlo).\n- Una oferta puede tener varios PDF; cada llamada añade uno nuevo.\n- Usad `Idempotency-Key` para no duplicar el adjunto si reintentáis.\n\nLa respuesta devuelve el `file_id` y `stored: true`. Si el fichero no se pudo guardar,\nse responde `422` y no queda nada adjunto.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfferFileWrite"
+              },
+              "example": {
+                "filename": "example-offer-1001.pdf",
+                "content_base64": "JVBERi0xLjcKJeLjz9MKMSAwIG9iago8PC9UeXBlL0NhdGFsb2c..."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PDF guardado y vinculado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferFile"
+                },
+                "example": {
+                  "file_id": 57,
+                  "offer_id": 142,
+                  "filename": "example-offer-1001.pdf",
+                  "size_kb": 184.32,
+                  "stored": true,
+                  "created_at": "2026-09-29T10:15:00+02:00"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/offers/{id}/files/{fileId}/content": {
+      "get": {
+        "tags": [
+          "Ofertas"
+        ],
+        "summary": "Descargar un PDF de la oferta",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "El PDF, con `Content-Disposition` y su nombre original",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "La oferta o el fichero no existen, o el fichero no pertenece a esa oferta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/company/api/v1/orders": {
+      "get": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Listar pedidos de venta",
+        "description": "Sin líneas; para verlas, usad `GET /orders/{id}`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UpdatedSince"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Fecha del pedido desde",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Fecha del pedido hasta",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Status"
+          },
+          {
+            "name": "delivery_from",
+            "in": "query",
+            "description": "Fecha de entrega desde",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "delivery_to",
+            "in": "query",
+            "description": "Fecha de entrega hasta",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de pedidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/company/api/v1/orders/{id}": {
+      "get": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Detalle de un pedido, con líneas",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Modificar un pedido (condiciones y líneas)",
+        "description": "Solo se cambia lo que enviéis; un campo ausente o `null` se deja como está.\n\nEn `lines` va **solo lo que cambia**, y las líneas que no aparecen no se tocan:\n\n- Con `line_id`: se cambian los campos enviados de esa línea.\n- Con `line_id` y `\"delete\": true`: se borra la línea.\n- Sin `line_id`: línea nueva. Obligatorios `product_id` y `quantity`; el IVA, la unidad y la\n  descripción salen del producto si no se envían.\n\nTodo se aplica junto o no se aplica nada: si un cambio falla, la respuesta es un `422` y el\npedido queda como estaba.\n\nEn una línea con entregas, `quantity` es lo que queda pendiente. Para ampliar el pedido en\n20.000 kg, sumadlos a la `quantity` de esa línea.\n\n**Deshacer una entrega mal registrada**: devolved sus kilos a la línea pendiente y borrad la\nlínea de la entrega en la misma llamada (ver el ejemplo).\n\nEmite el webhook `order.updated` y, si cambia `delivery_date`, `order.delivery_date_changed`.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderPatch"
+              },
+              "examples": {
+                "condiciones": {
+                  "summary": "Cambiar condiciones y una línea",
+                  "value": {
+                    "payment_method_id": 3,
+                    "incoterm_id": 2,
+                    "delivery_date": "2026-11-30",
+                    "lines": [
+                      {
+                        "line_id": 981,
+                        "quantity": 120000,
+                        "unit_price": 2.45
+                      }
+                    ]
+                  }
+                },
+                "deshacer": {
+                  "summary": "Deshacer una entrega de 24.000 kg",
+                  "value": {
+                    "lines": [
+                      {
+                        "line_id": 981,
+                        "quantity": 100000,
+                        "final_quantity": 100000
+                      },
+                      {
+                        "line_id": 994,
+                        "delete": true
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido modificado, con todas sus líneas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/orders/{id}/deliveries": {
+      "post": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Registrar una entrega parcial (ANL)",
+        "description": "Registra una entrega de un pedido que se sirve en varios viajes **sin cambiar su total**.\nPor cada elemento de `lines`:\n\n1. A la línea indicada (`line_id`, la que lleva lo pendiente) se le restan los kilos\n   entregados, en `quantity` y en `final_quantity`.\n2. Se añade al pedido una línea de entrega con esos kilos, en `quantity` y en\n   `final_quantity`. Lleva el mismo producto, precio, descuento, IVA y unidad, la fecha de\n   la entrega en `delivery_date` y la `reference` (el número del ANL) en `remarks`.\n\nEjemplo: un pedido de 100.000 kg y un ANL de 24.000 kg dejan la línea pendiente en\n76.000 kg y una línea nueva de 24.000 kg. Cada entrega posterior hace lo mismo sin tocar\nlas anteriores.\n\nSi se entrega más de lo pendiente se admite: la línea pendiente queda en negativo y el\ntotal del pedido sigue siendo el contratado.\n\nTodas las líneas se registran juntas o ninguna. Con `Idempotency-Key`, repetir la petición\ntras un corte no registra la entrega dos veces. Emite el webhook `order.updated`.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeliveryWrite"
+              },
+              "example": {
+                "date": "2026-10-15",
+                "reference": "SYNTHETIC-DELIVERY-1001",
+                "lines": [
+                  {
+                    "line_id": 981,
+                    "quantity": 24000
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido con todas sus líneas, la pendiente ya rebajada y la entrega al final",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                },
+                "example": {
+                  "order_id": 153,
+                  "serie": "P",
+                  "number": "153",
+                  "date": "2026-10-01",
+                  "customer_id": 42,
+                  "status": {
+                    "id": 2,
+                    "name": "Confirmado"
+                  },
+                  "lines": [
+                    {
+                      "line_id": 981,
+                      "product_id": 7,
+                      "product": "Producto sintético A",
+                      "description": "Producto sintético A",
+                      "quantity": 76000,
+                      "final_quantity": 76000,
+                      "unit_id": 1,
+                      "unit": "kg",
+                      "unit_price": 2.45,
+                      "vat_rate": 21
+                    },
+                    {
+                      "line_id": 994,
+                      "product_id": 7,
+                      "product": "Producto sintético A",
+                      "description": "Producto sintético A",
+                      "quantity": 24000,
+                      "final_quantity": 24000,
+                      "unit_id": 1,
+                      "unit": "kg",
+                      "unit_price": 2.45,
+                      "vat_rate": 21,
+                      "delivery_date": "2026-10-15",
+                      "remarks": "SYNTHETIC-DELIVERY-1001"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/orders/{id}/status": {
+      "patch": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Cambiar el estado de un pedido",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido con el estado nuevo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/order-statuses": {
+      "get": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Estados posibles de un pedido",
+        "responses": {
+          "200": {
+            "description": "Estados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Status"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/company/api/v1/invoices/sale": {
+      "get": {
+        "tags": [
+          "Facturas"
+        ],
+        "summary": "Listar facturas de venta",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UpdatedSince"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Status"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de facturas de venta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaleInvoicePage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/company/api/v1/invoices/sale/{id}": {
+      "get": {
+        "tags": [
+          "Facturas"
+        ],
+        "summary": "Detalle de una factura de venta",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Factura de venta, con líneas y pedidos de origen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaleInvoice"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/company/api/v1/invoices/purchase": {
+      "get": {
+        "tags": [
+          "Facturas"
+        ],
+        "summary": "Listar facturas de compra",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UpdatedSince"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "provider_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Status"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de facturas de compra",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseInvoicePage"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Facturas"
+        ],
+        "summary": "Registrar factura de compra",
+        "description": "Obligatorio `provider_id`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseInvoiceWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Factura registrada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseInvoice"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/invoices/purchase/{id}": {
+      "get": {
+        "tags": [
+          "Facturas"
+        ],
+        "summary": "Detalle de una factura de compra",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Factura de compra, con líneas y pedidos de origen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseInvoice"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Facturas"
+        ],
+        "summary": "Cambiar el estado de una factura de compra",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Factura con el estado nuevo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseInvoice"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/accounting/accounts": {
+      "get": {
+        "tags": [
+          "Contabilidad"
+        ],
+        "summary": "Plan de cuentas de una empresa",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractorId"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de cuentas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountingAccountPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/accounting/accounts/{account}/movements": {
+      "get": {
+        "tags": [
+          "Contabilidad"
+        ],
+        "summary": "Mayor de una cuenta, con saldo acumulado",
+        "parameters": [
+          {
+            "name": "account",
+            "in": "path",
+            "required": true,
+            "description": "Código de la cuenta, p. ej. 430000180",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ContractorId"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Movimientos por fecha de asiento",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccountMovement"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/accounting/entries": {
+      "get": {
+        "tags": [
+          "Contabilidad"
+        ],
+        "summary": "Listar asientos",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractorId"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de asientos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountingEntryPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Contabilidad"
+        ],
+        "summary": "Importar un lote de asientos",
+        "description": "Valida el lote entero y lo guarda en una sola transacción: o entran todos los asientos\no ninguno. Si el lote no es válido, responde `422` con los errores por asiento.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountingImport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lote importado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountingValidation"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    },
+    "/company/api/v1/accounting/entries/validate": {
+      "post": {
+        "tags": [
+          "Contabilidad"
+        ],
+        "summary": "Validar un lote de asientos sin guardarlo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountingImport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resultado de la validación (`valid` y `errors`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountingValidation"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/company/api/v1/accounting/third-parties": {
+      "get": {
+        "tags": [
+          "Contabilidad"
+        ],
+        "summary": "Clientes o proveedores con su cuenta contable",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractorId"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "`customer` (por defecto) o `provider`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "customer",
+                "provider"
+              ],
+              "default": "customer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Terceros",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ThirdParty"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Validation"
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "evento": {
+      "post": {
+        "summary": "Aviso de cambio",
+        "description": "Sibema envía un `POST` a vuestra URL cada vez que ocurre uno de estos eventos:\n\n`customer.created`, `customer.updated`, `provider.created`, `provider.updated`,\n`offer.created`, `offer.updated`, `order.created`, `order.updated`,\n`order.status_changed`, `order.delivery_date_changed`, `sale_invoice.created`,\n`purchase_invoice.created`.\n\nEl aviso solo lleva el tipo de objeto y su id: pedid el objeto completo a la API.\n\n**Cabeceras**\n\n- `X-Sibema-Event`: tipo de evento.\n- `X-Sibema-Delivery`: id único del envío.\n- `X-Sibema-Signature`: `sha256=` + HMAC-SHA256 en hexadecimal del cuerpo, firmado con\n  el secreto compartido. Comprobadla antes de procesar el aviso.\n\nResponded con un 2xx. Los envíos no se reintentan: si vuestro servicio estuvo caído,\nrecuperad los cambios con `updated_since`.\n",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEvent"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recibido"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "Id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "Page": {
+        "name": "page",
+        "in": "query",
+        "description": "Página, desde 0",
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "Size": {
+        "name": "size",
+        "in": "query",
+        "description": "Elementos por página (máximo 200)",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      },
+      "UpdatedSince": {
+        "name": "updated_since",
+        "in": "query",
+        "description": "Solo lo creado o modificado desde este instante (ISO-8601)",
+        "schema": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "Status": {
+        "name": "status",
+        "in": "query",
+        "description": "Estado, por id numérico o por nombre",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ContractorId": {
+        "name": "contractor_id",
+        "in": "query",
+        "required": true,
+        "description": "Empresa. Obligatorio en todas las consultas contables",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Clave única de la operación (p. ej. un UUID) para poder reintentarla sin duplicarla",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Petición mal formada",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No existe o no pertenece a vuestra empresa",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Validation": {
+        "description": "Validación",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "type": "ERROR",
+              "code": "VALIDATION",
+              "message": "Falta el campo obligatorio 'vat_number'",
+              "detail": "Necesario para crear el cliente"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "ERROR"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "BAD_REQUEST",
+              "NOT_FOUND",
+              "VALIDATION",
+              "INTERNAL"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Qué ha fallado"
+          },
+          "detail": {
+            "type": "string",
+            "description": "Pista para resolverlo (opcional)"
+          }
+        }
+      },
+      "PageInfo": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total de elementos que cumplen los filtros"
+          },
+          "has_next": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Address": {
+        "type": "object",
+        "properties": {
+          "street": {
+            "type": "string"
+          },
+          "postal_code": {
+            "type": "string"
+          },
+          "town": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string",
+            "description": "Código ISO o, si no lo tiene, nombre del país"
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "StatusPatch": {
+        "type": "object",
+        "required": [
+          "status_id"
+        ],
+        "properties": {
+          "status_id": {
+            "type": "integer"
+          }
+        }
+      },
+      "Totals": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "number"
+          },
+          "vat": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "commercial_name": {
+            "type": "string"
+          },
+          "vat_number": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "iban": {
+            "type": "string"
+          },
+          "address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "payment_method": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CustomerWrite": {
+        "type": "object",
+        "required": [
+          "name",
+          "vat_number"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Razón social"
+          },
+          "commercial_name": {
+            "type": "string"
+          },
+          "vat_number": {
+            "type": "string",
+            "description": "NIF/CIF. Único: no puede existir otro cliente con el mismo"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Único: no puede existir otro cliente con el mismo"
+          },
+          "iban": {
+            "type": "string"
+          },
+          "payment_method_id": {
+            "type": "integer",
+            "description": "Forma de pago"
+          },
+          "vat_id": {
+            "type": "integer",
+            "description": "Tipo de IVA"
+          },
+          "incoterm_id": {
+            "type": "integer"
+          },
+          "remarks": {
+            "type": "string",
+            "description": "Observaciones"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "street": {
+                "type": "string"
+              },
+              "postal_code": {
+                "type": "string"
+              },
+              "town_id": {
+                "type": "integer",
+                "description": "Población"
+              },
+              "state_id": {
+                "type": "integer",
+                "description": "Provincia"
+              },
+              "country_id": {
+                "type": "integer",
+                "description": "País"
+              }
+            }
+          }
+        }
+      },
+      "CustomerPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Contact": {
+        "type": "object",
+        "properties": {
+          "contact_id": {
+            "type": "integer"
+          },
+          "customer_id": {
+            "type": "integer",
+            "description": "Solo en contactos de cliente"
+          },
+          "provider_id": {
+            "type": "integer",
+            "description": "Solo en contactos de proveedor"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          }
+        }
+      },
+      "CustomerPrice": {
+        "type": "object",
+        "properties": {
+          "price_id": {
+            "type": "integer"
+          },
+          "customer_id": {
+            "type": "integer"
+          },
+          "product_id": {
+            "type": "integer"
+          },
+          "product": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number"
+          },
+          "quantity_from": {
+            "type": "number"
+          },
+          "quantity_to": {
+            "type": "number"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "TopProduct": {
+        "type": "object",
+        "properties": {
+          "product_id": {
+            "type": "integer"
+          },
+          "product": {
+            "type": "string"
+          },
+          "total_quantity": {
+            "type": "number"
+          }
+        }
+      },
+      "Provider": {
+        "type": "object",
+        "properties": {
+          "provider_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "commercial_name": {
+            "type": "string"
+          },
+          "vat_number": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "iban": {
+            "type": "string"
+          },
+          "address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProviderPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Provider"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ProviderProduct": {
+        "type": "object",
+        "properties": {
+          "provider_product_id": {
+            "type": "integer"
+          },
+          "provider_id": {
+            "type": "integer"
+          },
+          "product_id": {
+            "type": "integer"
+          },
+          "product": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number"
+          },
+          "quantity_from": {
+            "type": "number"
+          },
+          "quantity_to": {
+            "type": "number"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "external_code": {
+            "type": "string"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "Offer": {
+        "type": "object",
+        "properties": {
+          "offer_id": {
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "integer"
+          },
+          "provider_id": {
+            "type": "integer",
+            "description": "Empresa representada (la del vendedor o la del pedido de compra)"
+          },
+          "vendor": {
+            "type": "string"
+          },
+          "payment_method": {
+            "type": "string"
+          },
+          "incoterm": {
+            "type": "string"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date"
+          },
+          "remarks": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "description": "Solo en el detalle",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line_id": {
+                  "type": "integer"
+                },
+                "product_id": {
+                  "type": "integer"
+                },
+                "product": {
+                  "type": "string"
+                },
+                "quantity_from": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "price": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OfferWrite": {
+        "type": "object",
+        "description": "En `POST` es obligatorio `customer_id`. En `PUT` solo se cambian los campos enviados.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "integer"
+          },
+          "vendor_id": {
+            "type": "integer"
+          },
+          "payment_method_id": {
+            "type": "integer"
+          },
+          "incoterm_id": {
+            "type": "integer"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date"
+          },
+          "remarks": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "description": "Si se envía, sustituye todas las líneas",
+            "items": {
+              "type": "object",
+              "properties": {
+                "product_id": {
+                  "type": "integer"
+                },
+                "quantity_from": {
+                  "type": "number"
+                },
+                "unit_id": {
+                  "type": "integer"
+                },
+                "price": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      },
+      "OfferPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "OfferFileWrite": {
+        "type": "object",
+        "required": [
+          "filename",
+          "content_base64"
+        ],
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Nombre con el que se guardará y se descargará"
+          },
+          "content_base64": {
+            "type": "string",
+            "description": "PDF en Base64 (máximo 15 MB antes de codificar)"
+          }
+        }
+      },
+      "OfferFile": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "integer"
+          },
+          "offer_id": {
+            "type": "integer"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "size_kb": {
+            "type": "number",
+            "description": "Tamaño en KB"
+          },
+          "stored": {
+            "type": "boolean",
+            "description": "true si el fichero está en el almacenamiento de documentos"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "integer"
+          },
+          "serie": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "customer_id": {
+            "type": "integer"
+          },
+          "offer_id": {
+            "type": "integer",
+            "description": "Oferta de la que salió (solo en el detalle)"
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "delivery_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "shipping_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "payment_method": {
+            "type": "string"
+          },
+          "incoterm": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "remarks": {
+            "type": "string"
+          },
+          "vendor": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "description": "Solo en el detalle",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line_id": {
+                  "type": "integer"
+                },
+                "product_id": {
+                  "type": "integer"
+                },
+                "product": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "number",
+                  "description": "En una línea con entregas, lo que queda pendiente"
+                },
+                "final_quantity": {
+                  "type": "number",
+                  "description": "Cantidad final (cantidad de venta)"
+                },
+                "unit_id": {
+                  "type": "integer"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "unit_price": {
+                  "type": "number"
+                },
+                "discount": {
+                  "type": "number"
+                },
+                "vat_rate": {
+                  "type": "number"
+                },
+                "delivery_date": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "En una línea de entrega, la fecha del ANL"
+                },
+                "remarks": {
+                  "type": "string",
+                  "description": "En una línea de entrega, la referencia del ANL"
+                }
+              }
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OrderPatch": {
+        "type": "object",
+        "description": "Solo se cambian los campos enviados.",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "Fecha del pedido"
+          },
+          "delivery_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "shipping_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "payment_method_id": {
+            "type": "integer"
+          },
+          "incoterm_id": {
+            "type": "integer"
+          },
+          "vendor_id": {
+            "type": "integer",
+            "description": "Comercial"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "remarks": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "description": "Solo las líneas que cambian; las demás no se tocan",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line_id": {
+                  "type": "integer",
+                  "description": "Vacío para una línea nueva"
+                },
+                "delete": {
+                  "type": "boolean",
+                  "description": "true para borrar la línea `line_id`"
+                },
+                "product_id": {
+                  "type": "integer",
+                  "description": "Obligatorio en una línea nueva"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "number",
+                  "description": "Obligatorio en una línea nueva"
+                },
+                "final_quantity": {
+                  "type": "number",
+                  "description": "Cantidad final (cantidad de venta)"
+                },
+                "unit_id": {
+                  "type": "integer"
+                },
+                "unit_price": {
+                  "type": "number"
+                },
+                "discount": {
+                  "type": "number"
+                },
+                "delivery_date": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "remarks": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "DeliveryWrite": {
+        "type": "object",
+        "required": [
+          "date",
+          "reference",
+          "lines"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "Fecha de la entrega (la del ANL)"
+          },
+          "reference": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Número del ANL"
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "line_id",
+                "quantity"
+              ],
+              "properties": {
+                "line_id": {
+                  "type": "integer",
+                  "description": "Línea del pedido de la que salen los kilos (la pendiente)"
+                },
+                "quantity": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "Kilos entregados"
+                }
+              }
+            }
+          }
+        }
+      },
+      "OrderPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "InvoiceLine": {
+        "type": "object",
+        "properties": {
+          "line_id": {
+            "type": "integer"
+          },
+          "product_id": {
+            "type": "integer"
+          },
+          "product": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "price": {
+            "type": "number"
+          },
+          "discount": {
+            "type": "number"
+          },
+          "vat_rate": {
+            "type": "number"
+          }
+        }
+      },
+      "SaleInvoice": {
+        "type": "object",
+        "properties": {
+          "invoice_id": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "const": "sale"
+          },
+          "serie": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "accounting_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "customer_id": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "order_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Pedidos de origen (solo en el detalle)"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/Totals"
+          },
+          "accounting_entry_id": {
+            "type": "integer"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceLine"
+            },
+            "description": "Solo en el detalle"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SaleInvoicePage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SaleInvoice"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PurchaseInvoice": {
+        "type": "object",
+        "properties": {
+          "invoice_id": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "const": "purchase"
+          },
+          "serie": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "accounting_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "provider_id": {
+            "type": "integer"
+          },
+          "order_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Pedidos de compra de origen (solo en el detalle)"
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/Totals"
+          },
+          "accounting_entry_id": {
+            "type": "integer"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceLine"
+            },
+            "description": "Solo en el detalle"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PurchaseInvoicePage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PurchaseInvoice"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PurchaseInvoiceWrite": {
+        "type": "object",
+        "required": [
+          "provider_id"
+        ],
+        "properties": {
+          "serie": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "accounting_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "provider_id": {
+            "type": "integer"
+          },
+          "contractor_id": {
+            "type": "integer",
+            "description": "Empresa que recibe la factura"
+          },
+          "status_id": {
+            "type": "integer"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "remarks": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "product_id": {
+                  "type": "integer"
+                },
+                "quantity": {
+                  "type": "number"
+                },
+                "price": {
+                  "type": "number"
+                },
+                "discount": {
+                  "type": "number"
+                },
+                "vat_id": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "AccountingAccount": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountingAccountPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AccountingAccount"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AccountingEntry": {
+        "type": "object",
+        "properties": {
+          "entry_id": {
+            "type": "integer"
+          },
+          "entry_number": {
+            "type": "integer"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "contractor_id": {
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "account": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "debit": {
+                  "type": "number"
+                },
+                "credit": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      },
+      "AccountingEntryPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AccountingEntry"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AccountMovement": {
+        "type": "object",
+        "properties": {
+          "entry_id": {
+            "type": "integer"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "description": {
+            "type": "string"
+          },
+          "debit": {
+            "type": "number"
+          },
+          "credit": {
+            "type": "number"
+          },
+          "balance": {
+            "type": "number",
+            "description": "Saldo acumulado (debe - haber)"
+          }
+        }
+      },
+      "AccountingImport": {
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "contractor_id": {
+                  "type": "integer"
+                },
+                "date": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "lines": {
+                  "type": "array",
+                  "description": "El debe y el haber del asiento tienen que cuadrar",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "account": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "debit": {
+                        "type": "number"
+                      },
+                      "credit": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "AccountingValidation": {
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "entry_index": {
+                  "type": "integer",
+                  "description": "Posición del asiento en el lote, desde 0"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "imported": {
+            "type": "integer",
+            "description": "Asientos guardados (solo al importar)"
+          },
+          "entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Ids de los asientos guardados (solo al importar)"
+          }
+        }
+      },
+      "ThirdParty": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "customer",
+              "provider"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "vat_number": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          }
+        }
+      },
+      "WebhookEvent": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string",
+            "example": "offer.created"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "object_type": {
+            "type": "string",
+            "example": "offer"
+          },
+          "object_id": {
+            "type": "integer"
+          },
+          "related": {
+            "type": "object",
+            "description": "Ids relacionados (p. ej. el cliente de una oferta)"
+          },
+          "changed_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Campos que han cambiado (en los updated)"
+          }
+        }
+      }
+    }
+  }
+}

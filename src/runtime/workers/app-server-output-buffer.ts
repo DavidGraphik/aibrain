@@ -37,3 +37,32 @@ export function takeAppServerOutput(lines: string[]) {
   }
   return merged ? JSON.stringify({ ...initial.value, params: { ...initial.value.params, delta: text } }) : first;
 }
+
+/** Group available notifications without adding a timer or collapsing their
+ * identities. RPCs/auth remain barriers; each group is durable before delivery. */
+export function takeAppServerOutputBatch(lines: string[]) {
+  const first = takeAppServerOutput(lines);
+  if (first === null) return [];
+  const batch = [first];
+  const notification = (line: string) => {
+    const value = parseAppServerStdoutJson(line);
+    return value && typeof value === "object" && !Array.isArray(value) && !("id" in value) && typeof value.method === "string";
+  };
+  if (!notification(first)) return batch;
+  let bytes = Buffer.byteLength(first);
+  while (lines.length && batch.length < 32) {
+    try {
+      if (!notification(lines[0]) || bytes + Buffer.byteLength(lines[0]) > 256 * 1024) break;
+    } catch (error) {
+      if (error instanceof SyntaxError) break; // Preserve the valid prefix before failing closed.
+      throw error;
+    }
+    const next = takeAppServerOutput(lines)!;
+    const nextBytes = Buffer.byteLength(next);
+    // Coalescing can grow the peeked raw fragment. Keep that intact for the
+    // next group rather than exceeding this group's exact byte boundary.
+    if (bytes + nextBytes > 256 * 1024) { lines.unshift(next); break; }
+    bytes += nextBytes; batch.push(next);
+  }
+  return batch;
+}

@@ -299,3 +299,26 @@ describe('SAGE native pending balances and exact origin references',()=>{
   await expect(new SageReader(all,f).read('PurchaseOrder',document)).rejects.toMatchObject({code:'SAGE_COMPANY_SCOPE_INVALID'});
  });
 });
+
+it('cancels provider I/O and keeps a batch fork isolated from a later reader',async()=>{
+ let aborted=false;let active=0;let started!:()=>void;
+ const ready=new Promise<void>(resolve=>{started=resolve;});
+ const f=provider();
+ f.mockImplementationOnce(async(_url,init)=>new Promise<Response>((_resolve,reject)=>{
+  active++;started();init?.signal?.addEventListener('abort',()=>{aborted=true;active--;reject(new Error('transport aborted'));},{once:true});
+ }));
+ f.mockResolvedValueOnce(login()).mockResolvedValueOnce(companies()).mockResolvedValueOnce(catalog()).mockResolvedValueOnce(Response.json([{CompanyId:1,Code:'later'}]));
+ const shared=new SageReader(credential,f);const fork=shared.forkForRead();const controller=new AbortController();
+ const pending=fork.read('Products',{},0,2,controller.signal);
+ await ready;controller.abort();await expect(pending).rejects.toMatchObject({code:'SAGE_READ_CANCELLED'});
+ expect({aborted,active}).toEqual({aborted:true,active:0});
+ expect(await shared.read('Products',{},0,2)).toMatchObject({items:[{CompanyId:1,Code:'later'}]});
+ expect(f.mock.calls.filter(([url])=>String(url).endsWith('auth/Login'))).toHaveLength(2);
+});
+it('does not advance an abandoned authentication even if the transport ignores abort',async()=>{
+ let release!:(response:Response)=>void;const f=vi.fn<typeof fetch>();
+ f.mockImplementationOnce(()=>new Promise<Response>(resolve=>{release=resolve;}));
+ const controller=new AbortController();const pending=new SageReader(credential,f).forkForRead().read('Products',{},0,2,controller.signal);
+ controller.abort();release(login());await expect(pending).rejects.toMatchObject({code:'SAGE_READ_CANCELLED'});
+ expect(f).toHaveBeenCalledTimes(1);
+});

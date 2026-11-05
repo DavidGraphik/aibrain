@@ -30,6 +30,7 @@ const mailFailureHints:Record<string,string>={
 
  SIBEMA_LINE_REFERENCES_UNVERIFIED:'The exact native line descriptions or frozen numeric fields could not be verified. Correct invalid fields before preparation. If the offer was already dispatched, reconcile that same offer and its lines; never create a duplicate or claim all references were saved.',
  MAIL_API_INVALID:'Use mail_api input.operation=discover for exact read/action fields. Correct the request before preparing another action.',
+ MAIL_SEARCH_INTENT_INVALID:'Use either structured criteria or a literal query, never both. Keep every known reference, company, sender and date constraint together and reuse identical criteria with its cursor. Correct invalid fields without dropping constraints or broadening the search silently.',
  ATTIO_API_INVALID_ARGUMENTS:'Discover this exact method/path using attio_api and follow its required parameters and body schema.',
  SIBEMA_API_INVALID_ARGUMENTS:'Use sibema_api discover/schema for the exact provider method/path and required request fields. Preserve expectedOrder guards.',
  PROVIDER_ACCESS_DENIED:'The provider rejected this operation with HTTP 401/403. Check the connected account plan and API scopes; do not substitute another account or claim success.',

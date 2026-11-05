@@ -117,6 +117,23 @@ export class FileTransportEventJournal implements TransportEventJournal {
     return appended !== null;
   }
 
+  async appendBatch(events: readonly AppServerEvent[]) {
+    if (!events.length || events.length > 32 || events.reduce((bytes, event) => bytes + Buffer.byteLength(JSON.stringify(event)), 0) > 512 * 1024) {
+      throw new TransportProtocolError("Invalid event append batch.");
+    }
+    const validated = events.map(event => appServerEventSchema.parse(event));
+    const appended = await this.journal.appendBatchIndexed(validated, (event, existing, lastSequence) => {
+      if (existing) {
+        if (existing.payload.sequence !== event.sequence) throw new TransportProtocolError("Worker reused an eventId with a different sequence.");
+        return false;
+      }
+      if (event.sequence !== lastSequence + 1) throw new TransportProtocolError("Noncontiguous durable event batch.");
+      return true;
+    });
+    for (const [index, event] of validated.entries()) if (appended[index] !== null) this.rememberVerified(event);
+    return appended.map(entry => entry !== null);
+  }
+
   async readEvents(afterSequence = 0, limit = Number.MAX_SAFE_INTEGER, maxBytes?: number) {
     if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 ||
         !Number.isSafeInteger(limit) || limit < 1) {

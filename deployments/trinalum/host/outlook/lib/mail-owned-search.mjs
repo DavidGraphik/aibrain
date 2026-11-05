@@ -66,7 +66,6 @@ export function orderingMailSearchFolders(criteria,folders){
  const terms=[...new Set([...requiredSearchClauses(criteria)].map(x=>JSON.parse(x)).filter(([key])=>['text','subject','body','from','to','cc','bcc'].includes(key)).flatMap(([,value])=>norm(value).match(/[\p{L}\p{N}]{4,64}/gu)??[]).filter(term=>/\p{L}/u.test(term)&&!orderingGenericWords.has(term)))];
  return rankMailSearchFolders(criteria,folders).filter(folder=>{const words=new Set(norm(folder).match(/[\p{L}\p{N}]+/gu)??[]);return terms.some(term=>words.has(term));});
 }
-
 // New searches may compare a company token with a folder segment after
 // punctuation folding. This only orders the authenticated LIST catalog.
 function specificWords(value){
@@ -81,15 +80,15 @@ export function orderingMailSearchFoldersV2(criteria,folders){
 
 // A server-supplied human request is an ordering hint, never provider criteria
 // or authority. Persist only a small data-only plan in the signed search cursor.
-export function humanMailSearchPlan(context,criteria,folders){
+export function humanMailSearchPlan(context,criteria,folders,{folderOrdering='specific-token-v1'}={}){
  if(context==null)return null;
  if(!context||typeof context!=='object'||Array.isArray(context)||Object.keys(context).sort().join(',')!=='humanMessage,sourceMessageId'||typeof context.humanMessage!=='string'||!context.humanMessage.trim()||context.humanMessage.length>8000||context.humanMessage.includes('\0')||typeof context.sourceMessageId!=='string'||!/^[A-Za-z0-9_-]{1,160}$/.test(context.sourceMessageId))throw Object.assign(Error('Invalid internal search context'),{code:'MAIL_API_INVALID'});
  const human=norm(context.humanMessage),paths=folders.map(norm),commandWords=new Set(['busca','buscar','encuentra','muestra','enseñame','original','originales','documento','documentos','necesito','quiero','search','find','show','please','email','mail']);
- const terms=[...new Set(specificWords(human))].filter(term=>!/^[\p{N}]+$/u.test(term)&&!orderingGenericWords.has(term)&&!commandWords.has(term)&&paths.some(path=>folderHasSpecificTerm(path,term))).slice(0,16);
+ const terms=folderOrdering==='specific-token-v2'?[...new Set(specificWords(human))].filter(term=>!/^[\p{N}]+$/u.test(term)&&!orderingGenericWords.has(term)&&!commandWords.has(term)&&paths.some(path=>folderHasSpecificTerm(path,term))).slice(0,16):[...new Set(human.match(/[\p{L}\p{N}]{4,64}/gu)??[])].filter(term=>!/^[\p{N}]+$/u.test(term)&&!genericFolderWords.has(term)&&!commandWords.has(term)&&paths.some(path=>path.includes(term))).slice(0,16);
  const references=(human.match(/[\p{L}\p{N}]+(?:[._:/-][\p{L}\p{N}]+)*/gu)??[]).filter(value=>value.length>=5&&/\p{L}/u.test(value)&&(value.match(/\p{N}/gu)??[]).length>=3);
  const queryValues=positiveSearchValues(criteria).filter(([key])=>['text','subject','body','from','to','cc','bcc'].includes(key)).map(([,value])=>norm(value));
  const latestReceived=/\b(?:ultim[oa]s?|latest|newest|most recent|mas reciente)\b/u.test(human)&&!/\b(?:enviad[oa]s?|sent|borrador(?:es)?|drafts?)\b/u.test(human);
- return {folderOrdering:'specific-token-v2',contextHash:createHash('sha256').update(JSON.stringify(context)).digest('hex'),hintTerms:terms,referenceOmitted:references.length>0&&!references.some(value=>queryValues.some(query=>query.includes(value))),...(latestReceived?{latestReceived:true}:{})};
+ return {folderOrdering,contextHash:createHash('sha256').update(JSON.stringify(context)).digest('hex'),hintTerms:terms,referenceOmitted:references.length>0&&!references.some(value=>queryValues.some(query=>query.includes(value))),...(latestReceived?{latestReceived:true}:{})};
 }
 export function validHumanMailSearchPlan(plan){
  return plan===null||Boolean(plan&&typeof plan==='object'&&!Array.isArray(plan)&&['contextHash,hintTerms,referenceOmitted','contextHash,hintTerms,latestReceived,referenceOmitted','contextHash,folderOrdering,hintTerms,referenceOmitted','contextHash,folderOrdering,hintTerms,latestReceived,referenceOmitted'].includes(Object.keys(plan).sort().join(','))&&(!Object.hasOwn(plan,'folderOrdering')||['specific-token-v1','specific-token-v2'].includes(plan.folderOrdering))&&(!Object.hasOwn(plan,'latestReceived')||plan.latestReceived===true)&&/^[a-f0-9]{64}$/.test(plan.contextHash??'')&&Array.isArray(plan.hintTerms)&&plan.hintTerms.length<=16&&plan.hintTerms.every(term=>typeof term==='string'&&/^[\p{L}\p{N}]{4,64}$/u.test(term))&&typeof plan.referenceOmitted==='boolean');
@@ -127,6 +126,17 @@ export function mailLocatorSelector(criteria){
 // rather than long folder paths, preserving the existing16KB cursor budget.
 export function validMailLocatorPlan(plan,baseCatalog,folderCount){
  return Boolean(plan&&Object.keys(plan).sort().join(',')==='baseCatalog,indices,version'&&plan.version===1&&plan.baseCatalog===baseCatalog&&Array.isArray(plan.indices)&&plan.indices.length<=3&&new Set(plan.indices).size===plan.indices.length&&plan.indices.every(i=>Number.isSafeInteger(i)&&i>=0&&i<folderCount));
+}
+
+// Reference+company overlaps are only ordering hints, never evidence of a
+// match. Queries with changed fields/spacing can reuse a folder learned from a
+// previous exact live match, but vague words, dates or OR alternatives alone
+// never grant access or alter the provider query.
+function strongLocatorOverlap(a,b){
+ const shared=a.filter(value=>b.includes(value));
+ const reference=shared.some(value=>/^\d{7,}$/.test(value)||value.length>=7&&/\p{L}/u.test(value)&&/\d/u.test(value))||shared.filter(value=>/^\d{6,}$/.test(value)).length>=2;
+ const company=shared.some(value=>/^\p{L}{4,}$/u.test(value)&&!orderingGenericWords.has(value));
+ return reference&&company;
 }
 
 /** Private, regenerable metadata from future exact live matches only.
@@ -173,7 +183,7 @@ export class MailLocatorHints{
   const selector=mailLocatorSelector(criteria);if(!selector)return [];
   const scope=await this.directory();if(!scope)return [];
   const {value}=await this.load(scope),allowed=new Set(liveFolders);
-  return [...new Set(value.entries.filter(e=>e.expiresAt>this.now()&&e.key===selector.key&&JSON.stringify(e.tokens)===JSON.stringify(selector.tokens)&&allowed.has(e.folder)).sort((a,b)=>b.learnedAt-a.learnedAt||a.folder.localeCompare(b.folder)).map(e=>e.folder))].slice(0,3);
+  return [...new Set(value.entries.filter(e=>e.expiresAt>this.now()&&allowed.has(e.folder)&&(e.key===selector.key&&JSON.stringify(e.tokens)===JSON.stringify(selector.tokens)||strongLocatorOverlap(selector.tokens,e.tokens))).sort((a,b)=>Number(b.key===selector.key)-Number(a.key===selector.key)||b.learnedAt-a.learnedAt||a.folder.localeCompare(b.folder)).map(e=>e.folder))].slice(0,3);
  }
  async remember(criteria,messages,liveFolders){
   const selector=mailLocatorSelector(criteria);if(!selector)return false;const allowed=new Set(liveFolders),matches=[];
@@ -204,6 +214,46 @@ export class MailLocatorHints{
    await this.check(scope);let named=null;try{named=await lstat(this.file);}catch(e){if(e.code!=='ENOENT')throw e;}if(Boolean(named)!==Boolean(old.stat)||named&&!sameHintFile(named,old.stat))hintInvalid();
    await rename(temp,this.file);temp=null;const dir=await open(this.root,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_DIRECTORY);try{if(!sameInode(scope.dir,await dir.stat()))hintInvalid();await dir.sync();}finally{await dir.close();}return true;
   }finally{await handle.close();if(temp)await unlink(temp).catch(()=>{});if(lockStat){try{const named=await lstat(lock);if(named.dev===lockStat.dev&&named.ino===lockStat.ino&&named.isFile()&&named.nlink===1)await unlink(lock);}catch(e){if(e.code!=='ENOENT')throw e;}}}
+ }
+}
+
+// Only immutable provider search fields are eligible for negative caching.
+// Compiled AND uses NOT/OR algebra; flags, BODY/TEXT and unknown fields fail closed.
+export function immutableEmptyCriteria(value,depth=0){
+ if(!value||typeof value!=='object'||Array.isArray(value)||depth>12)return false;
+ const entries=Object.entries(value);if(!entries.length||entries.length>128)return false;
+ return entries.every(([key,item])=>{
+  if(key==='not')return immutableEmptyCriteria(item,depth+1);
+  if(key==='or')return Array.isArray(item)&&item.length>0&&item.length<=128&&item.every(x=>immutableEmptyCriteria(x,depth+1));
+  if(key==='all')return item===true;
+  return ['subject','from','to','cc','bcc','since','before','on'].includes(key)&&typeof item==='string'&&item.length>0&&item.length<=1000;
+ });
+}
+// Retention only; freshness always requires current LIST UIDNEXT/UIDVALIDITY.
+const EMPTY_TTL=24*60*60*1000,EMPTY_LIMIT=1024,EMPTY_BYTES=256*1024;
+export class EmptyFolderSearchCache extends MailLocatorHints{
+ constructor(dataRoot,mailbox,options={}){super(dataRoot,mailbox,options);this.root=join(this.dataRoot,'search-empty-folders');this.file=join(this.root,this.ownerHash+'.json');}
+ valid(v){return v&&Object.keys(v).sort().join(',')==='entries,owner,version'&&v.version===1&&v.owner===this.ownerHash&&Array.isArray(v.entries)&&v.entries.length<=EMPTY_LIMIT&&v.entries.every(e=>e&&Object.keys(e).sort().join(',')==='expiresAt,folderHash,key,uidNext,uidValidity'&&[e.key,e.folderHash].every(x=>typeof x==='string'&&HINT_HASH.test(x))&&[e.uidNext,e.uidValidity].every(x=>typeof x==='string'&&/^[1-9]\d*$/.test(x))&&Number.isSafeInteger(e.expiresAt)&&e.expiresAt<=this.now()+EMPTY_TTL);}
+ async load(scope){let result;try{result=await this.readFile(scope,this.file,EMPTY_BYTES);}catch(error){if(error.code==='ENOENT')return {value:{version:1,owner:this.ownerHash,entries:[]},stat:null};throw error;}if(!this.valid(result.value))hintInvalid();return result;}
+ selector(criteria,mime){return immutableEmptyCriteria(criteria)&&(mime===null||typeof mime==='string')?hintHash(JSON.stringify([criteria,mime])):null;}
+ async matching(criteria,mime,statusByFolder){
+  const key=this.selector(criteria,mime);if(!key)return new Set();const scope=await this.directory();if(!scope)return new Set();const {value}=await this.load(scope),now=this.now(),found=new Set();
+  for(const [folder,status]of statusByFolder){const folderHash=hintHash(folder);if(value.entries.some(e=>e.key===key&&e.folderHash===folderHash&&e.expiresAt>now&&e.uidNext===status.uidNext&&e.uidValidity===status.uidValidity))found.add(folder);}
+  return found;
+ }
+ async remember(criteria,mime,items){
+  const key=this.selector(criteria,mime);if(!key||!items.length)return false;const scope=await this.directory(true),lock=this.file+'.lock';let handle,lockStat,temp;
+  try{handle=await open(lock,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);}catch(error){if(error.code==='EEXIST')return false;throw error;}
+  try{
+   await handle.chown(scope.parent.uid,scope.parent.gid);await handle.writeFile(JSON.stringify({pid:process.pid}));lockStat=await handle.stat();
+   const old=await this.load(scope),now=this.now(),add=items.map(({folder,status})=>({key,folderHash:hintHash(folder),uidNext:status.uidNext,uidValidity:status.uidValidity,expiresAt:now+EMPTY_TTL}));
+   const identities=new Set(add.map(e=>e.folderHash));const entries=old.value.entries.filter(e=>e.expiresAt>now&&!(e.key===key&&identities.has(e.folderHash)));entries.push(...add);entries.sort((a,b)=>b.expiresAt-a.expiresAt||a.folderHash.localeCompare(b.folderHash));
+   const value={version:1,owner:this.ownerHash,entries:entries.slice(0,EMPTY_LIMIT)};while(Buffer.byteLength(JSON.stringify(value))>EMPTY_BYTES)value.entries.pop();
+   temp=join(this.root,'.'+this.ownerHash+'.'+randomUUID()+'.tmp');const out=await open(temp,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+   try{await out.chown(scope.parent.uid,scope.parent.gid);await out.writeFile(JSON.stringify(value));await out.sync();}finally{await out.close();}
+   await this.check(scope);let named=null;try{named=await lstat(this.file);}catch(error){if(error.code!=='ENOENT')throw error;}if(Boolean(named)!==Boolean(old.stat)||named&&!sameHintFile(named,old.stat))hintInvalid();
+   await rename(temp,this.file);temp=null;const dir=await open(this.root,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_DIRECTORY);try{if(!sameInode(scope.dir,await dir.stat()))hintInvalid();await dir.sync();}finally{await dir.close();}return true;
+  }finally{if(temp)await unlink(temp).catch(()=>{});if(handle)await handle.close();try{if(lockStat&&sameHintFile(lockStat,await lstat(lock)))await unlink(lock);}catch{}}
  }
 }
 

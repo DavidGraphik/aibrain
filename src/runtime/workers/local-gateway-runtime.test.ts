@@ -240,6 +240,47 @@ describe("private per-user worker gateway", () => {
     });
   }
 
+  it("durably batches queued notifications before exposing them and replays each identity after restart", async () => {
+    await writeFile(fakeServer, [
+      'import {createInterface} from "node:readline";',
+      'createInterface({input:process.stdin}).on("line",line=>{const r=JSON.parse(line);if(r.id===undefined)return;',
+      'process.stdout.write(JSON.stringify({id:r.id,result:{}})+"\\n"+Array.from({length:40},(_,i)=>JSON.stringify({method:"warning",params:{threadId:null,message:"note-"+i}})).join("\\n")+"\\n");});',
+    ].join("\n"));
+    const original=FileTransportEventJournal.prototype.appendBatch;
+    let release!:()=>void,entered=false;const held=new Promise<void>(resolve=>{release=resolve;});
+    const sizes:number[]=[];
+    vi.spyOn(FileTransportEventJournal.prototype,"appendBatch").mockImplementation(async function(this: FileTransportEventJournal, events){
+      if(this.filePath.endsWith("gateway-events.jsonl")){sizes.push(events.length);entered=true;await held;}
+      return original.call(this,events);
+    });
+    const worker=gateway();await worker.start();const client=transport(worker);
+    try {
+      await client.connect();await client.send(initializeRequest("burst"));
+      expect((await nextEvent(client)).value?.message.kind).toBe("rpc-response");
+      await vi.waitFor(()=>expect(entered).toBe(true));
+      let exposed=false;const pending=nextEvent(client).then(value=>{exposed=true;return value;});
+      await new Promise(resolve=>setTimeout(resolve,25));expect(exposed).toBe(false);
+      release();const received=[(await pending).value!];
+      for(let i=1;i<40;i++)received.push((await nextEvent(client)).value!);
+      expect(received.map(e=>e.message.kind==="rpc-notification"&&e.message.rpc.method==="warning"?e.message.rpc.params.message:null)).toEqual(Array.from({length:40},(_,i)=>"note-"+i));
+      expect(sizes).toEqual([32,8]);
+      const cold=new FileTransportEventJournal({filePath:path.join(context.transportAudit,"gateway-events.jsonl"),lockManager:new ResourceLockManager({rootDirectory:path.join(context.transportAudit,"cold-locks")})});
+      expect((await cold.readEvents()).slice(1)).toEqual(received);
+    } finally {release();await client.close();await worker.stop();}
+  });
+
+  it("preserves valid queued notifications before failing closed on a malformed protocol member", async () => {
+    await writeFile(fakeServer, [
+      'const rows=[{method:"warning",params:{threadId:null,message:"valid-1"}},{method:"warning",params:{threadId:null,message:"valid-2"}},{method:"warning",params:{threadId:null,message:123}}];',
+      'setTimeout(()=>process.stdout.write(rows.map(x=>JSON.stringify(x)).join("\\n")+"\\n"),100);process.stdin.resume();',
+    ].join("\n"));
+    const worker=gateway();await worker.start();
+    try {await vi.waitFor(async()=>expect((await worker.health()).state).toBe("failed"),{timeout:5000});}
+    finally {await worker.stop();}
+    const entries=(await readFile(path.join(context.transportAudit,"gateway-events.jsonl"),"utf8")).trim().split("\n").map(line=>JSON.parse(line));
+    expect(entries.map(x=>x.payload.message.rpc.params.message)).toEqual(["valid-1","valid-2"]);
+  });
+
   it("persists a private structural failure receipt across worker restart without retaining raw stdout or stderr",async()=>{
     await writeFile(fakeServer, 'setTimeout(()=>{process.stderr.write("Bearer private-stderr-token");process.stdout.write("{invalid-private-provider-body\\n");},100);process.stdin.resume();');
     const worker=gateway();await worker.start();

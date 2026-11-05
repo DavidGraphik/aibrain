@@ -58,7 +58,7 @@ describe("authenticated mail folder ordering", () => {
     expect(queries).toEqual([{ subject: "AcmeWorks" }]);
     expect(first.coverage.totalFolders).toBe(folders.length);
     expect(first.complete).toBe(false);
-    expect(first.warning).toContain("historical coverage is partial");
+    expect(first.warning).toMatch(/historical coverage (?:is|remains) partial/);
     expect(first.candidates).toBeUndefined();
     const state = api.uncursor(first.cursor);
     expect(state.folderOrderVersion).toBe("v2");

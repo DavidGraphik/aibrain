@@ -103,9 +103,23 @@ it('does not expose project private keys, workspace files, assistant-only stagin
  const orphan=path.dirname(u.metadata).replace(u.reference.uploadId,randomUUID());await mkdir(orphan,{mode:0o700});const metadata=JSON.parse(await readFile(u.metadata,'utf8'));metadata.uploadId=path.basename(orphan);metadata.fileName='clave-exp40.pdf';metadata.relativePath=`threads/${f.source.id}/uploads/${metadata.uploadId}/clave-exp40.pdf`;await writeFile(path.join(orphan,'upload.json'),JSON.stringify(metadata),{mode:0o600});await writeFile(path.join(orphan,'clave-exp40.pdf'),u.bytes,{mode:0o600});
  const page=await searchConversationAttachments({fileName:'clave-exp40'},f.context);expect(page.results).toEqual([]);expect(JSON.stringify(page)).not.toContain('secret-key-for-project-only');expect(JSON.stringify(page)).not.toContain('Secret historical chat body');await expect(openConversationAttachment({threadId:f.source.id,messageId:u.human.id,uploadId:metadata.uploadId},f.context)).rejects.toThrow('INACCESSIBLE');
 });
-it('offers Trinalum only attachment tools and rejects general history even with a valid session',async()=>{
- const f=await fixture();const trinalum=conversationToolsForInstallation('trinalum-production',true);expect(trinalum.flatMap(t=>t.type==='namespace'?t.tools.map(x=>x.name):[])).toEqual(['search_attachments','open_attachment']);expect(conversationToolsForInstallation('trinalum-production',false)).toEqual([]);expect(conversationToolsForInstallation('g03-production',true).flatMap(t=>t.type==='namespace'?t.tools.map(x=>x.name):[])).toEqual(['list','read','search_attachments','reference_historical_pdf']);expect(conversationToolsForInstallation('g03-production',false).flatMap(t=>t.type==='namespace'?t.tools.map(x=>x.name):[])).toEqual(['list','read']);expect(conversationToolsForInstallation('g03-qa',true).flatMap(t=>t.type==='namespace'?t.tools.map(x=>x.name):[])).toEqual(['list','read']);
- for(const tool of ['list','read']){const result=await handleConversationDynamicToolCall({namespace:'aibrain_conversations',tool,arguments:{threadId:f.source.id},threadId:'runtime',turnId:'turn',callId:'call'},{session:f.sessions[0],installationId:'trinalum-production',userId:f.user,runtimeThreadId:'runtime',runtimeTurnId:'turn',allowHistory:true,attachments:f.context});expect(result).toMatchObject({success:false});}
+it('composes session-authorized history with only the supported attachment operations', async () => {
+ const f = await fixture(); await f.upload();
+ const names = (installation: string, foreground: boolean) => conversationToolsForInstallation(installation, foreground).flatMap(t => t.type === 'namespace' ? t.tools.map(x => x.name) : []);
+ expect(names('trinalum-production', true)).toEqual(['list', 'read', 'search_attachments', 'open_attachment']);
+ expect(names('trinalum-production', false)).toEqual(['list', 'read']);
+ expect(names('g03-production', true)).toEqual(['list', 'read', 'search_attachments', 'reference_historical_pdf']);
+ expect(names('g03-production', false)).toEqual(['list', 'read']);
+ expect(names('company-synthetic', true)).toEqual(['list', 'read']);
+ const context = {session:f.sessions[0], installationId:'trinalum-production', userId:f.user, runtimeThreadId:'runtime', runtimeTurnId:'turn', allowHistory:true, attachments:f.context};
+ const response = await handleConversationDynamicToolCall({namespace:'aibrain_conversations', tool:'read', arguments:{threadId:f.source.id}, threadId:'runtime', turnId:'turn', callId:'call'}, context);
+ expect(response.success).toBe(true);
+ expect(JSON.stringify(response)).toContain('Secret historical chat body');
+ const denied = await handleConversationDynamicToolCall({namespace:'aibrain_conversations', tool:'read', arguments:{threadId:f.source.id}, threadId:'runtime', turnId:'turn', callId:'call'}, {...context, session:f.sessions[1], userId:f.foreign});
+ expect(denied.success).toBe(false);
+ expect(JSON.stringify(denied)).not.toContain('Secret historical chat body');
+ const disabled = await handleConversationDynamicToolCall({namespace:'aibrain_conversations', tool:'read', arguments:{threadId:f.source.id}, threadId:'runtime', turnId:'turn', callId:'call'}, {...context, allowHistory:false});
+ expect(disabled.success).toBe(false);
 });
 it('bounds a page to100staged metadata records and continues without re-reading chat bodies for unmatched filenames',async()=>{
  const f=await fixture(),u=await f.upload();const root=path.dirname(path.dirname(u.file));const metadata=JSON.parse(await readFile(u.metadata,'utf8'));

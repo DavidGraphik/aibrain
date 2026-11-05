@@ -17,6 +17,7 @@ function mcp(id: string): CatalogResource {
   return { ...app(id), kind: "mcp", appId: null, mcp: { server: id, readTools: ["read"], sensitiveWriteTools: [] } };
 }
 const check = (resources: readonly CatalogResource[], userId = "user-a") => nativeConnectionHealthForIdentity("tenant-a", userId, resources);
+const callableTools = { read: { name: "read", inputSchema: { type: "object" } } };
 const connected = { status: "connected", statusCode: null };
 
 describe("native connection health for an authenticated catalog identity", () => {
@@ -32,26 +33,26 @@ describe("native connection health for an authenticated catalog identity", () =>
   });
 
   it("binds each lookup to its exact tenant/user and queries only the requested resource kinds", async () => {
-    mocks.request.mockResolvedValue({ data: [{ id: "files", isEnabled: true, isAccessible: true }], nextCursor: null });
+    mocks.request.mockResolvedValue({ apps: [{ id: "files", enabled: true, callable: true }] });
     expect((await check([app("files")])).get("resource-files")).toEqual(connected);
     expect(mocks.transportForUser).toHaveBeenCalledExactlyOnceWith("tenant-a", "user-a");
-    expect(mocks.request).toHaveBeenCalledExactlyOnceWith("app/list", { forceRefetch: true, threadId: null }, "connector-native-connection-health", 10_000);
-    mocks.request.mockClear().mockResolvedValue({ data: [{ name: "files", runtimeStatus: "connected", authStatus: "oAuth" }], nextCursor: null });
+    expect(mocks.request).toHaveBeenCalledExactlyOnceWith("app/installed", { forceRefresh: true, threadId: null }, "connector-native-connection-health", 10_000);
+    mocks.request.mockClear().mockResolvedValue({ data: [{ name: "files", runtimeStatus: "connected", authStatus: "oAuth", toolsError: null, tools: callableTools }], nextCursor: null });
     expect((await check([mcp("files")], "user-b")).get("resource-files")).toEqual(connected);
     expect(mocks.transportForUser).toHaveBeenLastCalledWith("tenant-a", "user-b");
     expect(mocks.request).toHaveBeenCalledExactlyOnceWith("mcpServerStatus/list", { detail: "toolsAndAuthOnly", threadId: null }, "connector-native-connection-health", 10_000);
   });
 
-  it("requires enabled, accessible apps and maps missing or malformed apps without affecting healthy ones", async () => {
-    mocks.request.mockResolvedValue({ data: [
-      { id: "ready", isEnabled: true, isAccessible: true, providerRef: "private-reference" },
-      { id: "login", isEnabled: true, isAccessible: false },
-      { id: "disabled", isEnabled: false, isAccessible: true },
-      { id: "malformed", isEnabled: true },
+  it("requires enabled, callable installed apps and maps missing or malformed apps without affecting healthy ones", async () => {
+    mocks.request.mockResolvedValue({ apps: [
+      { id: "ready", enabled: true, callable: true, providerRef: "private-reference" },
+      { id: "login", enabled: true, callable: false },
+      { id: "disabled", enabled: false, callable: true },
+      { id: "malformed", enabled: true },
     ], nextCursor: null });
     const result = await check(["ready", "login", "disabled", "malformed", "absent"].map(app));
     expect(result.get("resource-ready")).toEqual(connected);
-    expect(result.get("resource-login")).toMatchObject({ status: "reauth_required" });
+    expect(result.get("resource-login")).toMatchObject({ status: "degraded", statusCode: "NATIVE_APP_NOT_CALLABLE" });
     expect(result.get("resource-disabled")).toMatchObject({ status: "not_configured" });
     expect(result.get("resource-malformed")).toMatchObject({ status: "degraded" });
     expect(result.get("resource-absent")).toMatchObject({ status: "not_configured" });
@@ -60,13 +61,13 @@ describe("native connection health for an authenticated catalog identity", () =>
 
   it("requires a connected MCP runtime and handles login and unavailable states independently", async () => {
     const rows = [
-      { name: "ready", runtimeStatus: "connected", authStatus: "oAuth" },
-      { name: "noauth", runtimeStatus: "connected", authStatus: "unsupported" },
-      { name: "unknown-auth", runtimeStatus: "connected", authStatus: "unknown" },
-      { name: "login", runtimeStatus: "connected", authStatus: "notLoggedIn" },
-      { name: "authenticate", runtimeStatus: "authenticationRequired", authStatus: "unknown" },
-      { name: "starting", runtimeStatus: "starting", authStatus: "oAuth" },
-      { name: "failed", runtimeStatus: "failed", authStatus: "oAuth" },
+      { name: "ready", runtimeStatus: "connected", authStatus: "oAuth", toolsError: null, tools: callableTools },
+      { name: "noauth", runtimeStatus: "connected", authStatus: "unsupported", toolsError: null, tools: callableTools },
+      { name: "unknown-auth", runtimeStatus: "connected", authStatus: "unknown", toolsError: null, tools: callableTools },
+      { name: "login", runtimeStatus: "connected", authStatus: "notLoggedIn", toolsError: null, tools: callableTools },
+      { name: "authenticate", runtimeStatus: "authenticationRequired", authStatus: "unknown", toolsError: null, tools: callableTools },
+      { name: "starting", runtimeStatus: "starting", authStatus: "oAuth", toolsError: null, tools: callableTools },
+      { name: "failed", runtimeStatus: "failed", authStatus: "oAuth", toolsError: null, tools: callableTools },
       { name: "malformed", runtimeStatus: "connected" },
     ];
     mocks.request.mockResolvedValue({ data: rows, nextCursor: null });
@@ -76,24 +77,44 @@ describe("native connection health for an authenticated catalog identity", () =>
     for (const name of ["starting", "failed", "malformed", "absent"]) expect(result.get(`resource-${name}`)).toMatchObject({ status: "degraded" });
   });
 
-  it("follows server cursors beyond twenty pages, including empty filtered pages, for apps and MCP", async () => {
+  it("does not call a MCP connected when tool discovery failed or only disallowed tools exist", async () => {
+    for (const entry of [
+      { toolsError: "provider unavailable", tools: callableTools },
+      { toolsError: null, tools: {} },
+      { toolsError: null, tools: { foreign: { name: "foreign", inputSchema: { type: "object" } } } },
+    ]) {
+      mocks.request.mockResolvedValue({ data: [{ name: "files", runtimeStatus: "connected", authStatus: "oAuth", ...entry }], nextCursor: null });
+      expect((await check([mcp("files")])).get("resource-files")).toMatchObject({ status: "degraded" });
+    }
+  });
+
+  it("counts a write-only MCP tool only with a current effective write grant", async () => {
+    const resource = mcp("files");
+    resource.mcp = { server: "files", readTools: [], sensitiveWriteTools: ["write"] };
+    mocks.request.mockResolvedValue({ data: [{ name: "files", runtimeStatus: "connected", authStatus: "oAuth", toolsError: null,
+      tools: { write: { name: "write", inputSchema: { type: "object" } } } }], nextCursor: null });
+    expect((await check([resource])).get("resource-files")).toMatchObject({ status: "degraded" });
+    expect((await nativeConnectionHealthForIdentity("tenant-a", "user-a", [resource], new Set([resource.id]))).get(resource.id)).toEqual(connected);
+  });
+
+  it("uses one installed-app snapshot and follows MCP cursors including empty filtered pages", async () => {
     mocks.request.mockImplementation(async (method, params) => {
+      if (method === "app/installed") return { apps: [{ id: "files", enabled: true, callable: true }] };
       const page = params.cursor === undefined ? 0 : Number(String(params.cursor).slice(5));
       if (page < 25) return { data: [], nextCursor: `page-${page + 1}` };
-      return { data: method === "app/list" ? [{ id: "files", isEnabled: true, isAccessible: true }]
-        : [{ name: "search", runtimeStatus: "connected", authStatus: "bearerToken" }], nextCursor: null };
+      return { data: [{ name: "search", runtimeStatus: "connected", authStatus: "bearerToken", toolsError: null, tools: callableTools }], nextCursor: null };
     });
     expect(await check([app("files"), mcp("search")])).toEqual(new Map([
       ["resource-files", connected], ["resource-search", connected],
     ]));
-    expect(mocks.request).toHaveBeenCalledTimes(52);
-    expect(mocks.request.mock.calls.every(([, params]) => params.limit === undefined)).toBe(true);
+    expect(mocks.request).toHaveBeenCalledTimes(27);
+    expect(mocks.request.mock.calls.filter(([method]) => method === "app/installed")).toHaveLength(1);
   });
 
   it("never matches a foreign server through a legacy alias or exports unrequested provider entries", async () => {
     mocks.request.mockResolvedValue({ data: [
       { name: "foreign", server: "allowed", runtimeStatus: "connected", authStatus: "oAuth", providerRef: "foreign-private" },
-      { server: "allowed", runtimeStatus: "connected", authStatus: "oAuth" },
+      { server: "allowed", runtimeStatus: "connected", authStatus: "oAuth", toolsError: null, tools: callableTools },
     ], nextCursor: null });
     const result = await check([mcp("allowed")]);
     expect([...result.keys()]).toEqual(["resource-allowed"]);
@@ -101,19 +122,19 @@ describe("native connection health for an authenticated catalog identity", () =>
     expect(JSON.stringify([...result])).not.toMatch(/foreign|providerRef/);
   });
 
-  it.each(["app/list", "mcpServerStatus/list"])("isolates a %s provider failure from the other inventory", async failingMethod => {
+  it.each(["app/installed", "mcpServerStatus/list"])("isolates a %s provider failure from the other inventory", async failingMethod => {
     mocks.request.mockImplementation(async method => {
       if (method === failingMethod) throw new Error("private provider failure");
-      return { data: method === "app/list" ? [{ id: "files", isEnabled: true, isAccessible: true }]
-        : [{ name: "search", runtimeStatus: "connected", authStatus: "oAuth" }], nextCursor: null };
+      return method === "app/installed" ? { apps: [{ id: "files", enabled: true, callable: true }] }
+        : { data: [{ name: "search", runtimeStatus: "connected", authStatus: "oAuth", toolsError: null, tools: callableTools }], nextCursor: null };
     });
     const result = await check([app("files"), mcp("search")]);
-    expect(result.get(failingMethod === "app/list" ? "resource-files" : "resource-search")).toMatchObject({ status: "degraded" });
-    expect(result.get(failingMethod === "app/list" ? "resource-search" : "resource-files")).toEqual(connected);
+    expect(result.get(failingMethod === "app/installed" ? "resource-files" : "resource-search")).toMatchObject({ status: "degraded" });
+    expect(result.get(failingMethod === "app/installed" ? "resource-search" : "resource-files")).toEqual(connected);
     expect(JSON.stringify([...result])).not.toContain("private provider failure");
   });
 
-  it("fails closed for a transport failure, malformed page, cursor cycle or duplicate entry", async () => {
+  it("fails closed for a transport failure, malformed installed snapshot or duplicate entry", async () => {
     mocks.transportForUser.mockRejectedValueOnce(new Error("private auth failure"));
     const failed = await check([app("files"), mcp("search")]);
     expect([...failed.values()]).toEqual([
@@ -122,9 +143,9 @@ describe("native connection health for an authenticated catalog identity", () =>
     ]);
     expect(mocks.request).not.toHaveBeenCalled();
     for (const response of [
-      { data: null, nextCursor: null },
-      { data: [{ id: "files", isEnabled: true, isAccessible: true }], nextCursor: "repeat" },
-      { data: [{ id: "files", isEnabled: true, isAccessible: true }, { id: "files", isEnabled: true, isAccessible: true }], nextCursor: null },
+      { apps: null },
+      { apps: [{ id: "files", enabled: true }] },
+      { apps: [{ id: "files", enabled: true, callable: true }, { id: "files", enabled: true, callable: true }] },
     ]) {
       mocks.request.mockResolvedValue(response);
       expect((await check([app("files")])).get("resource-files")).toMatchObject({ status: "degraded" });

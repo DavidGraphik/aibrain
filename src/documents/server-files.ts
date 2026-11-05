@@ -3,6 +3,7 @@ import { readG03PagedSpreadsheet } from "./g03-paged-spreadsheet";
 import { FileDocumentConversionGate } from "./conversion-gate";
 import { serverUserRoots, serverPathAllowed } from "./server-user-access";
 import { randomUUID, createHash } from "node:crypto";
+import { DurableNameCursors, CURSOR_MAX_BYTES } from "./server-name-cursors";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { createConnection } from "node:net";
 import path from "node:path";
@@ -12,39 +13,18 @@ import type { EnterpriseDocumentNetwork, EnterpriseDocumentRoot } from "./enterp
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 type ServerResult = { available: boolean; results?: unknown[]; [key: string]: unknown };
 type NameWork = { query: string; depth: number };
+type NameMatch = { item: unknown; origin: string };
+type NameReplay = { version: 1; result: ServerResult; matches: NameMatch[] };
 type NameCursor = {
   installation: string; userId: string; roots: string; userRoots: string;
   needle: string; queryText: string; queue: NameWork[]; visited: string[];
-  found: string[]; buffered: unknown[]; incomplete: boolean; priorPagesExcluded: boolean;
+  found: string[]; buffered: NameMatch[]; incomplete: boolean; priorPagesExcluded: boolean;
   checkedAt: string | null; expires: number; busy?: boolean; replay?: ServerResult;
 };
-// Cursors hold traversal state server-side: an unguessable reference is never an
-// access grant. They are deliberately bounded and short-lived, and revalidated
-// against the caller and their current roots on every continuation.
-const nameCursors = new Map<string, NameCursor>();
+// One bounded request yields a resumable, private persistent cursor.
 const NAME_CURSOR_TTL_MS = 10 * 60_000;
-const MAX_NAME_CURSORS = 16;
-const MAX_NAME_VISITED = 2_000;
-const MAX_NAME_QUEUE = 1_024;
-// Keep one in-flight Windows operation; group a few more sequential pages per
-// model call without raising the connector's per-operation timeout or limits.
 const NAME_SEARCH_MAX_PAGES = 40;
 const NAME_SEARCH_MAX_MS = 25_000;
-function saveNameCursor(state: NameCursor): string | null {
-  const now = Date.now();
-  for (const [key, value] of nameCursors) if (value.expires <= now) nameCursors.delete(key);
-  // Consumed cursors are kept briefly for safe retries, but never starve a
-  // running traversal when the bounded cache fills.
-  if (nameCursors.size >= MAX_NAME_CURSORS) {
-    const oldReplay = [...nameCursors].find(([, value]) => value.replay && !value.busy);
-    if (oldReplay) nameCursors.delete(oldReplay[0]);
-  }
-  if (nameCursors.size >= MAX_NAME_CURSORS) return null;
-  const id = randomUUID();
-  nameCursors.set(id, { ...state, expires: now + NAME_CURSOR_TTL_MS, busy: false, replay: undefined });
-  setTimeout(() => nameCursors.delete(id), NAME_CURSOR_TTL_MS).unref();
-  return `name-cursor:${id}`;
-}
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -94,7 +74,7 @@ function isDirectDirectoryChild(query: string, itemPath: string): boolean {
 /** A trusted app-side client; employees never receive its socket or credentials. */
 export class ServerDocumentFiles {
   constructor(private readonly network: EnterpriseDocumentNetwork,
-    private readonly options: { ownerUid?: number; timeoutMs?: number; signal?: AbortSignal; userId?: string; legacyWordReader?: typeof legacyWordText; spreadsheetReader?: typeof readG03PagedSpreadsheet } = {}) {}
+    private readonly options: { ownerUid?: number; timeoutMs?: number; signal?: AbortSignal; userId?: string; cursorMinimumFreeBytes?: number; legacyWordReader?: typeof legacyWordText; spreadsheetReader?: typeof readG03PagedSpreadsheet } = {}) {}
 
   /** Navigation is trusted per-installation configuration, never a cached live listing. */
   async navigation(roots: readonly EnterpriseDocumentRoot[]): Promise<ServerResult | null> {
@@ -156,52 +136,95 @@ export class ServerDocumentFiles {
     const userRoots = await serverUserRoots(this.network.config.installationId, this.network.config.paths.dataRoot, this.options.userId, owner);
     const binding = JSON.stringify(roots), rootsBinding = JSON.stringify(userRoots);
     const cursorMatch = /^name-cursor:([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/u.exec(query);
-    let prior: NameCursor | undefined;
+    const cursorBinding = { installation: this.network.config.installationId, userId: this.options.userId ?? "", roots: binding, userRoots: rootsBinding };
+    let store: DurableNameCursors;
+    try { store = new DurableNameCursors(this.network.config.paths.dataRoot, Date.now, this.options.cursorMinimumFreeBytes); }
+    catch { return { available: false, limited: true, error: "SEARCH_STORAGE_UNAVAILABLE", nextQuery: cursorMatch ? query : null, warning: "No se puede guardar una búsqueda recuperable; no se ha completado." }; }
+    let prior: { id: string; lease: string } | null = null;
     let state: NameCursor;
-    if (query.startsWith("name-cursor:")) {
-      prior = cursorMatch ? nameCursors.get(cursorMatch[1]) : undefined;
-      if (!prior || !this.options.userId || prior.expires <= Date.now() || prior.installation !== this.network.config.installationId ||
-          prior.userId !== this.options.userId || prior.roots !== binding || prior.userRoots !== rootsBinding) {
-        return { available: false, limited: true, error: "SEARCH_CURSOR_EXPIRED_OR_DENIED", warning: "La continuación ha caducado o ya no está autorizada. Inicia una búsqueda nueva; no presupongas que la anterior terminó." };
+    const signal = this.options.signal ? AbortSignal.any([this.options.signal, AbortSignal.timeout(NAME_SEARCH_MAX_MS)]) : AbortSignal.timeout(NAME_SEARCH_MAX_MS);
+    const bounded = new ServerDocumentFiles(this.network, { ...this.options, signal, timeoutMs: Math.min(this.options.timeoutMs ?? 8_000, 8_000) });
+    const sourceRecheckFailure = (): ServerResult => ({ available: false, limited: true, error: "SEARCH_SOURCE_RECHECK", nextQuery: cursorMatch ? query : null,
+      warning: "No se han podido volver a comprobar los resultados guardados en Windows. Reintenta la continuación o inicia una búsqueda nueva; no se ha demostrado que hayan desaparecido." });
+    const recheck = async (matches: NameMatch[]): Promise<NameMatch[] | null> => {
+      const checked = new Map<string, ServerResult>();
+      const refreshed: NameMatch[] = [];
+      for (const match of matches) {
+        if (signal.aborted || !record(match) || typeof match.origin !== "string" || !record(match.item) ||
+            typeof match.item.path !== "string" || !serverPathAllowed(match.item.path, userRoots) ||
+            !isDirectDirectoryChild(match.origin, match.item.path)) return null;
+        const currentRoots = await serverUserRoots(this.network.config.installationId, this.network.config.paths.dataRoot, this.options.userId, owner);
+        if (JSON.stringify(currentRoots) !== rootsBinding) return null;
+        let page = checked.get(match.origin);
+        if (!page) {
+          page = await bounded.call(roots, "browse", { query: match.origin, limit: 50 }) ?? undefined;
+          if (!page?.available || page.sourceChecked !== true || !Array.isArray(page.results)) return null;
+          checked.set(match.origin, page);
+        }
+        const current = page.results?.find(item => record(item) && item.path === (match.item as Record<string, unknown>).path &&
+          item.kind === (match.item as Record<string, unknown>).kind && typeof item.path === "string" &&
+          serverPathAllowed(item.path, userRoots) && isDirectDirectoryChild(match.origin, item.path));
+        if (!current) return null;
+        refreshed.push({ item: current, origin: match.origin });
       }
-      if (prior.busy) return { available: false, limited: true, error: "SEARCH_CURSOR_BUSY", warning: "La continuación ya está en curso; vuelve a consultar el mismo cursor cuando termine." };
-      if (prior.replay) return prior.replay;
-      prior.busy = true;
-      state = { ...prior, queue: prior.queue.map(item => ({ ...item })), visited: [...prior.visited], found: [...prior.found], buffered: [...prior.buffered] };
-    } else {
-      const match = /^(?:name:)?(.+?)(?:\s+in:(server:\/.+))?$/u.exec(query);
-      if (!match || /[\\/]/u.test(match[1])) throw new Error("Invalid server name query");
-      const needle = match[1].trim().normalize("NFC").toLocaleLowerCase();
-      if (!needle) throw new Error("Invalid server name query");
-      const entries = (navigation.results ?? []).filter(record).filter(item => typeof item.path === "string");
-      let seeds = userRoots ?? entries.map(item => String(item.path));
-      if (match[2]) {
-        const location = canonicalDirectoryQuery(match[2]).slice(8);
-        seeds = seeds.map(root => `server-${root.split("/")[0].slice(7)}/${location}`).filter(root => serverPathAllowed(root, userRoots));
-      }
-      seeds = [...new Set(seeds)].filter(root => entries.some(entry => String(entry.path).split("/")[0] === root.split("/")[0]));
-      state = { installation: this.network.config.installationId, userId: this.options.userId ?? "", roots: binding, userRoots: rootsBinding,
-        needle, queryText: match[1].trim(), queue: seeds.map(root => ({ query: canonicalDirectoryQuery(`server:/${root.split("/").slice(1).join("/")}`), depth: 0 })),
-        visited: [], found: [], buffered: [], incomplete: false, priorPagesExcluded: Boolean(match[2]?.includes("?offset=")), checkedAt: null, expires: Date.now() + NAME_CURSOR_TTL_MS };
-    }
+      return refreshed;
+    };
     try {
+      if (query.startsWith("name-cursor:")) {
+        const admission = cursorMatch && this.options.userId ? store.acquire<NameCursor, NameReplay>(cursorMatch[1], cursorBinding) : { kind: "denied" as const };
+        if (admission.kind === "denied") { return { available: false, limited: true, error: "SEARCH_CURSOR_EXPIRED_OR_DENIED", warning: "La continuación ha caducado o ya no está autorizada. Inicia una búsqueda nueva; no presupongas que la anterior terminó." }; }
+        if (admission.kind === "busy") { return { available: false, limited: true, error: "SEARCH_CURSOR_BUSY", warning: "La continuación ya está en curso; vuelve a consultar el mismo cursor cuando termine." }; }
+        if (admission.kind === "replay") {
+          const saved = admission.result;
+          if (!record(saved) || saved.version !== 1 || !record(saved.result) || !Array.isArray(saved.matches)) return sourceRecheckFailure();
+          const fresh = await recheck(saved.matches);
+          await this.network.validateSyncRoots(roots);
+          const latest = await serverUserRoots(this.network.config.installationId, this.network.config.paths.dataRoot, this.options.userId, owner);
+          if (!fresh || JSON.stringify(latest) !== rootsBinding) return sourceRecheckFailure();
+          return { ...saved.result, results: fresh.map(match => match.item), checkedAt: fresh.length ? new Date().toISOString() : saved.result.checkedAt };
+        }
+        prior = { id: cursorMatch![1], lease: admission.lease };
+        state = admission.state;
+      } else {
+        const match = /^(?:name:)?(.+?)(?:\s+in:(server:\/.+))?$/u.exec(query);
+        if (!match || /[\\/]/u.test(match[1])) { throw new Error("Invalid server name query"); }
+        const needle = match[1].trim().normalize("NFC").toLocaleLowerCase();
+        if (!needle) { throw new Error("Invalid server name query"); }
+        const entries = (navigation.results ?? []).filter(record).filter(item => typeof item.path === "string");
+        let seeds = userRoots ?? entries.map(item => String(item.path));
+        if (match[2]) {
+          const location = canonicalDirectoryQuery(match[2]).slice(8);
+          seeds = seeds.map(root => `server-${root.split("/")[0].slice(7)}/${location}`).filter(root => serverPathAllowed(root, userRoots));
+        }
+        seeds = [...new Set(seeds)].filter(root => entries.some(entry => String(entry.path).split("/")[0] === root.split("/")[0]));
+        state = { installation: this.network.config.installationId, userId: this.options.userId ?? "", roots: binding, userRoots: rootsBinding,
+          needle, queryText: match[1].trim(), queue: seeds.map(root => ({ query: canonicalDirectoryQuery(`server:/${root.split("/").slice(1).join("/")}`), depth: 0 })),
+          visited: [], found: [], buffered: [], incomplete: false, priorPagesExcluded: Boolean(match[2]?.includes("?offset=")), checkedAt: null, expires: Date.now() + NAME_CURSOR_TTL_MS };
+      }
       const queue = state.queue, visited = new Set(state.visited), found = new Set(state.found);
-      const results = state.buffered.splice(0, limit), coverage: string[] = [];
-      const signal = this.options.signal ? AbortSignal.any([this.options.signal, AbortSignal.timeout(NAME_SEARCH_MAX_MS)]) : AbortSignal.timeout(NAME_SEARCH_MAX_MS);
-      const bounded = new ServerDocumentFiles(this.network, { ...this.options, signal, timeoutMs: Math.min(this.options.timeoutMs ?? 8_000, 8_000) });
-      let pages = 0, traversalCapReached = false;
+      const cached = state.buffered.slice(0, limit);
+      const refreshed = await recheck(cached);
+      if (!refreshed) return sourceRecheckFailure();
+      state.buffered.splice(0, cached.length);
+      if (refreshed.length) state.checkedAt = new Date().toISOString();
+      const results = refreshed, coverage: string[] = [];
+      let pages = 0, quotaPaused = false;
       while (queue.length && pages < NAME_SEARCH_MAX_PAGES && results.length < limit && !signal.aborted) {
-        if (visited.size >= MAX_NAME_VISITED) { state.incomplete = true; traversalCapReached = true; break; }
+        // A page is committed into the next cursor as a unit. If it exceeds
+        // quota, restore the pre-page state and preserve that page to retry.
+        const checkpoint = { queue: queue.map(item => ({ ...item })), visited: [...visited], found: [...found],
+          buffered: [...state.buffered], results: [...results], checkedAt: state.checkedAt, incomplete: state.incomplete };
         const current = queue.shift()!;
         if (visited.has(current.query)) continue;
         visited.add(current.query); pages++;
+        const pageRoots = await serverUserRoots(this.network.config.installationId, this.network.config.paths.dataRoot, this.options.userId, owner);
+        if (JSON.stringify(pageRoots) !== rootsBinding) return unavailable();
         const page = await bounded.call(roots, "browse", { query: current.query, limit: 50 });
         if (!page?.available || page.sourceChecked !== true) {
-          // Deadline failures may be retried. Permanent rejections are recorded
-          // as incomplete while allowing other authorized branches to progress.
-          if (!page?.error) { visited.delete(current.query); queue.unshift(current); break; }
-          state.incomplete = true;
-          continue;
+          // Never discard an unavailable branch. Move it behind other work so
+          // an inaccessible path does not starve the rest; a later call can
+          // retry it, and it prevents a false complete-coverage claim.
+          visited.delete(current.query); queue.push(current); break;
         }
         state.checkedAt = new Date().toISOString();
         coverage.push(current.query);
@@ -210,11 +233,9 @@ export class ServerDocumentFiles {
           if (!isDirectDirectoryChild(current.query, item.path)) { state.incomplete = true; continue; }
           const name = decodeURIComponent(item.path.split("/").at(-1) ?? "").normalize("NFC").toLocaleLowerCase();
           if (name.includes(state.needle) && !found.has(item.path)) {
-            if (found.size >= MAX_NAME_VISITED) { state.incomplete = true; traversalCapReached = true; }
-            else { found.add(item.path); if (results.length < limit) results.push(item); else state.buffered.push(item); }
+            found.add(item.path); const match = { item, origin: current.query }; if (results.length < limit) results.push(match); else state.buffered.push(match);
           }
           if (item.kind === "directory") {
-            if (queue.length >= MAX_NAME_QUEUE) { state.incomplete = true; continue; }
             // The connector already rejects reparse points and validates every
             // direct child. A fixed depth of eight silently skipped legitimate
             // nested folders; the validated path-length and traversal budgets
@@ -234,26 +255,44 @@ export class ServerDocumentFiles {
             queue.unshift({ query: next, depth: current.depth });
           } catch { state.incomplete = true; }
         }
-        if (traversalCapReached) break;
+        if (Buffer.byteLength(JSON.stringify({ ...state, visited: [...visited], found: [...found] })) > CURSOR_MAX_BYTES - 128 * 1024) {
+          queue.splice(0, queue.length, ...checkpoint.queue);
+          // Let other queued work drain before retrying a page that grows the
+          // frontier; no branch or earlier results are discarded.
+          if (queue.length > 1) queue.push(queue.shift()!);
+          visited.clear(); checkpoint.visited.forEach(value => visited.add(value));
+          found.clear(); checkpoint.found.forEach(value => found.add(value)); state.buffered = checkpoint.buffered;
+          results.splice(0, results.length, ...checkpoint.results); state.checkedAt = checkpoint.checkedAt; state.incomplete = checkpoint.incomplete;
+          coverage.pop(); pages--; quotaPaused = true; break;
+        }
       }
       // A scope revoked during or between pages suppresses all prior names.
+      await this.network.validateSyncRoots(roots);
       const latest = await serverUserRoots(this.network.config.installationId, this.network.config.paths.dataRoot, this.options.userId, owner);
       if (JSON.stringify(latest) !== rootsBinding) return unavailable();
-      const visible = results.filter(item => record(item) && typeof item.path === "string" && serverPathAllowed(item.path, latest));
+      const visible = results.filter(match => record(match.item) && typeof match.item.path === "string" && serverPathAllowed(match.item.path, latest));
       state.visited = [...visited]; state.found = [...found];
       const pending = queue.length > 0 || state.buffered.length > 0;
       const remainingInScopeComplete = !state.incomplete && !pending && !signal.aborted;
       const limited = !remainingInScopeComplete || state.priorPagesExcluded;
-      const continuation = pending && !traversalCapReached && this.options.userId ? saveNameCursor(state) : null;
-      const result: ServerResult = { available: Boolean(state.checkedAt), sourceChecked: Boolean(state.checkedAt), lookupMode: "bounded-live-name-search", checkedAt: state.checkedAt,
-        results: visible, limited, nextQuery: continuation, coverage: { pages, directories: coverage, complete: !limited,
-          priorPagesExcluded: state.priorPagesExcluded, remainingInScopeComplete, pendingCount: queue.length, pendingQueries: queue.slice(0, 10).map(item => item.query),
-          bufferedMatches: state.buffered.length, totalMatchesObserved: found.size, resultsIncludePriorPages: false, snapshot: false,
-          maxPages: NAME_SEARCH_MAX_PAGES, maxDepth: null, maxMilliseconds: NAME_SEARCH_MAX_MS },
-        warning: (limited ? (continuation ? "Búsqueda parcial por nombre. Sigue nextQuery para continuar el mismo recorrido completo; conserva los resultados de cada página. El cursor es privado y caduca en 10 minutos." : "Búsqueda parcial sin continuación disponible. Acota la carpeta o inicia una búsqueda nueva; no demuestra que el archivo no exista.") : "Búsqueda por nombre completada en las carpetas autorizadas indicadas; reúne las páginas anteriores.") + " No es una captura instantánea: los cambios durante el recorrido pueden afectar los resultados. No incluye contenido de archivos ni unidades no conectadas." };
-      if (prior) prior.replay = result;
-      return result;
-    } finally { if (prior) prior.busy = false; }
+      const persist = pending && this.options.userId ? state : null;
+      return store.finish(cursorBinding, persist, prior, continuation => {
+        const result: ServerResult = { available: Boolean(state.checkedAt), sourceChecked: Boolean(state.checkedAt), lookupMode: "bounded-live-name-search", checkedAt: state.checkedAt,
+          results: visible.map(match => match.item), limited, nextQuery: continuation, coverage: { pages, directories: [], complete: !limited,
+            priorPagesExcluded: state.priorPagesExcluded, remainingInScopeComplete, pendingCount: queue.length, pendingQueries: [],
+            bufferedMatches: state.buffered.length, totalMatchesObserved: found.size, resultsIncludePriorPages: false, snapshot: false,
+            maxPages: NAME_SEARCH_MAX_PAGES, maxDepth: null, maxMilliseconds: NAME_SEARCH_MAX_MS },
+          ...(quotaPaused ? { error: "SEARCH_QUOTA_PAUSED" } : {}),
+          warning: (limited ? (continuation ? "Búsqueda parcial por nombre. Sigue nextQuery para continuar el mismo recorrido completo; conserva los resultados de cada página. El cursor es privado y caduca en 10 minutos." : "Búsqueda parcial sin continuación disponible. Acota la carpeta o inicia una búsqueda nueva; no demuestra que el archivo no exista.") : "Búsqueda por nombre completada en las carpetas autorizadas indicadas; reúne las páginas anteriores.") + " No es una captura instantánea: los cambios durante el recorrido pueden afectar los resultados. No incluye contenido de archivos ni unidades no conectadas." };
+        return result;
+      }, result => ({ version: 1, result, matches: visible }));
+    } catch (error) {
+      if (error instanceof Error && (error.message.includes("CURSOR_STORAGE_QUOTA") || error.message.includes("database or disk is full"))) {
+        return { available: false, limited: true, error: "SEARCH_QUOTA_PAUSED", nextQuery: prior ? `name-cursor:${prior.id}` : null,
+          warning: "No hay espacio para guardar el siguiente avance. La búsqueda sigue incompleta; reduce el ámbito o vuelve a intentarlo cuando haya espacio." };
+      }
+      throw error;
+    } finally { try { if (prior) store.release(prior.id, prior.lease); } finally { store.close(); } }
   }
 
   async read(roots: readonly EnterpriseDocumentRoot[], target: { scope: string; path: string }) {

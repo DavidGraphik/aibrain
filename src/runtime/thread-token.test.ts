@@ -259,7 +259,7 @@ it.each([
 
 it("refreshes existing support threads from the actual reference schema and guidance", () => {
   const digest = createHash("sha256").update(JSON.stringify({ tools: SUPPORT_DYNAMIC_TOOLS, instructions: SUPPORT_INSTRUCTIONS })).digest("hex").slice(0, 16);
-  expect(CURRENT_THREAD_TOOLSET_REVISION).toBe(`aibrain-tools-2026-11-05-nc-${digest}-schedule-start`);
+  expect(CURRENT_THREAD_TOOLSET_REVISION).toBe(`aibrain-tools-2026-11-05-nc-${digest}-native-v1`);
   for (const installation of ["modtime", "g03-production", "trinalum-production", "insijets-demo"]) {
     const user = "00000000-0000-4000-8000-000000000001";
     const before = readThreadTokenContext(issueThreadToken(installation, user, "before-case-references", "aibrain-tools-2026-11-04-support-v12-schedule-start"), installation, user);

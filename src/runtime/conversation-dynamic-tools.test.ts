@@ -4,7 +4,7 @@ import type { ChatMessage } from "@/lib/chat-contract";
 import type { WorkbenchThread } from "@/workbench/types";
 import type { DynamicToolCallParams } from "../../contracts/codex/0.162.1/types/v2/DynamicToolCallParams";
 import { WorkbenchNotFoundError } from "@/workbench/errors";
-import { CONVERSATION_DYNAMIC_TOOLS, handleConversationDynamicToolCall } from "./conversation-dynamic-tools";
+import { CONVERSATION_DYNAMIC_TOOLS, conversationToolsForInstallation, handleConversationDynamicToolCall, type ConversationDynamicToolContext } from "./conversation-dynamic-tools";
 const mocks = vi.hoisted(() => ({ list: vi.fn(), read: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/workbench/store", () => ({ listThreads: mocks.list, getThread: mocks.read }));
@@ -19,7 +19,7 @@ function message(index: number, content = `message ${index}`, createdAt = `2026-
 function thread(messages = [message(1), message(2)]): WorkbenchThread {
   return { id, projectId: id, title: "Private history", status: "archived", pinned: false, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-26T00:00:00Z", messages };
 }
-async function call(args: Record<string, unknown> = {}, tool = "read", ctx = context) {
+async function call(args: Record<string, unknown> = {}, tool = "read", ctx: ConversationDynamicToolContext = context) {
   const response = await handleConversationDynamicToolCall({ ...params, tool, arguments: (tool === "read" ? { threadId: id, ...args } : args) as never }, ctx);
   const value = JSON.parse(response.contentItems[0].type === "inputText" ? response.contentItems[0].text : "{}");
   return { success: response.success, value };
@@ -123,4 +123,25 @@ it("returns a server-generated reference only after resolving an authorized thre
   const response = await call();
   expect(response.value.thread.url).toBe("/conversations/ERERERERQRGBEREREREREQ");
   expect(CONVERSATION_DYNAMIC_TOOLS[0].description).toContain("ONLY returned url");
+});
+
+
+it("offers the same session-authorized history on a new installation without a customer-specific adapter", async () => {
+  for (const installationId of ["company", "company-new", "trinalum-production"]) {
+    const tools = conversationToolsForInstallation(installationId, true).flatMap(spec => spec.type === "namespace" ? spec.tools.map(tool => tool.name) : []);
+    expect(tools).toContain("list");
+    expect(tools).toContain("read");
+    const actor = { ...context, installationId, allowHistory: true, session: { ...session, tenant: { id: installationId, name: "Synthetic company" } } };
+    const response = await call({}, "read", actor);
+    expect(response.success).toBe(true);
+    expect(mocks.read).toHaveBeenLastCalledWith(actor.session, id);
+  }
+});
+
+it("honours a disabled history capability before looking up titles or messages", async () => {
+  for (const tool of ["list", "read"]) {
+    expect((await call({}, tool, { ...context, allowHistory: false })).value.code).toBe("CONVERSATIONS_TOOL_UNSUPPORTED");
+  }
+  expect(mocks.read).not.toHaveBeenCalled();
+  expect(mocks.list).not.toHaveBeenCalled();
 });

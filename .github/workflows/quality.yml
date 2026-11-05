@@ -25,4 +25,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck -- --incremental false
       - run: node .github/scripts/run-quality-tests.mjs
+      - run: node --test scripts/verify-backend-acceptance.test.mjs
+      - run: npm ci --prefix deployments/trinalum/host/outlook --ignore-scripts --no-audit --no-fund
+      - run: node --test --test-concurrency=1 deployments/trinalum/host/outlook/test/*.test.mjs deployments/trinalum/host/sibema/test/*.test.mjs
       - run: npm run build -- --webpack

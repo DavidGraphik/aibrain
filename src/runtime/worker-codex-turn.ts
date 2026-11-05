@@ -107,6 +107,9 @@ import { catalogRuntimeEnforcer, synchronizeCatalogSkillsForUser } from "@/catal
 import { resolveAvailableConnectorsForTurn } from "@/connectors/mentions";
 import { connectorMentionDeveloperInstructions } from "@/connectors/mentions-contract";
 import { connectedAppConfig, hasAppliedConnectedAppConfig, markConnectedAppConfigApplied, SERVER_APPROVALS_REVIEWER } from "@/runtime/connected-app-config";
+import { nativeMcpConfigForTurn } from "@/runtime/native-mcp-config";
+import { personalNativeConnectionsEnabled } from "@/runtime/native-connection-identity";
+import { nativeAppToolsForTurn } from "@/runtime/native-app-tools";
 import {
   approvalLocatorFromItem,
   type FileApprovalStore,
@@ -188,7 +191,7 @@ import {
   AIBRAIN_DOCUMENT_TOOL_NAMESPACE,
   handleLocalDocumentDynamicToolCall,
 } from "@/runtime/documents/dynamic-tools";
-import { AttachmentReviewError, createAttachmentReviewer, explicitPartialAttachmentReview, explicitTranslationRequest, type AttachmentReviewer } from "@/runtime/documents/attachment-review";
+import { AttachmentReviewError, createAttachmentReviewer, attachmentReviewIntent, type AttachmentReviewer } from "@/runtime/documents/attachment-review";
 import type { AgentThreadRuntimeContext } from "@/workbench/internal";
 import {
   enqueueAutomaticMemoryExtraction,
@@ -818,9 +821,7 @@ async function runWorkerCodexTurnAttempt(
   inspectAttachment = createAttachmentReviewer({
     documents: turnDocuments,
     signal: turnSignal,
-    translationRequested: explicitTranslationRequest(chatRequest.message, !backgroundExecution && !automationSession),
-    partial: explicitPartialAttachmentReview(chatRequest.message, !backgroundExecution && !automationSession),
-    required: backgroundExecution,
+    ...attachmentReviewIntent(chatRequest.message, backgroundExecution),
     previews: {
       read: async (threadId, uploadId) => (await documentServicesForUser(runtime.config, authenticatedUserId)).previews.read(threadId, uploadId),
       renderPage: async (threadId, uploadId, page, options) => (await documentServicesForUser(runtime.config, authenticatedUserId)).previews.renderPage(threadId, uploadId, page, options),
@@ -1065,8 +1066,22 @@ async function runWorkerCodexTurnAttempt(
   // App Server's per-thread app configuration is the enforceable toolset
   // boundary for managed apps. The catalog revalidation above supplies these
   // IDs; the browser never supplies an app ID or a tool name directly.
-  const availableAppIds = [...new Set(availableConnectors.flatMap(({ resource }) => resource.appId ? [resource.appId] : []))];
-  const connectorAppConfig = connectedAppConfig(availableAppIds);
+  const personalNative = personalNativeConnectionsEnabled(authenticatedUserId);
+  const nativeExecutionAllowed = personalNative && permissionAllowsGenericToolExecution(permissions);
+  // Native calls execute inside Codex and do not pass through a dynamic tool
+  // handler. Apply the same turn permission before publishing their toolset.
+  const nativeWritesAllowed = nativeExecutionAllowed && !backgroundExecution && chatRequest.options.mode === "agent";
+  const availableAppIds = nativeExecutionAllowed
+    ? [...new Set(availableConnectors.flatMap(({ resource }) => resource.appId ? [resource.appId] : []))] : [];
+  const nativeAppTools = await nativeAppToolsForTurn(runtime.client,
+    () => catalogRuntimeEnforcer(installationId, authenticatedUserId), availableAppIds,
+    `native-app-tools:${chatRequest.assistantMessageId}`, nativeWritesAllowed);
+  const connectorAppConfig = connectedAppConfig(availableAppIds, nativeAppTools);
+  const connectorMcpConfig = await telemetry.measure("native_connection_config", async () => nativeMcpConfigForTurn(
+    runtime.client, () => catalogRuntimeEnforcer(installationId, authenticatedUserId),
+    new Set(nativeExecutionAllowed ? availableConnectors.filter(({ resource }) => resource.kind === "mcp").map(({ resource }) => resource.id) : []),
+    `native-connection-config:${chatRequest.assistantMessageId}`, nativeWritesAllowed,
+  ));
 
   const g03Session = !backgroundExecution && g03ToolsEnabled(installationId) ? (runtimeIdentitySession ?? automationSession) : undefined;
   let operatorChatContext: OperatorChatContext | null = null;
@@ -1109,6 +1124,7 @@ async function runWorkerCodexTurnAttempt(
     },
     execution: { background: backgroundExecution, hostAnalysisPolicy, automationStateAvailable: Boolean(automationRunState) },
     documentNetworkAvailable: Boolean(enterpriseDocumentNetwork),
+    availableConnectorIds: availableConnectors.flatMap(({ resource }) => resource.connectorId ? [resource.connectorId] : []),
     modules: {
       websiteDemo: process.env.AIBRAIN_INSIJETS_WEBSITE_CHAT_LOCAL_DEMO === "true",
       trinalumBridge: Boolean(process.env.AIBRAIN_TRINALUM_BRIDGE_CONFIG),
@@ -1161,12 +1177,12 @@ async function runWorkerCodexTurnAttempt(
     approvalPolicy: quotaToolPermissions ? "never" as const : runtimeConfig.approvalPolicy,
     approvalsReviewer: SERVER_APPROVALS_REVIEWER,
     ...(quotaPermissionId ? { permissions: quotaPermissionId } : { sandbox: effectiveSandbox(runtimeConfig, chatRequest) }),
-    config: { web_search: "live", ...connectorAppConfig, ...analysisOverrides },
+    config: { web_search: "live", ...connectorAppConfig, ...connectorMcpConfig, ...analysisOverrides },
     developerInstructions,
   };
   const reuseLoadedThread = !hostAnalysisPolicy && runtimeThreadId !== null &&
     runtime.client.canReuseLoadedThread(runtimeThreadId, true) &&
-    hasAppliedConnectedAppConfig(runtime.client, runtimeThreadId, availableAppIds) &&
+    hasAppliedConnectedAppConfig(runtime.client, runtimeThreadId, availableAppIds, connectorMcpConfig, nativeAppTools) &&
     (!quotaToolPermissions || hasAttestedQuotaToolPermissions(runtime.client, runtimeThreadId, quotaToolPermissions));
   let recovered: RecoveredTurn | null = null;
   let terminalPublication: Promise<void> | null = null;
@@ -1272,7 +1288,7 @@ async function runWorkerCodexTurnAttempt(
       attestQuotaToolPermissions(runtime.client, result, quotaToolPermissions);
     }
     const configuredThreadId = extractThreadId(result);
-    if (configuredThreadId) markConnectedAppConfigApplied(runtime.client, configuredThreadId, availableAppIds);
+    if (configuredThreadId) markConnectedAppConfigApplied(runtime.client, configuredThreadId, availableAppIds, connectorMcpConfig, nativeAppTools);
     await persistThreadIdentity(result, envelope);
   };
   // Each observation must read current remote state, not a cached response to
@@ -2425,9 +2441,9 @@ async function runWorkerCodexTurnAttempt(
           if (isRecord(request.params) && request.params.namespace === AIBRAIN_CONVERSATIONS_TOOL_NAMESPACE) {
             observedToolNames.add(`${AIBRAIN_CONVERSATIONS_TOOL_NAMESPACE}.${String(request.params.tool ?? "unknown")}`);
             return await handleConversationDynamicToolCall(request.params as never, {
-              session: g03ProductInstallation(installationId) || installationId === "trinalum-production" ? runtimeIdentitySession : undefined,
+              session: runtimeIdentitySession,
               installationId, userId: authenticatedUserId, runtimeThreadId: threadId, runtimeTurnId,
-              allowHistory: g03ProductInstallation(installationId),
+              allowHistory: Boolean(runtimeIdentitySession),
               attachments: (installationId === "trinalum-production" || installationId === "g03-production") && runtimeIdentitySession && !backgroundExecution ? {
                 installation: runtime.config, session: runtimeIdentitySession,
                 projectId: chatRequest.projectId, threadId: chatRequest.threadId, messageId: chatRequest.assistantMessageId,
@@ -2493,7 +2509,7 @@ async function runWorkerCodexTurnAttempt(
               installationId, userId: authenticatedUserId, session: runtimeIdentitySession ?? automationSession ?? null,
               runtimeThreadId: threadId, runtimeTurnId, selected: sageSelected,
               executeAllowed: permissionAllowsGenericToolExecution(permissions),
-              requestId: clientUserMessageId,
+              requestId: clientUserMessageId, signal: turnSignal,
               allowWrites: !backgroundExecution && createInteractiveChatAuthorization({
                 session: runtimeIdentitySession, installationId, userId: authenticatedUserId,
                 threadId, turnId: runtimeTurnId, userMessageId: clientUserMessageId,

@@ -10,7 +10,6 @@ import { WorkbenchNotFoundError } from "@/workbench/errors";
 import { isUuid } from "@/workbench/types";
 import { conversationReferenceUrl } from "@/workbench/conversation-reference";
 import { ConversationAttachmentError, openConversationAttachment, referenceHistoricalPdf, searchConversationAttachments, type ConversationAttachmentContext } from './conversation-attachments';
-import { g03ProductInstallation } from '@/g03-products/contracts';
 import { CONVERSATION_ATTACHMENT_DYNAMIC_TOOLS, G03_HISTORICAL_PDF_TOOLS } from './conversation-attachment-contract';
 
 export const AIBRAIN_CONVERSATIONS_TOOL_NAMESPACE = "aibrain_conversations";
@@ -35,9 +34,13 @@ export const CONVERSATION_DYNAMIC_TOOLS: readonly DynamicToolSpec[] = Object.fre
   ],
 }]);
 
+/** History uses the same authenticated session resolver as the UI for every installation.
+ * Provider-specific attachment operations remain separate capabilities. */
 export function conversationToolsForInstallation(installationId: string, foreground: boolean) {
- return g03ProductInstallation(installationId) ? (foreground && installationId === "g03-production" ? CONVERSATION_DYNAMIC_TOOLS.map(namespace=>namespace.type==='namespace'?{...namespace,tools:[...namespace.tools,...G03_HISTORICAL_PDF_TOOLS]}:namespace) : CONVERSATION_DYNAMIC_TOOLS)
-  : installationId==='trinalum-production'&&foreground ? CONVERSATION_ATTACHMENT_DYNAMIC_TOOLS : [];
+  const extras = !foreground ? [] : installationId === "g03-production" ? G03_HISTORICAL_PDF_TOOLS
+    : installationId === "trinalum-production" ? CONVERSATION_ATTACHMENT_DYNAMIC_TOOLS.flatMap(item => item.type === "namespace" ? item.tools : []) : [];
+  return CONVERSATION_DYNAMIC_TOOLS.map(namespace => namespace.type === "namespace"
+    ? { ...namespace, tools: [...namespace.tools, ...extras] } : namespace);
 }
 
 export type ConversationDynamicToolContext = {
@@ -100,7 +103,7 @@ export async function handleConversationDynamicToolCall(params: DynamicToolCallP
       const operation=params.tool==='search_attachments'?searchConversationAttachments:params.tool==='reference_historical_pdf'?referenceHistoricalPdf:openConversationAttachment;
       return result(true,await operation(params.arguments,attachments));
     }
-    if(context.allowHistory===false||context.installationId==='trinalum-production')return result(false,{code:'CONVERSATIONS_TOOL_UNSUPPORTED'});
+    if (context.allowHistory === false) return result(false, { code: 'CONVERSATIONS_TOOL_UNSUPPORTED' });
     const args: unknown = params.arguments;
     if (!record(args)) return invalid();
     if (params.tool === "list") {

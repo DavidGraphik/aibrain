@@ -439,7 +439,7 @@ export class ImapSmtpClient {
     });
   }
 
-  async withImapPassword(mailbox, password, callback) {
+  createImapPassword(mailbox, password) {
     const client = new this.ImapFlow({
       host: this.config.imapHost,
       port: this.config.imapPort,
@@ -453,6 +453,11 @@ export class ImapSmtpClient {
       tls: { servername: this.config.imapHost, minVersion: "TLSv1.2" },
     });
     client.on("error", () => {});
+    return client;
+  }
+
+  async withImapPassword(mailbox, password, callback) {
+    const client = this.createImapPassword(mailbox,password);
     try {
       await client.connect();
       return await callback(client);

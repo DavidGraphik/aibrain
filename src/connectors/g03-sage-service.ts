@@ -6,6 +6,7 @@ import path from "node:path";
 import { loadInstallationConfig } from "@/config/installation";
 import { FileLocalUserStore } from "@/auth/local-user-store";
 import { catalogRuntimeEnforcer } from "@/catalog/access-service";
+import { collectSagePages } from "./g03-sage-batch";
 import { SageReader, SageError, SAGE_QUERIES, sageRecord, type SageCredential, type SageQuery } from "./g03-sage-api";
 const readers = new Map<string, SageReader>();
 const denied = (): never => { throw new SageError("SAGE_ACCESS_DENIED"); };
@@ -42,12 +43,38 @@ export async function g03SageAccess(installationId: string, userId: string) {
     : {providerWrites:false,productionWrites:false};
   return { reader, key, receiving, operations:data.operations, catalogWrite:typeof catalog.allowsConnectorWrite==="function"&&catalog.allowsConnectorWrite("g03-sage") };
 }
-export async function g03SageReadForIdentity(installationId: string, userId: string, operation: "discover" | "read", args: Record<string, unknown>) {
+export async function g03SageReadForIdentity(installationId: string, userId: string, operation: "discover" | "read", args: Record<string, unknown>, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const initial = await g03SageAccess(installationId,userId);
-  const value = operation === "discover" ? await initial.reader.discover() : await initial.reader.read(args.query, args.parameters ?? {}, args.skip ?? 0, args.take ?? 10);
+  const value = operation === "discover" ? await initial.reader.discover(signal) : await initial.reader.read(args.query, args.parameters ?? {}, args.skip ?? 0, args.take ?? 10, signal);
   // A revocation/credential replacement during a provider read must not release the result.
+  signal?.throwIfAborted();
   const fresh = await g03SageAccess(installationId,userId);
   if (fresh.key !== initial.key) throw new SageError("SAGE_CONNECTION_CHANGED");
+  signal?.throwIfAborted();
+  return value;
+}
+/** Group consecutive pages inside the connector, retaining the native query contract. */
+export async function g03SageReadBatchForIdentity(installationId: string, userId: string, args: Record<string, unknown>, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const initial = await g03SageAccess(installationId, userId);
+  let parameters = args.parameters ?? {};
+  if ((args.query === "SalesOrders" || args.query === "PurchaseOrders") && sageRecord(parameters) && Object.keys(parameters).length === 0) {
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    parameters = { FechaInicial: "1900-01-01", FechaFinal: today };
+  }
+  const reader = initial.reader.forkForRead();
+  const value = await collectSagePages(async (query, pageParameters, skip, take, pageSignal) => {
+    pageSignal.throwIfAborted();
+    const current = await g03SageAccess(installationId, userId);
+    if (current.key !== initial.key) throw new SageError("SAGE_CONNECTION_CHANGED");
+    pageSignal.throwIfAborted();
+    return reader.read(query, pageParameters, skip, take, pageSignal);
+  }, args.query, parameters, args.skip ?? 0, args.take ?? 50, signal);
+  signal?.throwIfAborted();
+  const fresh = await g03SageAccess(installationId, userId);
+  if (fresh.key !== initial.key) throw new SageError("SAGE_CONNECTION_CHANGED");
+  signal?.throwIfAborted();
   return value;
 }
 export async function g03SageHealth(installationId: string, userId: string) {

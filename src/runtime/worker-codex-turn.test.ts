@@ -41,6 +41,8 @@ const mocked = vi.hoisted(() => ({
   capacityWaits: null as number[] | null,
   capacityAbort: null as (() => void) | null,
   availableConnectors: vi.fn<(...args: unknown[]) => Promise<ResolvedConnectorMention[]>>(),
+  nativeMcpConfig: vi.fn().mockResolvedValue({}),
+  nativeAppTools: vi.fn().mockResolvedValue({}),
 }));
 vi.mock("node:timers/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:timers/promises")>();
@@ -56,6 +58,8 @@ vi.mock("node:timers/promises", async (importOriginal) => {
 });
 vi.mock("server-only", () => ({}));
 vi.mock("@/connectors/mentions", () => ({ resolveAvailableConnectorsForTurn: mocked.availableConnectors }));
+vi.mock("@/runtime/native-mcp-config", () => ({ nativeMcpConfigForTurn: mocked.nativeMcpConfig }));
+vi.mock("@/runtime/native-app-tools", () => ({ nativeAppToolsForTurn: mocked.nativeAppTools }));
 vi.mock("@/insijets/operator-server", () => ({
   loadOperatorConfiguration: async () => ({ enabled: true, installationId: "insijets-demo", storageRoot: "/unused",
     approvedResearchOrigins: [], approvedVerificationProviders: [] }),
@@ -336,8 +340,10 @@ describe("worker Codex turn", () => {
     { provider: "local", user: { id: userId, name: "Fixture", email: outreachEnabled ? "operator@example.invalid" : "fixture@example.test" },
       tenant: { id: turnInstallationId, name: "Fixture" }, expiresAt: new Date(Date.now() + 60_000).toISOString() }, Boolean(background));
     expect(catalogue.map(tool => tool.name)).toEqual(expect.arrayContaining([
-      "aibrain_documents", "aibrain_gmail", "aibrain_outlook", "aibrain_horaria",
+      "aibrain_documents", "aibrain_horaria",
     ]));
+    expect(catalogue.map(tool => tool.name)).not.toContain("aibrain_gmail");
+    expect(catalogue.map(tool => tool.name)).not.toContain("aibrain_outlook");
     expect(catalogue.some(tool => tool.name === "aibrain_browser")).toBe(false);
     expect(new Set(catalogue.map(tool => tool.name)).size).toBe(catalogue.length);
     expect(catalogue.some(tool => tool.name === "insijets_operator_local_review")).toBe(false);
@@ -928,6 +934,8 @@ describe("worker Codex turn", () => {
     mocked.cancelTurn = null;
     mocked.pendingCancellation = false;
     mocked.availableConnectors.mockReset().mockResolvedValue([]);
+    mocked.nativeMcpConfig.mockReset().mockResolvedValue({});
+    mocked.nativeAppTools.mockReset().mockResolvedValue({});
   });
 
   it.each(["terminal-snapshot", "empty-terminal", "lost-events", "still-running", "foreign-turn", "racing-terminal"])(
@@ -1016,7 +1024,7 @@ describe("worker Codex turn", () => {
     vi.unstubAllEnvs();
   });
 
-  it("makes verified connections available without mentions and refreshes app configuration after disconnect and reconnect", async () => {
+  it.each(["agent", "ask", "denied"] as const)("makes verified connections available with %s turn permissions and refreshes after reconnect", async (nativeMode) => {
     const userRoot = await mkdtemp(path.join(tmpdir(), "aibrain-automatic-connectors-"));
     const { mkdir, rm } = await import("node:fs/promises");
     const workspace = path.join(userRoot, "workspace"), staging = path.join(userRoot, "staging");
@@ -1031,6 +1039,7 @@ describe("worker Codex turn", () => {
       mention: { id: resource.id, label: resource.label, kind: resource.kind as "app" | "connector", status: "connected", statusCode: null, canRead: true, requiresApprovalForWrites: false },
     }));
     mocked.availableConnectors.mockResolvedValue(available);
+    mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: ["search"], known: ["search"] } });
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
     let handlers: { onNotification(value: unknown, envelope: unknown): Promise<void> };
     let sequence = 0;
@@ -1063,11 +1072,14 @@ describe("worker Codex turn", () => {
     const session = { provider: "local", tenant: { id: installationId }, user: { id: userId }, expiresAt: new Date(Date.now() + 3600000).toISOString() } as AuthSession;
     const request = chatRequest();
     request.message = "Find the project files and the latest message from the customer";
+    request.options.mode = nativeMode === "ask" ? "ask" : "agent";
+    const nativeAllowed = nativeMode !== "denied";
+    const nativeRule = { ruleId: "tools.execute", action: "execute" as const, effect: nativeAllowed ? "allow" as const : "deny" as const, instruction: "Synthetic turn execution policy", sourceScope: "installation" as const, sourcePolicyVersion: 1, precedence: 100 };
     expect(request.options.connectorMentions).toBeUndefined();
     const events: Array<Record<string, unknown>> = [];
     const run = (value: ChatRequest, runtimeThreadId: string | null) => runWorkerCodexTurn(value, installationId, userId, runtimeThreadId, {
       tenantId: installationId, mode: "codex", codexBinary: "unused", codexHome: null, workspace, model: null, approvalPolicy: "on-request", sandbox: "workspace-write",
-    }, { ...permissions(), turnId: value.assistantMessageId }, {} as never, memoryDependencies(), [], new AbortController().signal, async event => { events.push(event); }, undefined, "Assistant", null, undefined, undefined, undefined, session);
+    }, { ...permissions([nativeRule]), turnId: value.assistantMessageId }, {} as never, memoryDependencies(), [], new AbortController().signal, async event => { events.push(event); }, undefined, "Assistant", null, undefined, undefined, undefined, session);
     try {
       await run(request, null);
       expect(mocked.availableConnectors).toHaveBeenCalledExactlyOnceWith(installationId, userId, [], session);
@@ -1075,7 +1087,8 @@ describe("worker Codex turn", () => {
       const params = calls[0].params;
       expect(params.config).toMatchObject({ web_search: "live", apps: {
         _default: { enabled: false, destructive_enabled: false, open_world_enabled: false },
-        "qa-files": { enabled: true, destructive_enabled: false, open_world_enabled: false, default_tools_approval_mode: "writes" },
+        "qa-files": { enabled: nativeAllowed, destructive_enabled: false, open_world_enabled: false, default_tools_approval_mode: "writes",
+          default_tools_enabled: false, tools: { search: { enabled: nativeAllowed } } },
       } });
       expect(Object.keys((params.config as { apps: object }).apps).sort()).toEqual(["_default", "qa-files"]);
       expect(params.dynamicTools).toEqual(expect.arrayContaining([
@@ -1087,17 +1100,21 @@ describe("worker Codex turn", () => {
       for (const resource of resources) expect(params.developerInstructions).toContain(`"id":"${resource.id}"`);
       expect(events).toContainEqual({ type: "done" });
 
+      expect(mocked.nativeAppTools).toHaveBeenLastCalledWith(client, expect.any(Function), nativeAllowed ? ["qa-files"] : [], expect.any(String), nativeMode === "agent");
+      expect(mocked.nativeMcpConfig).toHaveBeenLastCalledWith(client, expect.any(Function), new Set(), expect.any(String), nativeMode === "agent");
       mocked.availableConnectors.mockResolvedValue([]);
+      mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: [], known: ["search"] } });
       await run({ ...request, userMessageId: "00000000-0000-4000-8000-000000000032", assistantMessageId: "00000000-0000-4000-8000-000000000042" }, "automatic-thread");
       expect(calls[2]).toMatchObject({ method: "thread/resume", params: {
         threadId: "automatic-thread", config: { apps: { _default: { enabled: false } } },
       } });
-      expect(Object.keys((calls[2].params.config as { apps: object }).apps)).toEqual(["_default"]);
+      expect((calls[2].params.config as { apps: object }).apps).toMatchObject({ "qa-files": { enabled: false, tools: { search: { enabled: false } } } });
 
       mocked.availableConnectors.mockResolvedValue(available);
+      mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: ["search"], known: ["search"] } });
       await run({ ...request, userMessageId: "00000000-0000-4000-8000-000000000033", assistantMessageId: "00000000-0000-4000-8000-000000000043" }, "automatic-thread");
       expect(calls[4]).toMatchObject({ method: "thread/resume", params: {
-        threadId: "automatic-thread", config: { apps: { _default: { enabled: false }, "qa-files": { enabled: true } } },
+        threadId: "automatic-thread", config: { apps: { _default: { enabled: false }, "qa-files": { enabled: nativeAllowed } } },
       } });
       expect(calls.map(({ method }) => method)).toEqual(["thread/start", "turn/start", "thread/resume", "turn/start", "thread/resume", "turn/start"]);
       expect(mocked.availableConnectors).toHaveBeenCalledTimes(3);
@@ -1972,22 +1989,6 @@ describe("worker Codex turn", () => {
           expect.objectContaining({ name: "image_to_pdf" }),
           expect.objectContaining({ name: "render" }),
           expect.objectContaining({ name: "deliver" }),
-        ]),
-      }),
-      expect.objectContaining({
-        type: "namespace",
-        name: "aibrain_gmail",
-        tools: expect.arrayContaining([
-          expect.objectContaining({ name: "search" }),
-          expect.objectContaining({ name: "read" }),
-        ]),
-      }),
-      expect.objectContaining({
-        type: "namespace",
-        name: "aibrain_outlook",
-        tools: expect.arrayContaining([
-          expect.objectContaining({ name: "search" }),
-          expect.objectContaining({ name: "read" }),
         ]),
       }),
     ]);

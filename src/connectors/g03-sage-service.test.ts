@@ -8,7 +8,7 @@ const state=vi.hoisted(()=>({allowed:true,enabled:true,dataRoot:""}));
 vi.mock("@/auth/local-user-store",()=>({FileLocalUserStore:class {async read(id:string){return {userId:id,enabled:state.enabled};}}}));
 vi.mock("@/catalog/access-service",()=>({catalogRuntimeEnforcer:vi.fn(async()=>({allowsConnector:()=>state.allowed}))}));
 vi.mock("@/config/installation",()=>({loadInstallationConfig:async()=>({installationId:"g03-production",paths:{dataRoot:state.dataRoot}})}));
-import { g03SageReadForIdentity, g03SageHealth } from "./g03-sage-service";
+import { g03SageReadForIdentity, g03SageReadBatchForIdentity, g03SageHealth } from "./g03-sage-service";
 const user="11111111-1111-4111-8111-111111111111";let directory:string|undefined;
 afterEach(async()=>{if(directory)await rm(directory,{recursive:true,force:true});directory=undefined;vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllEnvs();vi.unstubAllGlobals();state.allowed=true;state.enabled=true;});
 async function setup(){directory=await mkdtemp(path.join(tmpdir(),"sage-readonly-test-"));state.dataRoot=directory;await mkdir(path.join(directory,"g03-sage"));const file=path.join(directory,"g03-sage","config.json");await writeFile(file,JSON.stringify({installationId:"g03-production",companyCode:"1",baseUrl:"https://sage.example.test/api",username:directory,password:"private",appId:"synthetic",allowedQueries:["Products"],allowedUserIds:[user]}),{mode:0o600});vi.stubEnv("AIBRAIN_G03_SAGE_CONFIG",file);return file;}
@@ -70,4 +70,37 @@ it("never supplies a canonical access proof after a catalog denial",async()=>{
  const fetcher=vi.fn();vi.stubGlobal("fetch",fetcher);
  expect(await g03SageHealth("g03-production",user)).toEqual({status:"not_configured",statusCode:"G03_SAGE_API_PENDING",accessVerified:false});
  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('uses the Madrid day as the default order end date and keeps the actual interval in the receipt',async()=>{
+ const file=await setup();const contents=JSON.parse(await (await import('node:fs/promises')).readFile(file,'utf8'));
+ await writeFile(file,JSON.stringify({...contents,allowedQueries:['SalesOrders']}),{mode:0o600});
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-05T23:30:00Z'));
+ const {SageReader}=await import('./g03-sage-api');
+ const read=vi.spyOn(SageReader.prototype,'read').mockResolvedValue({source:'SAGE',companyCode:'1',companyName:'synthetic',query:'SalesOrders',items:[],skip:0,take:50,nextOffset:null,limitReached:false,complete:true,checkedAt:'2026-11-05T23:30:00Z'} as never);
+ const result=await g03SageReadBatchForIdentity('g03-production',user,{query:'SalesOrders'});
+ expect(result).toMatchObject({parameters:{FechaInicial:'1900-01-01',FechaFinal:'2026-11-06'},complete:true,coverage:{globalComplete:false,reachedEndOfQuery:true,completeFromBeginning:true}});
+ expect(read).toHaveBeenCalledWith('SalesOrders',{FechaInicial:'1900-01-01',FechaFinal:'2026-11-06'},0,50,expect.any(AbortSignal));
+});
+it('suppresses all batched results when a user grant is revoked mid-query',async()=>{
+ await setup();const {SageReader}=await import('./g03-sage-api');
+ vi.spyOn(SageReader.prototype,'read').mockImplementation(async()=>{state.allowed=false;return {source:'SAGE',companyCode:'1',companyName:'synthetic',query:'Products',items:[{CompanyId:1}],skip:0,take:1,nextOffset:null,limitReached:false,complete:true,checkedAt:'2026-11-05T12:00:00Z'} as never;});
+ await expect(g03SageReadBatchForIdentity('g03-production',user,{query:'Products',take:1})).rejects.toMatchObject({code:'SAGE_ACCESS_DENIED'});
+});
+
+it('rejects mixed batches if connection configuration changes while reading',async()=>{
+ const file=await setup();const contents=JSON.parse(await (await import('node:fs/promises')).readFile(file,'utf8'));
+ const {SageReader}=await import('./g03-sage-api');
+ vi.spyOn(SageReader.prototype,'read').mockImplementation(async()=>{await writeFile(file,JSON.stringify({...contents,password:'changed-synthetic'}),{mode:0o600});return {source:'SAGE',companyCode:'1',companyName:'synthetic',query:'Products',items:[{CompanyId:1}],skip:0,take:1,nextOffset:null,limitReached:false,complete:true,checkedAt:'2026-11-05T12:00:00Z'} as never;});
+ await expect(g03SageReadBatchForIdentity('g03-production',user,{query:'Products',take:1})).rejects.toMatchObject({code:'SAGE_CONNECTION_CHANGED'});
+});
+
+it('stops before another provider page when access is revoked during a batch', async () => {
+ await setup(); const {SageReader} = await import('./g03-sage-api');
+ const read = vi.spyOn(SageReader.prototype, 'read').mockImplementation(async () => {
+  state.allowed = false;
+  return {source:'SAGE', companyCode:'1', companyName:'synthetic', query:'Products', items:[{CompanyId:1}], skip:0, take:1, nextOffset:1, limitReached:false, complete:false, checkedAt:'2026-11-05T12:00:00Z'} as never;
+ });
+ await expect(g03SageReadBatchForIdentity('g03-production', user, {query:'Products', take:1})).rejects.toMatchObject({code:'SAGE_ACCESS_DENIED'});
+ expect(read).toHaveBeenCalledTimes(1);
 });

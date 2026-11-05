@@ -1,7 +1,8 @@
 import { gatewayFailureDiagnostic, type GatewayFailureStage } from "./gateway-failure-diagnostics";
 import { acquireWorkerKernelLease, type WorkerKernelLease } from "./kernel-ownership";
 import { atomicWriteFile } from "@/storage/atomic-file";
-import { takeAppServerOutput } from "./app-server-output-buffer";
+import { takeAppServerOutputBatch } from "./app-server-output-buffer";
+import { assertCodexServerNotification } from "@/runtime/transport/codex-contract-validation";
 import { parseAppServerStdoutJson } from "./app-server-output-json";
 import { encodeServerFrames, MAX_SERVER_MESSAGE_BYTES } from '../transport/bounded-server-frames';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -524,9 +525,10 @@ export class PrivateWorkerGateway {
         if (this.drainingAppServerOutput) return;
         this.drainingAppServerOutput = true;
         this.appServerOutputChain = this.appServerOutputChain.then(async () => {
-          let next: string | null;
-          while ((next = takeAppServerOutput(this.appServerOutputLines)) !== null) {
-            await this.receiveAppServerLine(next);
+          let batch: string[];
+          while ((batch = takeAppServerOutputBatch(this.appServerOutputLines)).length) {
+            if (batch.length === 1) await this.receiveAppServerLine(batch[0]);
+            else await this.receiveAppServerNotifications(batch);
           }
         }).catch((error: unknown) => {
           this.appServerOutputLines.length = 0;
@@ -1056,6 +1058,36 @@ export class PrivateWorkerGateway {
     if (scope) await this.confirmServerResponses(scope, event.eventId);
   }
 
+  private async receiveAppServerNotifications(lines: readonly string[]) {
+    const messages: ReturnType<typeof parseAppServerOutput>[] = [];
+    let invalid: unknown = null;
+    for (const line of lines) {
+      try {
+        const message = parseAppServerOutput(parseAppServerStdoutJson(line));
+        if (message.kind !== "rpc-notification") throw new Error("Invalid stdout notification batch.");
+        assertCodexServerNotification(message.rpc);
+        messages.push(message);
+      } catch (error) { invalid = error; break; }
+    }
+    if (!messages.length) throw invalid;
+    const recorded = this.eventRecordChain.then(async () => {
+      const cursor = await this.events.loadCursor();
+      const events: AppServerEvent[] = messages.map((message, index) => ({
+        eventId: randomUUID(), sequence: (cursor?.sequence ?? 0) + index + 1,
+        occurredAt: new Date(this.now()).toISOString(), message,
+      }));
+      await this.events.appendBatch(events);
+      for (const event of events) {
+        this.publishedAppServerEvent(event);
+        const scope = appServerScope(event.message);
+        if (scope) await this.confirmServerResponses(scope, event.eventId);
+      }
+    });
+    this.eventRecordChain = recorded.then(() => undefined, () => undefined);
+    await recorded;
+    if (invalid) throw invalid;
+  }
+
   private recordAppServerOutput(value: unknown) {
     const recorded = this.eventRecordChain.then(() => this.recordAppServerOutputSerially(value));
     this.eventRecordChain = recorded.then(() => undefined, () => undefined);
@@ -1076,6 +1108,11 @@ export class PrivateWorkerGateway {
       message: parseAppServerOutput(value),
     };
     await this.events.append(event);
+    this.publishedAppServerEvent(event);
+    return event;
+  }
+
+  private publishedAppServerEvent(event: AppServerEvent) {
     if (event.message.kind === "rpc-request") {
       this.currentServerResponses.set(
         serverResponseClientRequestId(event),
@@ -1093,7 +1130,6 @@ export class PrivateWorkerGateway {
         socket.close(1011, "Worker event delivery failed");
       });
     }
-    return event;
   }
 
   private async confirmServerResponses(scope: AppServerScope, evidenceEventId: string) {

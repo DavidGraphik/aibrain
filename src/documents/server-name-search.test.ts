@@ -1,3 +1,7 @@
+import { mkdtempSync, chmodSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+const scratchRoots: string[] = [];
 import { afterEach, describe, expect, it, vi } from 'vitest';
 const policy = vi.hoisted(() => ({ roots: ['server-g03/M/Allowed'] as string[] }));
 vi.mock('./server-user-access', async importOriginal => ({ ...await importOriginal<typeof import('./server-user-access')>(), serverUserRoots: vi.fn(async () => policy.roots) }));
@@ -5,14 +9,15 @@ import { ServerDocumentFiles } from './server-files';
 import { handleCompanyFilesDynamicToolCall } from '@/runtime/enterprise-documents/dynamic-tools';
 const entry = (path: string, kind = 'file') => ({ scope: 'company', path, kind, size: 1 });
 function fixture(reply: (query: string) => object, userId = 'qa-user-1') {
-  const network = { search: vi.fn(async () => { throw Error('Scoped server paths must not reach local text search'); }), config: { installationId: 'g03-production', paths: { dataRoot: '/test' } } };
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'g03-name-search-')); chmodSync(scratch, 0o700); scratchRoots.push(scratch);
+  const network = { validateSyncRoots: vi.fn(async () => {}), search: vi.fn(async () => { throw Error('Scoped server paths must not reach local text search'); }), config: { installationId: 'g03-production', paths: { dataRoot: scratch } } };
   const files = new ServerDocumentFiles(network as never, { userId });
   vi.spyOn(files, 'navigation').mockResolvedValue({ available: true, results: [entry('server-g03/M/Allowed', 'directory')] });
   // The bounded child shares the normal permission-gated transport method.
   const transport = vi.spyOn(ServerDocumentFiles.prototype as unknown as { call(roots: unknown, operation: string, input: { query: string }): Promise<object | null> }, 'call').mockImplementation(async (_roots: unknown, _operation: unknown, input: { query: string }) => reply(input.query));
   return { files, transport, network };
 }
-afterEach(() => { vi.restoreAllMocks(); policy.roots = ['server-g03/M/Allowed']; });
+afterEach(() => { for (const root of scratchRoots.splice(0)) rmSync(root, {recursive:true,force:true}); vi.restoreAllMocks(); policy.roots = ['server-g03/M/Allowed']; });
 describe('G03 bounded live filename search', () => {
   it('walks authorized directories and pages, matches decoded names and reports coverage', async () => {
     const f = fixture(query => query.endsWith('?offset=50')
@@ -64,7 +69,7 @@ describe('G03 bounded live filename search', () => {
   });
   it('retains a timed-out page as an explicit bounded continuation', async () => {
     const f = fixture(() => ({ available: false }));
-    expect(await f.files.search([], 'name:417 in:server:/M/Allowed')).toMatchObject({ available: false, limited: true, nextQuery: expect.stringMatching(/^name-cursor:/), coverage: { pages: 1, pendingQueries: ['server:/M/Allowed'], complete: false } });
+    expect(await f.files.search([], 'name:417 in:server:/M/Allowed')).toMatchObject({ available: false, limited: true, nextQuery: expect.stringMatching(/^name-cursor:/), coverage: { pages: 1, pendingQueries: [], complete: false } });
     expect(f.transport).toHaveBeenCalledTimes(1);
   });
   it('resumes only the validated pending page and discloses excluded earlier pages', async () => {
@@ -136,8 +141,8 @@ describe('G03 bounded live filename search', () => {
     const cursor = String(first?.nextQuery);
     const second = await f.files.search([], cursor, 1);
     expect(second).toMatchObject({ results: [expect.objectContaining({ path: 'server-g03/M/Allowed/417-B' })], limited: true });
-    expect(await f.files.search([], cursor, 1)).toEqual(second);
-    expect(f.transport).toHaveBeenCalledTimes(1);
+    expect(await f.files.search([], cursor, 1)).toMatchObject({ results: second?.results, nextQuery: second?.nextQuery });
+    expect(f.transport).toHaveBeenCalledTimes(3);
     const other = new ServerDocumentFiles(f.network as never, { userId: 'qa-user-2' });
     vi.spyOn(other, 'navigation').mockResolvedValue({ available: true, results: [entry('server-g03/M/Allowed', 'directory')] });
     expect(await other.search([], String(second?.nextQuery), 1)).toMatchObject({ available: false, error: 'SEARCH_CURSOR_EXPIRED_OR_DENIED' });
@@ -145,6 +150,58 @@ describe('G03 bounded live filename search', () => {
     expect(third).toMatchObject({ results: [expect.objectContaining({ path: 'server-g03/M/Allowed/417-C' })], limited: false, coverage: { complete: true } });
     policy.roots = [];
     expect(await f.files.search([], cursor, 1)).toMatchObject({ available: false, error: 'SEARCH_CURSOR_EXPIRED_OR_DENIED' });
+  });
+  it('withholds buffered filenames when Windows no longer returns them', async () => {
+    let access=true;
+    const f=fixture(() => ({available:true,sourceChecked:true,results:access ? [entry('server-g03/M/Allowed/417-public'),entry('server-g03/M/Allowed/417-PRIVATE-REVOKED')] : []}));
+    const first=await f.files.search([], 'name:417 in:server:/M/Allowed',1);
+    access=false;
+    const next=await f.files.search([],String(first?.nextQuery),1);
+    expect(JSON.stringify(next)).not.toContain('PRIVATE-REVOKED');
+    expect(next).toMatchObject({available:false,limited:true,error:'SEARCH_SOURCE_RECHECK'});
+  });
+  it('withholds replayed filenames after Windows access is revoked', async () => {
+    let access=true;
+    const f=fixture(() => ({available:true,sourceChecked:true,results:access ? [entry('server-g03/M/Allowed/417-public'),entry('server-g03/M/Allowed/417-PRIVATE-REVOKED')] : []}));
+    const first=await f.files.search([], 'name:417 in:server:/M/Allowed',1);
+    const cursor=String(first?.nextQuery);
+    const second=await f.files.search([],cursor,1);
+    expect(JSON.stringify(second)).toContain('PRIVATE-REVOKED');
+    access=false;
+    const replay=await f.files.search([],cursor,1);
+    expect(JSON.stringify(replay)).not.toContain('PRIVATE-REVOKED');
+    expect(replay).toMatchObject({available:false,limited:true,error:'SEARCH_SOURCE_RECHECK'});
+  });
+  it('does not expose previously observed folder names in progress metadata', async () => {
+    const f=fixture(query => query === 'server:/M/Allowed' ? {available:true,sourceChecked:true,
+      results:Array.from({length:50},(_,i)=>entry(`server-g03/M/Allowed/PRIVATE-FOLDER-${i}`,'directory'))} : {available:false,error:'WINDOWS_PATH_UNAVAILABLE'});
+    const result=await f.files.search([], 'name:target in:server:/M/Allowed');
+    expect(result).toMatchObject({limited:true,coverage:{pendingQueries:[],directories:[]}});
+    expect(JSON.stringify(result)).not.toContain('PRIVATE-FOLDER');
+  });
+  it('keeps the entire page and drains other branches if cursor quota is reached', async () => {
+    const realLength = Buffer.byteLength.bind(Buffer);
+    const length = vi.spyOn(Buffer, 'byteLength').mockImplementation((value, encoding) =>
+      typeof value === 'string' && value.includes('/OVERFLOW_TEST') ? 3 * 1024 * 1024 : realLength(value, encoding));
+    const f = fixture(query => ({available:true,sourceChecked:true,results:
+      query === 'server:/M/Allowed' ? [entry('server-g03/M/Allowed/A','directory'),entry('server-g03/M/Allowed/B','directory')] :
+      query === 'server:/M/Allowed/A' ? [entry('server-g03/M/Allowed/A/OVERFLOW_TEST','directory')] :
+      query.endsWith('/OVERFLOW_TEST') ? [entry('server-g03/M/Allowed/A/OVERFLOW_TEST/417.pdf')] : []}));
+    const first=await f.files.search([], 'name:417 in:server:/M/Allowed');
+    expect(first).toMatchObject({limited:true,error:'SEARCH_QUOTA_PAUSED',nextQuery:expect.stringMatching(/^name-cursor:/),
+      coverage:{pendingQueries:[],pendingCount:2}});
+    length.mockRestore();
+    const next=await f.files.search([],String(first?.nextQuery));
+    expect(next).toMatchObject({limited:false,coverage:{complete:true},results:[expect.objectContaining({path:'server-g03/M/Allowed/A/OVERFLOW_TEST/417.pdf'})]});
+  });
+  it('keeps a temporarily unavailable branch for later retry instead of losing it', async () => {
+    let calls = 0;
+    const f = fixture(() => ++calls === 1 ? { available: false, error: 'WINDOWS_PATH_UNAVAILABLE' } :
+      { available: true, sourceChecked: true, results: [entry('server-g03/M/Allowed/417')] });
+    const first = await f.files.search([], 'name:417 in:server:/M/Allowed');
+    expect(first).toMatchObject({limited:true,nextQuery:expect.stringMatching(/^name-cursor:/)});
+    const later = await f.files.search([], String(first?.nextQuery));
+    expect(later).toMatchObject({limited:false,coverage:{complete:true},results:[expect.objectContaining({path:'server-g03/M/Allowed/417'})]});
   });
   it('continues a temporary timeout without falsely marking recovered traversal incomplete', async () => {
     let calls = 0;

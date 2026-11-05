@@ -439,6 +439,34 @@ export class FileJournal<Payload> {
     });
   }
 
+  /** Validate an ordered group under one append lock; publish only after fsync.
+   * Existing identities may be replayed, but an invalid member writes nothing. */
+  async appendBatchIndexed(payloads: readonly Payload[], shouldAppend: (payload: Payload, existing: JournalEntry<Payload> | null, lastSequence: number) => boolean) {
+    if (!this.keyOf || !payloads.length || payloads.length > 256) throw new StorageError("STORAGE_JOURNAL_INDEX_REQUIRED", "Invalid indexed append batch.");
+    const validated = payloads.map(payload => this.payloadSchema.parse(payload, `${this.filePath}:payload`));
+    return this.lockManager.withLock(this.lockKey(), async () => {
+      await this.assertNotSymlink();
+      const { count } = await this.readUnlocked(true, { limit: 0 });
+      const cached = snapshots.get(this.snapshotKey) as JournalSnapshot<Payload> | undefined;
+      let lastSequence = count ? count + (cached?.contiguousSequenceOffset ?? 0) : 0;
+      if (count && this.contiguousPayloadSequence && cached?.contiguousSequenceOffset === undefined) {
+        lastSequence = this.contiguousPayloadSequence((await this.readUnlocked(true, { afterSequence: count - 1, limit: 1 })).entries[0].payload);
+      }
+      const created: JournalEntry<Payload>[] = [], selected = new Map<string, JournalEntry<Payload>>();
+      const results: (JournalEntry<Payload> | null)[] = [];
+      for (const payload of validated) {
+        const key = this.keyOf!(payload), existing = selected.get(key) ?? await this.keyedEntryUnlocked(key);
+        if (!shouldAppend(payload, existing, lastSequence)) { results.push(null); continue; }
+        const entry = this.entrySchema.parse({ schemaVersion: 1, sequence: count + created.length + 1,
+          eventId: randomUUID(), recordedAt: new Date(this.now()).toISOString(), payload });
+        created.push(entry); selected.set(key, entry); results.push(entry);
+        lastSequence = this.contiguousPayloadSequence ? this.contiguousPayloadSequence(payload) : entry.sequence;
+      }
+      if (created.length) await this.writeEntries(created);
+      return results;
+    });
+  }
+
   /** Inspect records under the append lock without materializing their history. */
   async appendScanned(payload: Payload, inspect: (entry: JournalEntry<Payload>) => void,
     shouldAppend: (last: JournalEntry<Payload> | null) => boolean) {

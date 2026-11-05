@@ -384,3 +384,54 @@ it.each([false, true])("reconciles a reconnect cursor jump without blocking a ne
   expect(await journal.loadDeliveryCursor()).toMatchObject({ eventId: "event-10", sequence: 10 });
   expect(await journal.readUndelivered(10)).toEqual([]);
 });
+
+describe("atomic contiguous append groups", () => {
+  it("uses one lock for a burst, preserves each event and recovers exact replay in a new reader", async () => {
+    const journal=await createJournal();
+    const lock=vi.spyOn(ResourceLockManager.prototype,"withLock");
+    const entries=Array.from({length:32},(_,i)=>event(i+1));
+    expect(await journal.appendBatch(entries)).toEqual(Array(32).fill(true));
+    expect(lock).toHaveBeenCalledTimes(1);
+    const cold=new FileTransportEventJournal({filePath:journal.filePath,lockManager:new ResourceLockManager({rootDirectory:path.join(path.dirname(journal.filePath),"restart-locks")})});
+    expect(await cold.readEvents()).toEqual(entries);
+    expect(await cold.appendBatch(entries)).toEqual(Array(32).fill(false));
+    expect(await cold.readEvents()).toEqual(entries);
+  });
+  it("does not replace verified duplicate metadata from an unpersisted replay body", async () => {
+    const journal=await createJournal();const original=event(1);await journal.append(original);
+    const different={...original,message:{kind:"rpc-notification" as const,rpc:{method:"warning" as const,params:{threadId:null,message:"x".repeat(10000)}}}};
+    const remember=vi.spyOn(journal as unknown as {rememberVerified(event:AppServerEvent):void},"rememberVerified");
+    expect(await journal.appendBatch([different])).toEqual([false]);expect(remember).not.toHaveBeenCalled();
+    expect(await journal.readEvents()).toEqual([original]);
+    await journal.markDelivered(original);expect(await journal.loadDeliveryCursor()).toEqual({schemaVersion:1,eventId:original.eventId,sequence:1});
+  });
+  it("refuses a bad middle sequence or reused identity before any member is written", async () => {
+    const journal=await createJournal();await journal.append(event(1));
+    const before=await readFile(journal.filePath,"utf8");
+    await expect(journal.appendBatch([event(2),event(4),event(5)])).rejects.toThrow();
+    expect(await readFile(journal.filePath,"utf8")).toBe(before);
+    await expect(journal.appendBatch([event(2),event(3,"event-2")])).rejects.toThrow();
+    expect(await readFile(journal.filePath,"utf8")).toBe(before);
+    expect(await journal.appendBatch([event(2),event(3)])).toEqual([true,true]);
+  });
+  it("repairs a torn middle write after restart without replaying a ghost suffix", async () => {
+    const journal=await createJournal();const entries=[event(1),event(2),event(3)];
+    await journal.appendBatch(entries);
+    const lines=(await readFile(journal.filePath,"utf8")).trim().split("\n");
+    // Model a process/disk failure after the first complete record and a torn second.
+    await writeFile(journal.filePath,lines[0]+"\n"+lines[1].slice(0,31));
+    const cold=new FileTransportEventJournal({filePath:journal.filePath,lockManager:new ResourceLockManager({rootDirectory:path.join(path.dirname(journal.filePath),"cold-locks")})});
+    const repair=await cold.verifyAndRepair();expect(repair.repairedBytes).toBeGreaterThan(0);
+    expect(await cold.readEvents()).toEqual([entries[0]]);
+    expect(await cold.appendBatch(entries)).toEqual([false,true,true]);
+    expect(await cold.readEvents()).toEqual(entries);
+  });
+
+  it("fences concurrent conflicting allocations and never produces ghost events", async () => {
+    const journal=await createJournal();
+    const outcomes=await Promise.allSettled([journal.appendBatch([event(1,"a"),event(2,"b")]),journal.appendBatch([event(1,"c"),event(2,"d")])]);
+    expect(outcomes.filter(x=>x.status==="fulfilled")).toHaveLength(1);
+    const persisted=await journal.readEvents();expect(persisted.map(x=>x.sequence)).toEqual([1,2]);
+    expect(persisted.map(x=>x.eventId)).toEqual(outcomes[0].status==="fulfilled"?["a","b"]:["c","d"]);
+  });
+});

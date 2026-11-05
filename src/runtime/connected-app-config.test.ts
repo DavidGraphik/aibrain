@@ -15,7 +15,7 @@ it("refreshes loaded threads when connections change, disappear or the worker re
   expect(connectedAppConfig([])).toEqual({ apps: { _default: expect.objectContaining({ enabled: false }) } });
   expect(connectedAppConfig(["mail"]).apps).toEqual({
     _default: expect.objectContaining({ enabled: false }),
-    mail: expect.objectContaining({ enabled: true, approvals_reviewer: "auto_review" }),
+    mail: expect.objectContaining({ enabled: false, approvals_reviewer: "auto_review" }),
   });
 });
 
@@ -31,4 +31,40 @@ it("uses a supported reviewer even for disabled defaults without enabling destru
       expect(app.open_world_enabled).toBe(false);
     }
   }
+});
+
+it("bounds native app tools and refreshes loaded threads after tool or write policy changes", () => {
+  const tools = { mail: { allowed: ["search"], known: ["search", "send"] } };
+  const config = connectedAppConfig(["mail"], tools);
+  expect((config.apps as Record<string, unknown>).mail).toMatchObject({ default_tools_enabled: false, tools: { search: { enabled: true } } });
+  const client = {};
+  markConnectedAppConfigApplied(client, "thread", ["mail"], {}, tools);
+  expect(hasAppliedConnectedAppConfig(client, "thread", ["mail"], {}, tools)).toBe(true);
+  expect(hasAppliedConnectedAppConfig(client, "thread", ["mail"], {}, { mail: { allowed: ["search", "send"], known: ["search", "send"] } })).toBe(false);
+  expect(hasAppliedConnectedAppConfig(client, "thread", ["mail"], { "mcp_servers.crm.enabled": false }, tools)).toBe(false);
+});
+
+it("overrides saved app and per-tool enables explicitly, including names with slashes", () => {
+  const policies = {
+    mail: { allowed: ["messages/read"], known: ["messages/read", "messages/send", "legacy/send"] },
+    foreign: { allowed: [], known: ["files/read"] },
+  };
+  const config = connectedAppConfig(["mail"], policies);
+  expect(config.apps).toMatchObject({
+    mail: { enabled: true, default_tools_enabled: false, tools: {
+      "messages/read": { enabled: true }, "messages/send": { enabled: false }, "legacy/send": { enabled: false },
+    } },
+    foreign: { enabled: false, default_tools_enabled: false, tools: { "files/read": { enabled: false } } },
+  });
+  const client = {};
+  markConnectedAppConfigApplied(client, "thread", ["mail"], {}, policies);
+  expect(hasAppliedConnectedAppConfig(client, "thread", ["mail"], {}, { ...policies,
+    foreign: { allowed: [], known: ["files/read", "new/previously-enabled"] },
+  })).toBe(false);
+});
+
+it("metadata loss or a revoked app never inherits a previous blanket tool enable", () => {
+  expect(connectedAppConfig(["mail"]).apps).toMatchObject({ mail: { enabled: false, default_tools_enabled: false, tools: {} } });
+  expect(connectedAppConfig([], { mail: { allowed: ["search"], known: ["search"] } }).apps)
+    .toMatchObject({ mail: { enabled: false, tools: { search: { enabled: false } } } });
 });

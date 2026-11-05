@@ -111,48 +111,60 @@ export class SageReader {
     const url = new URL(credential.baseUrl);
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/api" || !credential.username || !credential.password || !credential.appId) fail("SAGE_CONFIG_INVALID");
   }
-  private async post(route: "auth/Login" | "DataQuery/GetQueryList" | "DataQuery/GetQuery" | "DataQuery/GetTableFields" | "PutData/allowedTables" | "PutData/InsertData", body: unknown, token?: string) {
+  /** A batch owns its session state so a cancelled request cannot alter another call. */
+  forkForRead() {
+    const fork = new SageReader(this.credential, this.fetcher);
+    if (this.session) fork.session = { ...this.session, catalog: new Set(this.session.catalog) };
+    return fork;
+  }
+  private async post(route: "auth/Login" | "DataQuery/GetQueryList" | "DataQuery/GetQuery" | "DataQuery/GetTableFields" | "PutData/allowedTables" | "PutData/InsertData", body: unknown, token?: string, signal?: AbortSignal) {
     try {
       // IME dispatch can finish after the ordinary read deadline. Keep one
       // bounded attempt; a timeout is still uncertain and is never retried.
-      const response = await this.fetcher(`${this.credential.baseUrl}/${route}`, { method: "POST", redirect: "error", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(route==="PutData/InsertData"?60_000:15_000) });
+      if (signal?.aborted) return fail("SAGE_READ_CANCELLED");
+      const response = await this.fetcher(`${this.credential.baseUrl}/${route}`, { method: "POST", redirect: "error", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(route==="PutData/InsertData"?60_000:15_000)]) : AbortSignal.timeout(route==="PutData/InsertData"?60_000:15_000) });
+      if (signal?.aborted) return fail("SAGE_READ_CANCELLED");
       if (!response.ok) { await response.body?.cancel(); return fail(response.status === 401 ? "SAGE_AUTH_REQUIRED" : "SAGE_PROVIDER_UNAVAILABLE"); }
       if (Number(response.headers.get("content-length")) > 1024 * 1024) { await response.body?.cancel(); return fail("SAGE_RESPONSE_TOO_LARGE"); }
       const reader = response.body?.getReader(); if (!reader) return fail("SAGE_PROVIDER_RESPONSE_INVALID");
       let bytes = 0; const chunks: Uint8Array[] = [];
       try { for (;;) { const part = await reader.read(); if (part.done) break; bytes += part.value.byteLength; if (bytes > 1024 * 1024) return fail("SAGE_RESPONSE_TOO_LARGE"); chunks.push(part.value); } }
       finally { await reader.cancel().catch(() => undefined); }
+      if (signal?.aborted) return fail("SAGE_READ_CANCELLED");
       try { return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown; } catch { return fail("SAGE_PROVIDER_RESPONSE_INVALID"); }
-    } catch (error) { if (error instanceof SageError) throw error; return fail("SAGE_PROVIDER_UNAVAILABLE"); }
+    } catch (error) { if (signal?.aborted) return fail("SAGE_READ_CANCELLED"); if (error instanceof SageError) throw error; return fail("SAGE_PROVIDER_UNAVAILABLE"); }
   }
-  private async authenticated() {
+  private async authenticated(signal?: AbortSignal) {
+    if (signal?.aborted) return fail("SAGE_READ_CANCELLED");
     if (this.session && this.session.expires > Date.now() + 60_000) return this.session;
     if (!this.login) this.login = (async () => {
-      const result = await this.post("auth/Login", { username: this.credential.username, password: this.credential.password, AppId: this.credential.appId });
+      const result = await this.post("auth/Login", { username: this.credential.username, password: this.credential.password, AppId: this.credential.appId }, undefined, signal);
       if (!sageRecord(result) || typeof result.publicToken !== "string" || result.publicToken.length < 16 || result.publicToken.length > 24_000) return fail("SAGE_AUTH_REQUIRED");
       const token = result.publicToken;
       // Never expose Companies: it includes other companies. Only validate the pinned G03 identity internally.
-      const companies = arrayPayload(await this.post("DataQuery/GetQuery", { queryName: "Companies", parameters: {}, skip: 0, take: 100 }, token));
+      const companies = arrayPayload(await this.post("DataQuery/GetQuery", { queryName: "Companies", parameters: {}, skip: 0, take: 100 }, token, signal));
       const own = companies.filter(row => String(row.Code) === "1");
       if (own.length !== 1 || own[0].Name !== companyName) return fail("SAGE_COMPANY_MISMATCH");
-      const queries = arrayPayload(await this.post("DataQuery/GetQueryList", {}, token));
+      const queries = arrayPayload(await this.post("DataQuery/GetQueryList", {}, token, signal));
       const catalog = new Set(queries.filter(row => typeof row.name === "string" && typeof row.parameters === "string" && row.parameters.split(",").map(value => value.trim()).includes("CodigoEmpresa")
         && Object.hasOwn(SAGE_QUERIES, row.name) && [...row.parameters.split(",").map(value => value.trim())].sort().join() === ["CodigoEmpresa", ...SAGE_QUERIES[row.name as SageQuery].parameters].sort().join()).map(row => String(row.name)));
       const expiry = typeof result.publicTokenValidTo === "string" ? Date.parse(result.publicTokenValidTo) : NaN;
+      if (signal?.aborted) return fail("SAGE_READ_CANCELLED");
       this.session = { token, catalog, verifiedAt: new Date().toISOString(), expires: Number.isFinite(expiry) ? Math.min(expiry, Date.now() + 300_000) : Date.now() + 120_000 };
       return this.session;
     })().finally(() => { this.login = null; });
     return this.login;
   }
-  async read(query: unknown, parameters: unknown = {}, skip: unknown = 0, take: unknown = 10) {
+  async read(query: unknown, parameters: unknown = {}, skip: unknown = 0, take: unknown = 10, signal?: AbortSignal) {
+    if (signal?.aborted) return fail("SAGE_READ_CANCELLED");
     const body = sageReadArguments(query, parameters, skip, take);
     if (!this.credential.allowedQueries.includes(body.queryName)) return fail("SAGE_QUERY_DENIED");
-    let session = await this.authenticated();
+    let session = await this.authenticated(signal);
     if (!session.catalog.has(body.queryName)) return fail("SAGE_QUERY_NOT_AVAILABLE");
     let pageTake = body.take, reauthenticated = false;
     for (;;) {
       try {
-        const data = await this.post("DataQuery/GetQuery", { ...body, take: pageTake }, session.token);
+        const data = await this.post("DataQuery/GetQuery", { ...body, take: pageTake }, session.token, signal);
         const rows = arrayPayload(data);
         if (rows.length > pageTake || rows.some(row => !Object.hasOwn(row,"CompanyId") && !Object.hasOwn(row,"CodigoEmpresa")
           || foreignCompany(row))) return fail("SAGE_COMPANY_SCOPE_INVALID");
@@ -169,10 +181,11 @@ export class SageReader {
           nextOffset: rows.length === pageTake && body.skip + pageTake <= 5000 ? body.skip + pageTake : null,
           limitReached: rows.length === pageTake && body.skip + pageTake > 5000, complete: rows.length < pageTake, checkedAt: new Date().toISOString() };
       } catch (error) {
+        if (signal?.aborted) return fail("SAGE_READ_CANCELLED");
         if (error instanceof SageError && error.code === "SAGE_AUTH_REQUIRED" && !reauthenticated) {
           reauthenticated = true;
           if (this.session === session) this.session = null;
-          session = await this.authenticated();
+          session = await this.authenticated(signal);
           if (!session.catalog.has(body.queryName)) return fail("SAGE_QUERY_NOT_AVAILABLE");
           continue; // One reauthentication across all attempts, reads only.
         }
@@ -223,8 +236,8 @@ export class SageReader {
     if(Buffer.byteLength(JSON.stringify(result))>128*1024)return fail("SAGE_WRITE_RESPONSE_TOO_LARGE");
     return result;
   }
-  async discover() {
-    const session = await this.authenticated();
+  async discover(signal?: AbortSignal) {
+    const session = await this.authenticated(signal);
     const queries = this.credential.allowedQueries.filter(name => session.catalog.has(name)).map(name => ({ name, ...SAGE_QUERIES[name] }));
     if (!queries.length) return fail("SAGE_QUERY_NOT_AVAILABLE");
     return { source: "SAGE", companyCode: "1", companyName, readOnly: true, queries, companyVerifiedAt: session.verifiedAt, maxTake: 50, maxOffset: 5000 };

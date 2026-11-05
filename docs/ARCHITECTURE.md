@@ -18,6 +18,23 @@ than introduce another decision path in the conversation coordinator.
   a rejected session under its documented policy. An uncertain write must not
   be repeated automatically.
 
+## Native connections and bounded work
+
+Assigned Apps and MCP tools execute through the employee's existing Codex App
+Server. Current native inventory, installation catalogue and turn permissions
+determine explicit tool overrides. Previously configured apps and tool grants
+are disabled explicitly when removed; restrictive defaults alone do not erase
+an earlier per-tool grant. Read-only and background turns do not receive native
+write tools. Provider consent and callback ingress are installation prerequisites,
+not effects of listing a resource. See [native connections](NATIVE_CONNECTIONS.md).
+
+Provider-specific adapters remain where a native provider does not supply an
+equivalent operation. Mail search preserves all constraints and cursor coverage,
+ERP reads use bounded batches, and server filename searches retain a durable
+continuation instead of discarding remaining folders. Protocol events are
+persisted in bounded groups before delivery. One background maintenance task
+can drain without delaying admission of the next scheduled job.
+
 ## Workbench UI
 
 - `src/components/brain-app.tsx` coordinates the active conversation, drafts

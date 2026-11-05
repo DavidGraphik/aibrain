@@ -23,7 +23,7 @@ const THREAD_TOKEN_SECONDS = 60 * 60 * 24 * 30;
 const supportToolsetDigest = createHash("sha256")
   .update(JSON.stringify({ tools: SUPPORT_DYNAMIC_TOOLS, instructions: SUPPORT_INSTRUCTIONS }))
   .digest("hex").slice(0, 16);
-export const CURRENT_THREAD_TOOLSET_REVISION = `aibrain-tools-2026-11-05-nc-${supportToolsetDigest}-schedule-start`;
+export const CURRENT_THREAD_TOOLSET_REVISION = `aibrain-tools-2026-11-05-nc-${supportToolsetDigest}-native-v1`;
 
 // The schema is immutable inside Codex threads. Derive this compatibility
 // identity from the shipped catalog AND instructions so a new operation or

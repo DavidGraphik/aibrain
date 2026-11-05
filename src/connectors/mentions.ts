@@ -130,8 +130,15 @@ async function resolvedMentions(installationId: string, userId: string, session?
       }
     }
   }
-  for (const [id, capability] of await nativeConnectionHealthForIdentity(installationId, userId, resources)) {
+  const nativeWriteResources = new Set(resources.filter(resource => principal.workspaceCanExecute
+    && allowsCatalogOperation(state, principal, resource.id, "write")).map(resource => resource.id));
+  for (const [id, capability] of await nativeConnectionHealthForIdentity(installationId, userId, resources, nativeWriteResources)) {
     health.set(id, capability);
+  }
+  for (const resource of resources) {
+    if (resource.kind === "mcp" && resource.credentialMode === "personal-oauth" && !resource.sharedResource) {
+      connectUrls.set(resource.id, `/api/connectors/native/${encodeURIComponent(resource.id)}/oauth`);
+    }
   }
   return { resources, mentions: resources.map((resource) => ({ ...projectConnectorMention(resource, health), connectUrl: connectUrls.get(resource.connectorId ?? resource.id) ?? null })) };
 }

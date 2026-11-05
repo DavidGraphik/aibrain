@@ -14,6 +14,7 @@ import { executeScheduledTurn } from "../src/automations/executor";
 import { writeAutomationWorkerStatus } from "../src/automations/worker-status";
 import { drainAutomaticMemoryJobs } from "../src/memory/automatic-extraction";
 import { stopWorkerRuntimeForUser } from "../src/runtime/worker-runtime-service";
+import { BackgroundMaintenance } from "../src/automations/background-maintenance";
 
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i;
 
@@ -39,9 +40,6 @@ type ExecutionResult = Awaited<ReturnType<typeof runClaimedAutomation>>;
 
 async function sweep(workerId: string, installation: Readonly<InstallationConfig>, poller: AutomationAdmissionPoller<ClaimedAutomation, ExecutionResult>, timeoutMs: number, usedRuntimes: Set<string>) {
   const users = await enabledUsers(installation.paths.usersRoot);
-  const memory = await drainAutomaticMemoryJobs(installation, {
-    userIds: users.flatMap((user) => user ? [user.userId] : []),
-  });
   await poller.poll(users.flatMap((user) => {
     if (!user) return [];
     let session: Awaited<ReturnType<typeof provisionedAutomationPrincipal>>;
@@ -72,7 +70,7 @@ async function sweep(workerId: string, installation: Readonly<InstallationConfig
       },
     }];
   }));
-  return memory;
+  return users.flatMap(user => user ? [user.userId] : []);
 }
 
 async function main() {
@@ -110,6 +108,11 @@ async function main() {
     },
   });
   const usedRuntimes = new Set<string>();
+  const memory = new BackgroundMaintenance(
+    (userIds: string[]) => drainAutomaticMemoryJobs(installation, { userIds }),
+    results => report([], results),
+    () => { process.stderr.write("AUTOMATION_MEMORY_SCAN_FAILED\n"); },
+  );
   let receivingDrain:Promise<unknown>|null=null;
   const shutdown = new AbortController();
   const stop = () => { poller.close(); shutdown.abort(); };
@@ -127,9 +130,10 @@ async function main() {
   try {
     do {
       if(!receivingDrain)receivingDrain=drainG03Receiving(installation).catch(()=>undefined).finally(()=>{receivingDrain=null;});
-      const memory = await sweep(workerId, installation, poller, timeoutMs, usedRuntimes);
+      const userIds = await sweep(workerId, installation, poller, timeoutMs, usedRuntimes);
+      memory.start(userIds);
       await heartbeat();
-      report([], memory);
+      report([]);
       if (once || shutdown.signal.aborted) break;
       await delay(intervalMs, undefined, {signal: shutdown.signal}).catch(error => {
         if (!shutdown.signal.aborted) throw error;
@@ -137,6 +141,7 @@ async function main() {
     } while (!shutdown.signal.aborted);
   } finally {
     await receivingDrain;
+    await memory.stop();
     await poller.stop(); // Finish admitted work; a forced exit retains the durable store leases.
     // Close only this process's employee clients after every admitted runner settled.
     const stopped = await Promise.allSettled([...usedRuntimes].map(userId => stopWorkerRuntimeForUser(userId)));

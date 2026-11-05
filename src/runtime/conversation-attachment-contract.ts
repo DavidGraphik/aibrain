@@ -1,7 +1,7 @@
 import type { DynamicToolSpec } from '../../contracts/codex/0.162.1/types/v2/DynamicToolSpec';
 import type { JsonValue } from '../../contracts/codex/0.162.1/types/serde_json/JsonValue';
 const tool=(name:string,description:string,properties:Record<string,JsonValue>,required:string[])=>({type:'function' as const,name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}});
-// Trinalum receives only attachment operations, never G03's general history tools.
+// Attachment operations are composed with the session-authorized history tools.
 export const CONVERSATION_ATTACHMENT_DYNAMIC_TOOLS: readonly DynamicToolSpec[] = Object.freeze([{
  type:'namespace',name:'aibrain_conversations',
  description:'Find and open your own original human-uploaded attachments from prior chats. Metadata only: no chat bodies, project workspace files or other employees. Original copies can be exposed only in your current private owned project; source and destination permissions are checked again.',

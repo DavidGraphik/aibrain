@@ -36,6 +36,7 @@ import type { WorkerRuntimeHandle } from "@/runtime/workers/types";
 import { operationalLogger } from "@/operations/server-logger";
 import { installationOwnerAuthSocket, readInstallationOwnerAccess } from "@/runtime/installation-owner-auth";
 import { createWeeklyTokenBudgetRuntime, type WeeklyTokenBudgetRuntime } from "@/usage/weekly-token-budget-runtime";
+import { completeNativeConnectionOAuth } from "@/connectors/native-connection-lifecycle";
 
 const CATALOG_FRESH_TTL_MS = 5 * 60_000;
 const CATALOG_STALE_TTL_MS = 30 * 60_000;
@@ -107,8 +108,13 @@ export class WorkerAppServerClient {
       }),
     );
     this.router = new AppServerRpcRouter(handle.transport, {
+      onNotification: async (notification, event) => {
+        if (notification.method === "mcpServer/oauthLogin/completed") completeNativeConnectionOAuth(
+          { installationId: handle.installationId, userId: handle.userId }, notification.params,
+        );
+        await this.weeklyBudget?.observe(notification, event);
+      },
       ...(this.weeklyBudget ? {
-        onNotification: (notification: Parameters<WeeklyTokenBudgetRuntime["observe"]>[0], event: AppServerEvent) => this.weeklyBudget!.observe(notification, event),
         onTurnBound: (threadId: string, turnId: string) => this.weeklyBudget!.bindTurn(threadId, turnId),
       } : {}),
       onRequestMetric: (metric) => operationalLogger.info("codex.app_server_request", {
