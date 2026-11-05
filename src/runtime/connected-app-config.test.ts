@@ -1,6 +1,15 @@
 import { expect, it } from "vitest";
 import { connectedAppConfig, hasAppliedConnectedAppConfig, markConnectedAppConfigApplied, previousConnectedAppPolicies } from "./connected-app-config";
 
+it("preserves native provider IDs as literal app keys with only enumerated read tools enabled", () => {
+  const id = "connector_00000000000000000000000000000001";
+  const config = connectedAppConfig([id], { [id]: { allowed: ["search"], known: ["search", "send"] } });
+  expect(config.apps).toMatchObject({ [id]: { enabled: true, default_tools_enabled: false, destructive_enabled: false, open_world_enabled: false,
+    tools: { search: { enabled: true, approval_mode: "writes" }, send: { enabled: false, approval_mode: "writes" } } } });
+  expect(config.apps._default.enabled).toBe(false);
+  expect(Object.keys(config.apps)).toEqual(["_default", id]);
+});
+
 it("refreshes loaded threads when connections change, disappear or the worker restarts", () => {
   const client = {};
   expect(hasAppliedConnectedAppConfig(client, "thread", [])).toBe(false);

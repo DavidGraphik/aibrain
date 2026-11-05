@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { observedToolPublicReferences } from "@/lib/public-references";
 import type {
   ActivityFileChange,
   ActivityItem,
@@ -375,11 +376,16 @@ export function itemToolResult(
   params: unknown,
   completed: boolean,
   observedAt: string,
+  privateReferences: readonly string[] = [],
 ): ToolResult | null {
   if (!isRecord(params) || !isRecord(params.item)) return null;
   const item = params.item;
   if (typeof item.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(item.id)) return null;
   const sources = itemSources(params);
+  const privateIds = [...privateReferences, params.threadId, params.turnId, item.id]
+    .filter((value): value is string => typeof value === "string");
+  const publicReferences = observedToolPublicReferences(item, completed, privateIds);
+  const referenceEvidence = { publicReferences, privateReferences: privateIds };
   const common = {
     id: item.id,
     status: toolResultStatus(item, completed),
@@ -426,7 +432,8 @@ export function itemToolResult(
       kind: "app",
       title: app ? `${app} · ${tool}` : tool,
       summary: error,
-      output: publicToolOutput(mcpOutput(item.result)),
+      output: publicToolOutput(mcpOutput(item.result), 64_000, referenceEvidence),
+      ...(publicReferences.length ? { publicReferences } : {}),
     };
   }
   if (item.type === "dynamicToolCall") {
@@ -439,7 +446,8 @@ export function itemToolResult(
       kind: browser ? "browser" : "app",
       title: `${publicToolName(item.namespace, browser ? "Navegador" : "Herramienta")} · ${publicToolName(item.tool, "Acción")}`,
       summary: null,
-      output: content.length ? publicToolOutput(content.join("\n\n")) : null,
+      output: content.length ? publicToolOutput(content.join("\n\n"), 64_000, referenceEvidence) : null,
+      ...(publicReferences.length ? { publicReferences } : {}),
     };
   }
   return null;

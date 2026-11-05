@@ -26,7 +26,7 @@ export function ToolCall({ result }: {
     ? publicCommandTitle(result.title, result.status === "running")
     : publicActivityText(result.title, 240) ?? t("Herramienta");
   const publicSummary = publicActivityText(result.summary, 4_000);
-  const publicOutput = publicToolOutput(result.output);
+  const publicOutput = publicToolOutput(result.output, 64_000, { publicReferences: result.publicReferences });
   return (
     <details data-slot="tool-call" className="group/tool overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface-raised)]">
       <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2.5 px-3 py-2 text-left [&::-webkit-details-marker]:hidden">

@@ -1,4 +1,6 @@
-const INTERNAL_ID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
+import { isPrivateReferenceField, isPublicReference, referenceKey, type PublicReferenceEvidence } from "@/lib/public-references";
+
+const INTERNAL_ID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
 const INTERNAL_DIGEST = /\b(?:sha256:)?[0-9a-f]{32,64}\b/giu;
 const INTERNAL_BRAND = /\b(?:AiBrain|Codex(?:\s+App\s+Server)?|gpt-[a-z0-9.-]+)\b/giu;
 const INTERNAL_NAMESPACE = /\b(?:aibrain|codex)[_-][a-z0-9_.:-]+\b/giu;
@@ -7,6 +9,8 @@ const INSTALLATION_SLUG = /\b(?:(?:company|tenant|installation)[-_][a-z0-9._-]+|
 const FILE_URL = /\bfile:\/\/\/[^\s<>"')\]]+/giu;
 const ABSOLUTE_PATH = /(?<![\w.:])\/(?:var|srv|home|Users|private|tmp|opt|etc|usr|root)(?:\/[^\s<>"'`)\]]+)+/gu;
 const RUNTIME_PATH = /\b(?:runtime\/codex-home|source-ro|usersRoot|dataRoot)(?:\/[^\s<>"'`)\]]*)?/giu;
+const PRIVATE_API_PATH = /\/api\/[^\s<>"'`)\]]+/giu;
+const PRIVATE_FIELD_REFERENCE = /(\b([a-z][a-z0-9_-]*)["']?\s*[:=]\s*["']?)(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|(?:sha256:)?[0-9a-f]{32,64})\b/giu;
 
 function normalizedText(value: unknown) {
   if (typeof value !== "string") return "";
@@ -28,15 +32,20 @@ function withoutMarkdown(value: string) {
     .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gmu, "");
 }
 
-function redactInternalDetails(value: string, assistantName = "el asistente") {
+function redactInternalDetails(value: string, assistantName = "el asistente", evidence: PublicReferenceEvidence = {}) {
+  const denied = new Set((evidence.privateReferences ?? []).filter(isPublicReference).map(referenceKey));
+  const allowed = new Set((evidence.publicReferences ?? []).filter(isPublicReference).map(referenceKey));
+  const identifier = (match: string) => allowed.has(referenceKey(match)) && !denied.has(referenceKey(match)) ? match : "identificador interno";
   return value
     .replace(INSTALLATION_REFERENCE, "entorno privado")
     .replace(INSTALLATION_SLUG, "entorno privado")
     .replace(FILE_URL, "archivo interno")
     .replace(ABSOLUTE_PATH, "archivo interno")
     .replace(RUNTIME_PATH, "entorno privado")
-    .replace(INTERNAL_ID, "identificador interno")
-    .replace(INTERNAL_DIGEST, "identificador interno")
+    .replace(PRIVATE_API_PATH, "ruta interna")
+    .replace(PRIVATE_FIELD_REFERENCE, (match, prefix: string, field: string) => isPrivateReferenceField(field) ? `${prefix}identificador interno` : match)
+    .replace(INTERNAL_ID, identifier)
+    .replace(INTERNAL_DIGEST, identifier)
     .replace(INTERNAL_NAMESPACE, "herramienta autorizada")
     .replace(INTERNAL_BRAND, assistantName);
 }
@@ -46,8 +55,8 @@ function redactInternalDetails(value: string, assistantName = "el asistente") {
  * boundary, not an authorization boundary: it intentionally removes internal
  * brands, host paths, opaque identifiers and literal Markdown decoration.
  */
-export function publicActivityText(value: unknown, maximum = 12_000) {
-  const publicText = withoutMarkdown(redactInternalDetails(normalizedText(value)))
+export function publicActivityText(value: unknown, maximum = 12_000, evidence: PublicReferenceEvidence = {}) {
+  const publicText = withoutMarkdown(redactInternalDetails(normalizedText(value), "el asistente", evidence))
     .replace(/[ \t]+/gu, " ")
     .replace(/ *\n */gu, "\n")
     .replace(/\n{3,}/gu, "\n\n")
@@ -56,8 +65,8 @@ export function publicActivityText(value: unknown, maximum = 12_000) {
 }
 
 /** Keeps useful command output reviewable without exposing its host/runtime. */
-export function publicToolOutput(value: unknown, maximum = 64_000) {
-  return publicActivityText(value, maximum);
+export function publicToolOutput(value: unknown, maximum = 64_000, evidence: PublicReferenceEvidence = {}) {
+  return publicActivityText(value, maximum, evidence);
 }
 
 /**
@@ -77,19 +86,19 @@ export function completePublicTextPrefix(value: string) {
  * Redacts final-answer internals while retaining Markdown and safe links.
  * Runtime artifact/API links are protected before opaque IDs are removed.
  */
-export function publicAssistantText(value: unknown, assistantName: string, maximum = 128_000) {
+export function publicAssistantText(value: unknown, assistantName: string, maximum = 128_000, evidence: PublicReferenceEvidence = {}) {
   const normalized = normalizedText(value);
   if (!normalized) return "";
   const links: string[] = [];
   const protectedText = normalized.replace(
-    /https?:\/\/[^\s<>"']+|\/api\/threads\/[0-9a-f-]{36}\/artifacts\/[0-9a-f-]{36}(?:\?[^\s<>"')\]]*)?|\/g03\/apps\?id=[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:&published=1)?(?=[\s<>"'`)\]]|$)|(?<![^\s<>"'`(])\/(?:g03\/production\/preview|api\/g03\/apps\/preview)\?id=[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?=[\s<>"'`)\]]|$)|\/api\/(?:projects|browser|documents)\/[^\s<>"')\]]+/giu,
+    /https?:\/\/[^\s<>"']+|\/api\/threads\/[0-9a-f-]{36}\/artifacts\/[0-9a-f-]{36}(?:\?[^\s<>"')\]]*)?|\/g03\/apps\?id=[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:&published=1)?(?=[\s<>"'`)\]]|$)|(?<![^\s<>"'`(])\/(?:g03\/production\/preview|api\/g03\/apps\/preview)\?id=[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?=[\s<>"'`)\]]|$)|\/api\/(?:projects|browser|documents)\/[^\s<>"')\]]+/giu,
     (link) => {
       const index = links.push(link) - 1;
       return `SAFEURLTOKEN${index}ENDTOKEN`;
     },
   );
   const safeName = assistantName.trim() || "el asistente";
-  const redacted = redactInternalDetails(protectedText, safeName)
+  const redacted = redactInternalDetails(protectedText, safeName, evidence)
     .replace(/[ \t]+/gu, " ")
     .replace(/\n{3,}/gu, "\n\n");
   return redacted.replace(/SAFEURLTOKEN(\d+)ENDTOKEN/gu, (_match, index: string) => links[Number(index)] ?? "").slice(0, maximum);

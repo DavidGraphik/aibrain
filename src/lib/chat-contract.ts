@@ -2,6 +2,7 @@ import { MAX_FILES_PER_MESSAGE } from "@/lib/chat-attachment-limits";
 import { isServerReferenceList, type ServerReference } from "@/documents/server-reference-contract";
 import type { RuntimeReasoningEffort } from "@/lib/runtime-status";
 import type { ComposerExperience } from "@/lib/composer-experience";
+import { validPublicReferences } from "@/lib/public-references";
 
 export type ActivityKind =
   | "system"
@@ -64,6 +65,8 @@ export type ToolResult = {
   createdAt: string;
   /** Monotonic App Server transport sequence for cross-kind timeline ordering. */
   sequence?: number;
+  /** Server-observed record references; optional for older persisted results. */
+  publicReferences?: string[];
 };
 
 export type PlanStep = {
@@ -354,6 +357,8 @@ export function isToolResult(value: unknown): value is ToolResult {
     Array.isArray(value.sourceIds) && value.sourceIds.length <= 100 &&
     value.sourceIds.every((id) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(id)) &&
     new Set(value.sourceIds).size === value.sourceIds.length &&
+    (value.publicReferences === undefined || validPublicReferences(value.publicReferences)
+      && (value.publicReferences.length === 0 || value.kind === "app" && value.status === "complete")) &&
     (!("sequence" in value) || value.sequence === undefined ||
       (Number.isSafeInteger(value.sequence) && Number(value.sequence) >= 0)) &&
     isIsoDate(value.createdAt);

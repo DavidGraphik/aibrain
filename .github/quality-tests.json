@@ -71,5 +71,10 @@
   "src/automations/background-maintenance.test.ts",
   "src/connectors/mentions-resolution.test.ts",
   "src/connectors/mentions.test.ts",
-  "src/runtime/personal-auth-provider.test.ts"
+  "src/runtime/personal-auth-provider.test.ts",
+  "src/catalog/native-app-id.test.ts",
+  "src/lib/public-references.test.ts",
+  "src/lib/chat-contract.test.ts",
+  "tests/unit/public-activity.test.ts",
+  "src/runtime/private-workspace-text.test.ts"
 ]

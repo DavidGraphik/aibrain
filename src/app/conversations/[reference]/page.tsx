@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/auth/session";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { publicAssistantText } from "@/ui/public-activity";
+import { publicReferencesForResults } from "@/lib/public-references";
 import { readConversationReference } from "@/workbench/conversation-reference";
 import { WorkbenchNotFoundError } from "@/workbench/errors";
 
@@ -29,7 +30,9 @@ export default async function ConversationReferencePage({ params }: { params: Pr
           {thread.messages.map(message => (
             <article key={message.id} className="min-w-0 [overflow-wrap:anywhere]">
               <p className="mb-2 text-sm text-[var(--text-muted)]">{message.role === "user" ? "Usuario" : "Asistente"} · <time dateTime={message.createdAt}>{message.createdAt}</time></p>
-              {message.role === "user" ? <p className="whitespace-pre-wrap">{message.content}</p> : <MarkdownMessage>{publicAssistantText(message.content, "el asistente")}</MarkdownMessage>}
+              {message.role === "user" ? <p className="whitespace-pre-wrap">{message.content}</p> : <MarkdownMessage>{publicAssistantText(message.content, "el asistente", 128_000, {
+                publicReferences: publicReferencesForResults(message.toolResults), privateReferences: [message.id, thread.id, thread.projectId],
+              })}</MarkdownMessage>}
               {message.attachments.length ? <ul className="mt-2 text-sm">{message.attachments.map(attachment => <li key={attachment.id}>{attachment.name}</li>)}</ul> : null}
             </article>
           ))}

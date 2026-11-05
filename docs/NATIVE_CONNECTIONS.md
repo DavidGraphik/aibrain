@@ -35,6 +35,11 @@ names only to disable them, never to carry permissions forward. An unavailable
 inventory disables native Apps for that turn while ordinary chat can continue.
 This check does not force a remote provider refresh on every turn.
 Unknown, ambiguous or disabled resources do not receive blanket tool access.
+Native App IDs are opaque provider keys, such as `connector_<opaque-id>` or
+`asdk_app_<opaque-id>`. Preserve the exact installed ID, including underscores;
+internal catalogue resource/rule IDs keep their separate slug format. App IDs
+cannot contain key-path separators, traversal or the reserved `_default` setting.
+Never infer a provider account or company workspace from the App's display name.
 Provider output cannot authorize a mutation. Explicit account-holder review
 requirements, including exact email review, still apply.
 
@@ -211,3 +216,14 @@ attachment integrity and real reversible provider readback. Measure provider,
 tool and total user-response time separately on representative requests. A
 configured OAuth flow, source build, mock test, connected status or HTTP health
 response alone does not establish that acceptance.
+
+### References in displayed results
+
+Completed successful structured tool results may carry bounded `publicReferences`
+display evidence. It preserves verified external record IDs and file digests
+through streamed answers, durable reload and the final renderer. It does not
+grant access or make a provider's proposed allowlist authoritative. Failed,
+unstructured, input/secret/runtime metadata and known private context IDs do not
+create exemptions. Private paths and other runtime details remain redacted.
+Historical text already stored as a redaction cannot reconstruct its original ID;
+re-read the authorized source when the actual reference is needed.

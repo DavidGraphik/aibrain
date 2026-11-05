@@ -3032,6 +3032,7 @@ describe("worker Codex turn", () => {
     });
 
   it("recovers a completed turn after thread/resume times out without retrying a model action", async () => {
+    const recordId = "019a0020-0000-7000-8000-000000000005";
     const userRoot = await mkdtemp(path.join(tmpdir(), "aibrain-worker-recovery-"));
     const workspace = path.join(userRoot, "workspace");
     const staging = path.join(userRoot, "staging");
@@ -3081,8 +3082,10 @@ describe("worker Codex turn", () => {
               error: null,
               items: [
                 { type: "userMessage", id: "item-user", clientId: userMessageId, content: [] },
+                { type: "dynamicToolCall", id: "crm-observed", namespace: "synthetic_crm", tool: "read", status: "completed", success: true,
+                  contentItems: [{ type: "inputText", text: JSON.stringify({ records: [{ id: recordId }, { id: userId }] }) }] },
                 { type: "agentMessage", id: "item-commentary", text: "Recovered public progress", phase: "commentary" },
-                { type: "agentMessage", id: "item-agent", text: "Recovered answer", phase: "final_answer" },
+                { type: "agentMessage", id: "item-agent", text: `Recovered answer. Registro: ${recordId}. Interno: ${userId}`, phase: "final_answer" },
                 { type: "agentMessage", id: "item-legacy", text: "Unclassified trailing message" },
               ],
             }],
@@ -3128,7 +3131,12 @@ describe("worker Codex turn", () => {
 
     expect(calls).toEqual(["thread/resume", "thread/read"]);
     expect(events).toContainEqual({ type: "runtimeTurn", turnId: "runtime-turn-recovered" });
-    expect(events).toContainEqual({ type: "content", value: "Recovered answer" });
+    expect(events).toContainEqual({ type: "content", value: `Recovered answer. Registro: ${recordId}. Interno: identificador interno` });
+    const referenceEvent = events.findIndex(event => event.type === "toolResult" &&
+      (event.item as { publicReferences?: string[] })?.publicReferences?.includes(recordId));
+    expect(referenceEvent).toBeGreaterThanOrEqual(0);
+    expect(referenceEvent).toBeLessThan(events.findIndex(event => event.type === "content"));
+    expect((events[referenceEvent].item as { publicReferences: string[] }).publicReferences).toEqual([recordId]);
     expect(events).not.toContainEqual({ type: "content", value: "Recovered public progress" });
     expect(events).not.toContainEqual({ type: "content", value: "Unclassified trailing message" });
     expect(events).toContainEqual({

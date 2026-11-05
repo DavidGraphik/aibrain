@@ -67,7 +67,9 @@ import type { ServerRequest } from "../../contracts/codex/0.162.1/types/ServerRe
 import type {
   ActivityItem,
   ChatRequest,
+  ToolResult,
 } from "@/lib/chat-contract";
+import { publicReferencesForResults, type PublicReferenceEvidence } from "@/lib/public-references";
 import type { AuthSession } from "@/auth/types";
 import {
   AIBRAIN_AUTOMATION_TOOL_NAMESPACE,
@@ -490,6 +492,7 @@ async function projectItemEvidence(
   completed: boolean,
   envelope: AppServerEvent,
   emit: EmitEvent,
+  references: { privateReferences: readonly string[]; observe: (result: ToolResult) => void } | null = null,
 ) {
   for (const source of itemSources(params)) {
     await emit(
@@ -497,8 +500,9 @@ async function projectItemEvidence(
       { envelope, key: `source:${source.id}` },
     );
   }
-  const result = itemToolResult(params, completed, envelope.occurredAt);
+  const result = itemToolResult(params, completed, envelope.occurredAt, references?.privateReferences);
   if (result) {
+    references?.observe(result);
     await emit(
       { type: "toolResult", item: result },
       { envelope, key: `tool-result:${completed ? "completed" : "started"}:${result.id}` },
@@ -602,6 +606,36 @@ async function runWorkerCodexTurnAttempt(
   let terminalNeedsHydration = false;
   let publishedModelText = "";
   const trinalumReviews = new Map<string, string>();
+  const turnReferenceResults = new Map<string, Pick<ToolResult, "status" | "publicReferences">>();
+  const privateReferenceIds = new Set<string>([
+    authenticatedUserId, chatRequest.projectId, chatRequest.threadId,
+    chatRequest.userMessageId, chatRequest.assistantMessageId,
+    permissions.fingerprint, permissions.turnId,
+    ...(runtimeThreadId ? [runtimeThreadId] : []),
+    ...(projectGuidance?.visibleProjects.map(project => project.id) ?? []),
+    ...(projectGuidance?.projectSourceOwnerId ? [projectGuidance.projectSourceOwnerId] : []),
+    ...(projectGuidance?.projectSources.flatMap(source => source.id ? [source.id] : []) ?? []),
+    ...[process.env.AIBRAIN_REVISION, process.env.AIBRAIN_QA_SOURCE_SHA].filter((value): value is string => Boolean(value)),
+  ]);
+  const referenceEvidence = (): PublicReferenceEvidence => ({
+    publicReferences: publicReferencesForResults([...turnReferenceResults.values()]),
+    privateReferences: [...privateReferenceIds, ...[submission?.runtimeThreadId, submission?.runtimeTurnId]
+      .filter((value): value is string => typeof value === "string")],
+  });
+  const rememberPrivateItemIds = (params: unknown) => {
+    if (!isRecord(params)) return;
+    const item = isRecord(params.item) ? params.item : {};
+    for (const value of [params.threadId, params.turnId, params.itemId, params.callId, item.id]) {
+      if (typeof value === "string") privateReferenceIds.add(value);
+    }
+  };
+  const projectTurnItemEvidence = async (params: unknown, completed: boolean, envelope: AppServerEvent) => {
+    rememberPrivateItemIds(params);
+    await projectItemEvidence(params, completed, envelope, emit, {
+      privateReferences: referenceEvidence().privateReferences ?? [],
+      observe: result => turnReferenceResults.set(result.id, { status: result.status, publicReferences: result.publicReferences }),
+    });
+  };
   const trinalumMailReadReplay = new TrinalumMailReadTurnReplay();
   const withTrinalumReviews = (text: string) => [...trinalumReviews.values(), text].filter(Boolean).join("\n\n---\n\n");
   const commandOutputText = new Map<string, string>();
@@ -688,6 +722,7 @@ async function runWorkerCodexTurnAttempt(
     publishedModelText = publicAssistantText(
       attachmentFinalText(completePrefix),
       assistantName,
+      128_000, referenceEvidence(),
     );
     const publicValue = withTrinalumReviews(publishedModelText);
     if (!publicValue || (publishedFinalItemId === itemId && publishedFinalText === publicValue)) return;
@@ -712,6 +747,7 @@ async function runWorkerCodexTurnAttempt(
     publishedModelText = publicAssistantText(
       attachmentFinalText(privateWorkspaceSafeText(value, [projectWorkspace, runtime.handle.roots.workspace])),
       assistantName,
+      128_000, referenceEvidence(),
     );
     const publicValue = withTrinalumReviews(publishedModelText);
     if (publishedFinalItemId !== itemId || publishedFinalText !== publicValue) {
@@ -1056,6 +1092,10 @@ async function runWorkerCodexTurnAttempt(
     chatRequest.options.connectorMentions ?? [],
     runtimeIdentitySession ?? automationSession,
   ));
+  for (const { resource } of availableConnectors) {
+    privateReferenceIds.add(resource.id);
+    if (resource.appId) privateReferenceIds.add(resource.appId);
+  }
   const mailSelected = availableConnectors.some(({ resource }) => resource.connectorId === MAIL_CONNECTOR_ID);
   const sageSelected = availableConnectors.some(({ resource }) => resource.connectorId === "g03-sage");
   const companyMailSelected = availableConnectors.some(({ resource }) => resource.connectorId === COMPANY_MAIL_CONNECTOR_ID);
@@ -1164,6 +1204,7 @@ async function runWorkerCodexTurnAttempt(
   const quotaPermissionId = quotaToolPermissions
     ? quotaToolPermissionId(quotaToolPermissions, hostAnalysisPolicy ? "read-only" : effectiveSandbox(runtimeConfig, chatRequest))
     : null;
+  if (quotaPermissionId) privateReferenceIds.add(quotaPermissionId);
   let analysisOverrides = {};
   if (hostAnalysisPolicy) {
     if (!quotaToolPermissions) throw new Error("HOST_ANALYSIS_READ_ONLY_PROFILE_REQUIRED");
@@ -1205,6 +1246,11 @@ async function runWorkerCodexTurnAttempt(
       observedTerminalTurnId = recoveredTurnState.id;
     }
     await emitRuntimeTurn(recoveredTurnState.id);
+    privateReferenceIds.add(recoveredTurnState.id);
+    // Metadata must reach both sanitizers before recovered final text. Register
+    // every private item ID first, including IDs from later recovered items.
+    for (const item of recoveredTurnState.items) rememberPrivateItemIds({ item });
+    for (const item of recoveredTurnState.items) await projectTurnItemEvidence({ item }, true, envelope);
     const text = recoveredAgentText(recoveredTurnState);
     if (fictionalScheduleArtifactRequired && fictionalScheduleArtifactIds.size === 0 && recoveredTurnState.status === "completed") {
       fictionalScheduleDeliveryFailed = true;
@@ -1217,6 +1263,7 @@ async function runWorkerCodexTurnAttempt(
           value: withTrinalumReviews(publicAssistantText(
             attachmentFinalText(privateWorkspaceSafeText(text, [projectWorkspace, runtime.handle.roots.workspace])),
             assistantName,
+            128_000, referenceEvidence(),
           )),
         },
         { envelope, key: `${keyPrefix}:content:${recoveredTurnState.id}` },
@@ -1238,7 +1285,6 @@ async function runWorkerCodexTurnAttempt(
           emit,
         );
       }
-            await projectItemEvidence({ item }, true, envelope, emit);
       const activity = itemActivity({ item }, true);
       if (activity) {
         activities.set(activity.id, activity);
@@ -1994,7 +2040,7 @@ async function runWorkerCodexTurnAttempt(
               emit,
             );
           }
-          await projectItemEvidence(params, method === "item/completed", envelope, emit);
+          await projectTurnItemEvidence(params, method === "item/completed", envelope);
           const activity = itemActivity(params, method === "item/completed");
           if (activity) {
             if (activity.kind === "command" || activity.kind === "tool" || activity.kind === "web") telemetry.tool();

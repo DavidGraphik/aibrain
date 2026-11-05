@@ -3,7 +3,7 @@ import "server-only";
 import type { AuthSession } from "@/auth/types";
 import { workspacePolicyForIdentity } from "@/admin/policy-service";
 import { ensureInstallationCatalog } from "@/catalog/baseline";
-import type { CatalogResource } from "@/catalog/contracts";
+import { isNativeAppId, type CatalogResource } from "@/catalog/contracts";
 import { allowsCatalogOperation } from "@/catalog/resolver";
 import { CatalogRuntimeDeniedError, type CatalogRuntimeTransport } from "@/catalog/runtime-enforcement";
 import { FileCatalogStore } from "@/catalog/store";
@@ -41,6 +41,7 @@ export class NativeConnectionTransport implements CatalogRuntimeTransport {
     if (!record(input)) throw denied();
     const server = resource.mcp?.server;
     const appId = resource.appId;
+    if (appId !== null && !isNativeAppId(appId)) throw denied();
     let projection: "status" | "installed" | "apps" | "config" | null = null;
     if (method === "mcpServerStatus/list" && resource.kind === "mcp" && server
       && keys(input, ["serverName", "name", "threadId", "detail", "cursor", "limit"])
@@ -55,7 +56,7 @@ export class NativeConnectionTransport implements CatalogRuntimeTransport {
     else if (method === "config/value/write" && keys(input, ["keyPath", "value", "mergeStrategy"])
       && typeof input.value === "boolean" && input.mergeStrategy === "upsert"
       && ((server && /^[A-Za-z0-9_-]+$/.test(server) && input.keyPath === `mcp_servers.${server}.enabled`)
-        || (appId && /^[A-Za-z0-9_-]+$/.test(appId) && input.keyPath === `apps.${appId}.enabled`))) { /* one local setting, no credentials */ }
+        || (appId && isNativeAppId(appId) && input.keyPath === `apps.${appId}.enabled`))) { /* one local setting, no credentials */ }
     else if (method === "config/mcpServer/reload" && Object.keys(input).length === 0) { /* native refresh */ }
     else if (method === "config/read" && keys(input, ["includeLayers"]) && input.includeLayers === false) projection = "config";
     else throw denied();

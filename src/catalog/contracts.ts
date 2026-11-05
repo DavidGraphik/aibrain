@@ -4,6 +4,12 @@ export const CATALOG_SCHEMA_VERSION = 1 as const;
 export const CATALOG_ID = /^[a-z][a-z0-9]*(?:[-.:][a-z0-9]+)*$/;
 export const CATALOG_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PROVIDER_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// Native provider IDs are opaque config-key segments, not internal catalogue
+// slugs. Hosted connectors/asdk apps use underscores; UUIDs may start in digits.
+const NATIVE_APP_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+export function isNativeAppId(value: unknown): value is string {
+  return typeof value === "string" && value !== "_default" && NATIVE_APP_ID.test(value);
+}
 
 export type CatalogResourceKind = "skill" | "app" | "connector" | "mcp";
 export type CatalogCredentialMode = "none" | "personal-oauth" | "personal-credential" | "shared-resource";
@@ -92,7 +98,7 @@ export function isCatalogResource(value: unknown): value is CatalogResource {
       typeof value.label !== "string" || value.label.trim().length === 0 || value.label.length > 120 ||
       !["none", "personal-oauth", "personal-credential", "shared-resource"].includes(String(value.credentialMode)) ||
       !["graphikai", "company"].includes(String(value.managedBy)) || typeof value.sharedResource !== "boolean" ||
-      !(typeof value.appId === "string" && id(value.appId) || value.appId === null) ||
+      !(isNativeAppId(value.appId) || value.appId === null) ||
       !(typeof value.connectorId === "string" && id(value.connectorId) || value.connectorId === null) ||
       !(value.mcp === null || record(value.mcp))) return false;
   if (value.credentialMode === "shared-resource" && (!value.sharedResource || value.managedBy !== "company")) return false;

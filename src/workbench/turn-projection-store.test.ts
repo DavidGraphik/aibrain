@@ -13,6 +13,8 @@ import { ResourceLockManager } from "@/storage";
 import { FileWorkbenchStore } from "@/workbench/filesystem-store";
 import { FileTurnProjectionStore } from "@/workbench/turn-projection-store";
 import { itemSources } from "@/runtime/codex-app-server";
+import { publicReferencesForResults } from "@/lib/public-references";
+import { publicAssistantText } from "@/ui/public-activity";
 
 const installationId = "qa-company";
 const userId = "00000000-0000-4000-8000-000000000001";
@@ -381,6 +383,29 @@ describe("turn projection store", () => {
       "other",
       { type: "delta", value: "blocked" },
     )).rejects.toThrow("seqüència");
+  });
+
+  it("persists optional business reference evidence through canonical thread reload and both display passes", async () => {
+    const recordId = "019a0020-0000-7000-8000-000000000005";
+    const workbench = new FileWorkbenchStore({ installationId, usersRoot });
+    const project = await workbench.createProject(userId, "References");
+    const thread = await workbench.createThread(userId, project.id, "References");
+    const assistantId = "00000000-0000-4000-8000-000000000012";
+    await workbench.beginThreadTurn(userId, thread.id, userMessage("00000000-0000-4000-8000-000000000011"), assistant(assistantId));
+    const projections = new FileTurnProjectionStore({ installationId, userId, usersRoot });
+    await projections.initialize(thread.id, assistant(assistantId));
+    await projections.applyTransportEvent(thread.id, assistantId, envelope(1), "record-result", { type: "toolResult", item: {
+      id: "record-query", kind: "app", title: "CRM", status: "complete", summary: null,
+      output: `Registro ${recordId}`, sourceIds: [], createdAt: "2026-08-27T00:00:01.000Z", publicReferences: [recordId],
+    } });
+    await projections.applyTransportEvent(thread.id, assistantId, envelope(2), "record-answer", { type: "content", value: `Registro ${recordId}` });
+    await projections.applyTransportEvent(thread.id, assistantId, envelope(3), "record-done", { type: "done" });
+    const message = (await new FileWorkbenchStore({ installationId, usersRoot }).getThread(userId, thread.id)).messages.at(-1)!;
+    expect(message.toolResults?.[0].publicReferences).toEqual([recordId]);
+    const evidence = { publicReferences: publicReferencesForResults(message.toolResults), privateReferences: [assistantId, thread.id, project.id] };
+    const visible = publicAssistantText(message.content, "Asistente", 128_000, evidence);
+    expect(visible).toBe(`Registro ${recordId}`);
+    expect(publicAssistantText(visible, "Asistente", 128_000, evidence)).toBe(visible);
   });
 
   it("compacts ordered streaming deltas into one durable projection batch", async () => {

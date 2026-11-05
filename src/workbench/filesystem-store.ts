@@ -244,7 +244,7 @@ function isStrictChatMessage(value: unknown): value is ChatMessage {
   if (!(value.sources ?? []).every((item) =>
     hasExactKeys(item, ["id", "kind", "title", "url", "domain", "snippet", "publishedAt"]))) return false;
   if (!(value.toolResults ?? []).every((item) =>
-    hasExactKeys(item, ["id", "kind", "title", "status", "summary", "output", "sourceIds", "createdAt"], ["sequence"]))) return false;
+    hasExactKeys(item, ["id", "kind", "title", "status", "summary", "output", "sourceIds", "createdAt"], ["sequence", "publicReferences"]))) return false;
   return value.artifacts.every(hasExactArtifactKeys);
 }
 

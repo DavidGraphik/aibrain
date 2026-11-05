@@ -26,6 +26,17 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("native personal connection lifecycle", () => {
+  it("matches an underscored provider app ID exactly and still requires effective callability", async () => {
+    const appId = "connector_00000000000000000000000000000001";
+    const { context, request } = fixture();
+    context.resource = { ...context.resource, kind: "app", appId, mcp: null };
+    request.mockResolvedValue({ apps: [{ id: "foreign", enabled: true, callable: true }, { id: appId, enabled: true, callable: true }] });
+    expect(await nativeConnectionSnapshot(context)).toMatchObject({ status: "connected", code: null, capabilities: { oauthLogin: false } });
+    request.mockResolvedValue({ apps: [{ id: appId, enabled: true, callable: false }] });
+    expect(await nativeConnectionSnapshot(context)).toMatchObject({ status: "unavailable", code: "NATIVE_APP_NOT_CALLABLE" });
+    expect(request.mock.calls.every(([method]) => method === "app/installed")).toBe(true);
+  });
+
   it("discovers real permitted tools without exposing foreign tools or raw provider metadata", async () => {
     const { context, request } = fixture({ providerToken: "private", httpOrigin: "https://private-provider.example" });
     const snapshot = await nativeConnectionSnapshot(context);

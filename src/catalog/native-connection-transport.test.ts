@@ -14,6 +14,32 @@ const make = (result: unknown = {}) => {
 };
 
 describe("native connection management boundary", () => {
+  it("binds connector/asdk app inventories and local flags to the exact provider ID", async () => {
+    for (const appId of ["connector_00000000000000000000000000000001", "asdk_app_synthetic_123"]) {
+      const app: CatalogResource = { ...resource, kind: "app", appId, mcp: null };
+      const inner = { request: vi.fn().mockResolvedValue({ apps: [{ id: appId, enabled: true, callable: true }, { id: "foreign", enabled: true, callable: true }] }) };
+      const transport = new NativeConnectionTransport(inner, app, async () => app);
+      expect(await transport.request("app/installed", { forceRefresh: true }, "status"))
+        .toEqual({ apps: [{ id: appId, enabled: true, callable: true }] });
+      await transport.request("config/value/write", { keyPath: `apps.${appId}.enabled`, value: false, mergeStrategy: "upsert" }, "local-flag");
+      for (const keyPath of ["apps._default.enabled", "apps.foreign.enabled", `apps.${appId}.tools.send.enabled`, `apps.${appId}.enabled.other`]) {
+        await expect(transport.request("config/value/write", { keyPath, value: true, mergeStrategy: "upsert" }, "foreign-flag")).rejects.toThrow();
+      }
+      await expect(transport.request("app/read", { appIds: ["foreign"], includeTools: true }, "foreign-read")).rejects.toThrow();
+      expect(inner.request).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it("rejects an invalid provider app ID before dispatch even if a caller bypassed the store", async () => {
+    for (const appId of ["_default", "apps.foreign.enabled", "connector_x/foreign"]) {
+      const app: CatalogResource = { ...resource, kind: "app", appId, mcp: null };
+      const inner = { request: vi.fn() };
+      const transport = new NativeConnectionTransport(inner, app, async () => app);
+      await expect(transport.request("app/installed", { forceRefresh: true }, "status")).rejects.toThrow();
+      expect(inner.request).not.toHaveBeenCalled();
+    }
+  });
+
   it("starts OAuth only for the assigned server with configured scopes", async () => {
     const { inner, transport } = make({ authorizationUrl: "https://identity.example.test/authorize" });
     await transport.request("mcpServer/oauth/login", { name: "crm" }, "login");

@@ -47,6 +47,13 @@ describe("known private workspace prefixes", () => {
       .not.toContain(id);
   });
 
+  it("keeps a reviewed native v7 app link functional while hiding its standalone runtime identifier", () => {
+    const id = "019a0020-0000-7000-8000-000000000001";
+    const url = `/g03/apps?id=${id}`;
+    expect(publicAssistantText(`[Abrir](${url})\nInterno: ${id}`, "Asistente"))
+      .toBe(`[Abrir](${url})\nInterno: identificador interno`);
+  });
+
   it.each([
     '/tmp/aibrain QA_PRIVATE_MARKER tail-abc/workspace',
     '/tmp/aibrain "QA_PRIVATE_MARKER" tail-abc/workspace',

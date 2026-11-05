@@ -52,6 +52,7 @@ import { landingSuggestions } from "@/lib/landing-suggestions";
 import { isStandaloneProject, type WorkbenchProject, type WorkbenchThread } from "@/workbench/types";
 import { currentTurnStatusLabel, hasRelevantWorkProcess, TurnActivity } from "@/components/turn-activity";
 import { publicActivityText, publicAssistantText } from "@/ui/public-activity";
+import { publicReferencesForResults } from "@/lib/public-references";
 import { TurnArtifactCard } from "@/components/turn-artifact-card";
 import { DocumentPublicationCard } from "@/components/document-publication-card";
 import { TurnSourceChips } from "@/components/turn-sources";
@@ -342,7 +343,10 @@ function AssistantMessage({
   const streaming = message.status === "streaming" && !recoveryPaused;
   const hasExecution = hasRelevantWorkProcess(message);
   const liveStatus = currentTurnStatusLabel(message, t) ?? t("Enviando solicitud");
-  const publicContent = publicAssistantText(content, assistantName);
+  const publicContent = publicAssistantText(content, assistantName, 128_000, {
+    publicReferences: publicReferencesForResults(message.toolResults),
+    privateReferences: [message.id, threadId, ...(projectId ? [projectId] : [])],
+  });
   const failureLabel = publicActivityText(message.activity.find(item => item.id === "host-analysis-outcome" && item.status === "failed")?.label ?? "", 500);
 
   return (
