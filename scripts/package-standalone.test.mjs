@@ -4,7 +4,7 @@ import {mkdtemp,mkdir,writeFile,readFile,rm,symlink,chmod,lstat,realpath} from '
 import {execFileSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import {collectStandalone,digest,LIMITS,packageStandalone,safePackagePath,writeArchive} from './package-standalone.mjs';
+import {assertCleanExactSource,collectStandalone,digest,LIMITS,packageStandalone,safePackagePath,writeArchive} from './package-standalone.mjs';
 
 async function put(root,name,value){const p=path.join(root,name);await mkdir(path.dirname(p),{recursive:true});await writeFile(p,value);return p;}
 async function fixture(t){
@@ -23,6 +23,54 @@ async function fixture(t){
   }))await put(root,name,value);
   return root;
 }
+
+async function sourceFixture(t){
+  const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'standalone-source-test-')));t.after(()=>rm(root,{recursive:true,force:true}));
+  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  await put(root,'tracked.txt','synthetic tracked source');
+  git('init','-q');git('add','.');git('-c','user.name=Synthetic test','-c','user.email=test@example.invalid','commit','-qm','synthetic source','--no-gpg-sign');
+  return {root,git,sha:git('rev-parse','HEAD')};
+}
+
+test('exact source check rejects tracked changes, hidden untracked files and a different commit on every host',async t=>{
+  const {root,git,sha}=await sourceFixture(t);assert.doesNotThrow(()=>assertCleanExactSource(root,sha));
+  await put(root,'tracked.txt','SYNTHETIC_CONTENT_MUST_NOT_BE_LOGGED');
+  assert.throws(()=>assertCleanExactSource(root,sha),error=>error.message.includes('CLEAN_EXACT_SOURCE_REQUIRED')&&error.message.includes('tracked.txt')&&!error.message.includes('SYNTHETIC_CONTENT_MUST_NOT_BE_LOGGED'));
+  await put(root,'tracked.txt','synthetic tracked source');
+  git('config','status.showUntrackedFiles','no');
+  await put(root,'generated.pyc','SYNTHETIC_BYTECODE_MUST_NOT_BE_LOGGED');
+  assert.throws(()=>assertCleanExactSource(root,sha),error=>error.message.includes('generated.pyc')&&!error.message.includes('SYNTHETIC_BYTECODE_MUST_NOT_BE_LOGGED'));
+  await rm(path.join(root,'generated.pyc'));
+  assert.throws(()=>assertCleanExactSource(root,'0'.repeat(40)),error=>error.message.includes(sha)&&error.message.includes('"changedPathCount":0'));
+});
+
+test('dirty diagnostics bound and escape filenames without accepting any changed path',async t=>{
+  const {root,sha}=await sourceFixture(t);
+  for(let i=0;i<28;i++)await put(root,`untracked-${String(i).padStart(2,'0')}\n.txt`,'synthetic');
+  assert.throws(()=>assertCleanExactSource(root,sha),error=>{
+    const detail=JSON.parse(error.message.slice('CLEAN_EXACT_SOURCE_REQUIRED '.length));
+    assert.equal(detail.changedPathCount,28);assert.equal(detail.changedPaths.length,24);assert.equal(detail.pathsTruncated,true);
+    assert.ok(!error.message.includes('\n'));return true;
+  });
+});
+
+test('the CI Python setting prevents the real import cache that would dirty the Linux checkout',async t=>{
+  const {root,git}=await sourceFixture(t);
+  await put(root,'generated_module.py','synthetic_value = 1\n');git('add','.');
+  git('-c','user.name=Synthetic test','-c','user.email=test@example.invalid','commit','-qm','synthetic module','--no-gpg-sign');
+  const sha=git('rev-parse','HEAD');
+  const env={...process.env};delete env.PYTHONDONTWRITEBYTECODE;delete env.PYTHONPYCACHEPREFIX;delete env.PYTHONPATH;
+  // Apple Python redirects caches outside the project; use Python's Linux
+  // default location explicitly so this regression also runs on a Mac.
+  const command=['-S','-c','import sys; sys.pycache_prefix = None; import generated_module'];
+  execFileSync('python3',command,{cwd:root,env,stdio:['ignore','pipe','pipe']});
+  assert.throws(()=>assertCleanExactSource(root,sha),/__pycache__/);
+  await rm(path.join(root,'__pycache__'),{recursive:true});
+  const workflow=await readFile(new URL('../.github/workflows/quality.yml',import.meta.url),'utf8');
+  const setting=workflow.match(/^      PYTHONDONTWRITEBYTECODE: ['"]?(1)['"]?\s*$/m)?.[1];assert.equal(setting,'1');
+  execFileSync('python3',command,{cwd:root,env:{...env,PYTHONDONTWRITEBYTECODE:setting},stdio:['ignore','pipe','pipe']});
+  assert.doesNotThrow(()=>assertCleanExactSource(root,sha));
+});
 
 test('keeps traced dependencies, static/public/skills and independent worker',async t=>{
   const root=await fixture(t);await put(root,'.next/static/chunks/chunk.js','chunk');

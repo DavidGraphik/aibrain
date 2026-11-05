@@ -14,6 +14,27 @@ const posix=p=>p.split(path.sep).join('/');
 const fingerprint=s=>[s.dev,s.ino,s.size,s.mtimeNs,s.ctimeNs].map(String).join(':');
 export async function digest(filename){const h=createHash('sha256');for await(const chunk of createReadStream(filename))h.update(chunk);return h.digest('hex');}
 
+export function assertCleanExactSource(root,sha){
+  need(/^[a-f0-9]{40}$/.test(sha??''),'EXACT_CANDIDATE_SHA_REQUIRED');
+  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:1024*1024});
+  const head=git('rev-parse','HEAD').trim();
+  // Explicitly include untracked files even if the operator's Git configuration
+  // hides them. Never exempt generated or framework-written source changes.
+  const status=git('status','--porcelain=v1','-z','--untracked-files=all');
+  if(head===sha&&!status)return;
+  const entries=status.split('\0'),paths=[];
+  for(let i=0;i<entries.length;i++){
+    const entry=entries[i];if(!entry)continue;
+    paths.push(entry.slice(3));
+    if(/[RC]/.test(entry.slice(0,2))&&entries[i+1])paths.push(entries[++i]);
+  }
+  // Only bounded, JSON-escaped filenames and commit IDs leave this check.
+  // No diff, file contents, environment or credential diagnostics are printed.
+  throw new Error('CLEAN_EXACT_SOURCE_REQUIRED '+JSON.stringify({expectedHead:sha,actualHead:head,
+    changedPathCount:paths.length,changedPaths:paths.slice(0,24).map(name=>name.slice(0,200)),
+    pathsTruncated:paths.length>24||paths.some(name=>name.length>200)}));
+}
+
 export function safePackagePath(name){
   need(typeof name==='string'&&name.startsWith('candidate/')&&!/[\\\x00-\x1f\x7f]/u.test(name),'PACKAGE_PATH_INVALID');
   const parts=name.split('/');need(!parts.some(x=>x===''||x==='.'||x==='..'),'PACKAGE_PATH_INVALID');
@@ -168,7 +189,7 @@ export async function packageStandalone({root=process.cwd(),output,sha,repositor
   need(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository??''),'REPOSITORY_REQUIRED');
   root=await realpath(root);output=path.resolve(output);
   const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
-  need(git('rev-parse','HEAD')===sha&&!git('status','--porcelain'),'CLEAN_EXACT_SOURCE_REQUIRED');
+  assertCleanExactSource(root,sha);
   const epoch=Number(git('show','-s','--format=%ct','HEAD'));need(Number.isSafeInteger(epoch)&&epoch>0,'COMMIT_EPOCH_INVALID');
   const bundle=await collectStandalone(root,{arch});
   await mkdir(output,{mode:0o700}); // Existing output refuses a second package in this run.
