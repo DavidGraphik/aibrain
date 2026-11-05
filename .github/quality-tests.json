@@ -70,5 +70,6 @@
   "src/runtime/transport/file-event-journal.test.ts",
   "src/automations/background-maintenance.test.ts",
   "src/connectors/mentions-resolution.test.ts",
-  "src/connectors/mentions.test.ts"
+  "src/connectors/mentions.test.ts",
+  "src/runtime/personal-auth-provider.test.ts"
 ]

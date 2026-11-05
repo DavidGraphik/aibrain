@@ -483,6 +483,58 @@ describe("private per-user worker gateway", () => {
     } finally { await router.close(); await worker.stop(); }
   });
 
+  it("authenticates the personal context privately before exposing the managed transport or journaling a public request", async () => {
+    await writeFile(fakeServer, [
+      'import { createInterface } from "node:readline";',
+      'const write=value=>process.stdout.write(JSON.stringify(value)+"\\n");let token;',
+      'createInterface({input:process.stdin}).on("line",line=>{const rpc=JSON.parse(line);',
+      'if(rpc.method==="initialize")write({id:rpc.id,result:{}});',
+      'else if(rpc.method==="account/login/start"){token=rpc.params.accessToken;write({id:rpc.id,result:{type:"chatgptAuthTokens"}});}',
+      'else if(rpc.method==="account/read")write({id:rpc.id,result:{authenticated:Boolean(token),socketRootExposed:Boolean(process.env.AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT)}});',
+      '});',
+    ].join("\n"));
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    const accessToken = "synthetic-personal-access-private-to-stdio";
+    const provider = vi.fn(async () => { await ready; return { accessToken, chatgptAccountId: "personal-qa", chatgptPlanType: null }; });
+    const forContext = vi.fn(() => provider);
+    const worker = new LocalGatewayWorkerRuntimeFactory({
+      authForContext: forContext,
+      runtimeInstanceId: "personal-test",
+      processFactory: launch => spawn(process.execPath, [fakeServer], {
+        cwd: launch.workspace, env: { NODE_ENV: "test", ...launch.environment }, stdio: ["pipe", "pipe", "pipe"],
+      }),
+    }).create(context);
+    const starting = worker.start();
+    try {
+      await vi.waitFor(() => expect(provider).toHaveBeenCalledOnce());
+      expect(forContext).toHaveBeenCalledWith(context);
+      expect((await worker.health()).state).toBe("starting");
+      release(); await starting;
+      const router = new AppServerRpcRouter(worker.transport);
+      try {
+        expect(await router.request({ method: "account/read", id: "personal-public-read", params: { refreshToken: false } }, 3_000))
+          .toEqual({ authenticated: true, socketRootExposed: false });
+      } finally { await router.close(); }
+      const audit = path.join(context.transportAudit, "runtime-instances", "personal-test");
+      for (const file of ["gateway-events.jsonl", "gateway-requests.jsonl", "client-events.jsonl"]) {
+        const bytes = await readFile(path.join(audit, file), "utf8");
+        expect(bytes).not.toContain(accessToken);
+        expect(bytes).not.toContain("account/login/start");
+        expect(bytes).not.toContain("private-auth:");
+      }
+    } finally { release(); await starting.catch(() => undefined); await worker.stop(); }
+  });
+
+  it("rejects personal plus shared providers before spawning a worker", async () => {
+    const provider = async () => ({ accessToken: "synthetic-access", chatgptAccountId: "qa", chatgptPlanType: null });
+    const processFactory = vi.fn();
+    const worker = new LocalGatewayWorkerRuntimeFactory({ sharedAuth: provider, authForContext: () => provider, processFactory }).create(context);
+    await expect(worker.start()).rejects.toThrow("cannot share");
+    expect(processFactory).not.toHaveBeenCalled();
+    await worker.stop();
+  });
+
   function transport(worker: PrivateWorkerGateway) {
     if (!worker.endpoint) throw new Error("Gateway did not start.");
     const journal = new FileTransportEventJournal({

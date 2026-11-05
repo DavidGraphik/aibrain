@@ -30,6 +30,7 @@ import { validateAppServerRequest } from "@/runtime/transport/wire-protocol";
 import type { AppServerEvent, JsonValue } from "@/runtime/transport";
 import { LocalGatewayWorkerRuntimeFactory, workerEgressEnvironment } from "@/runtime/workers/local-gateway-runtime";
 import { sharedAuthProvider } from "@/runtime/workers/shared-auth-broker";
+import { userAccessAuthProvider } from "@/runtime/personal-auth-provider";
 import { privateCodexToolPermissionsRequired } from "@/runtime/quota-tool-permissions";
 import { WorkerRuntimeRegistry } from "@/runtime/workers/registry";
 import type { WorkerRuntimeHandle } from "@/runtime/workers/types";
@@ -470,6 +471,7 @@ async function serviceState(): Promise<RuntimeServiceState> {
         factory: new LocalGatewayWorkerRuntimeFactory({
           quotaToolPrivacy: privateCodexToolPermissionsRequired(config),
           sharedAuth: sharedAuthProvider(config, process.env.AIBRAIN_CODEX_AUTH_SCOPE === "shared-qa" ? workerEgressEnvironment() : {}),
+          authForContext: userAccessAuthProvider,
         }),
         maintenance,
         onLifecycleMetric: (metric) => operationalLogger.info("codex.worker_lifecycle", {

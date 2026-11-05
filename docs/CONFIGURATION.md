@@ -2,6 +2,12 @@
 
 Keep installation JSON and all secrets outside the public repository. Set `AIBRAIN_INSTALLATION_CONFIG` to the reviewed local configuration path. The examples use synthetic companies, example domains and temporary data roots. Provider credentials belong in the installation's protected secret store, not in committed examples.
 
+An optional identity-bound host access-token channel uses
+`AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT`. See the complete
+[personal access contract](PERSONAL_CODEX_ACCESS.md). It supplies no sign-in or
+provider consent by itself and must not be mixed with installation-owner/shared
+authentication. Worker tokens stay outside browser responses and event journals.
+
 ## Deployment identity mapping
 
 Some existing adapter policies bind operations to designated employees. Public source uses synthetic identities. Preserve the policy while supplying the installation's reviewed identities through the server-only `AIBRAIN_DEPLOYMENT_IDENTITIES` JSON environment variable. Supported keys are `operator`, `cmsOwner`, `manager`, `sales`, `administration`, `quality`, `production`, `office` and `hostOwnerId`. Use an email for each named identity and a UUID for `hostOwnerId`. Unknown keys, malformed JSON and invalid requested values are rejected. Missing keys retain the synthetic default, so migrations must supply every key their installation uses.

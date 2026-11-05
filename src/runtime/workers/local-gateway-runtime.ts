@@ -543,7 +543,7 @@ export class PrivateWorkerGateway {
         await this.writePrivateRpc({ method: "initialized" });
         this.authTokens = await this.sharedAuth();
         const login = await this.privateRequest("account/login/start", { type: "chatgptAuthTokens", ...this.authTokens });
-        if (!isRecord(login) || login.type !== "chatgptAuthTokens") throw new Error("Shared external authentication was not accepted.");
+        if (!isRecord(login) || login.type !== "chatgptAuthTokens") throw new Error("External authentication was not accepted.");
       }
 
       this.server = createServer((_, response) => {
@@ -1249,6 +1249,8 @@ class DeferredAppServerTransport implements AppServerTransport {
 export type LocalGatewayWorkerRuntimeFactoryOptions = {
   kernelLockCommand?: readonly string[];
   sharedAuth?: SharedAuthProvider;
+  /** Backend-only per-employee provider; called with the registry's identity. */
+  authForContext?: (context: WorkerLaunchContext) => SharedAuthProvider | undefined;
   processFactory?: PrivateWorkerGatewayOptions["processFactory"];
   quotaToolPrivacy?: boolean;
   now?: () => number;
@@ -1297,11 +1299,15 @@ class LocalGatewayManagedRuntime implements ManagedWorkerRuntime {
         this.options.runtimeInstanceId,
       ),
     };
+    const personalAuth = this.options.authForContext?.(this.context);
+    if (personalAuth && this.options.sharedAuth) {
+      throw new Error("Personal authentication cannot share an installation credential.");
+    }
     const gateway = new PrivateWorkerGateway({
       context: isolatedContext,
       kernelOwnershipRoot: this.options.processFactory ? undefined : this.context.transportAudit,
       kernelLockCommand: this.options.kernelLockCommand,
-      sharedAuth: this.options.sharedAuth,
+      sharedAuth: personalAuth ?? this.options.sharedAuth,
       processFactory: this.options.processFactory,
       configOverrides,
       now: this.options.now,
