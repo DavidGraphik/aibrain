@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { CatalogResource } from "@/catalog/contracts";
 import type { CatalogRuntimeTransport } from "@/catalog/runtime-enforcement";
 import type { ConnectorHealthStatus } from "@/connectors/contracts";
@@ -13,16 +15,22 @@ async function inventory(
   transport: CatalogRuntimeTransport,
   method: "app/installed" | "mcpServerStatus/list",
   wanted: ReadonlySet<string>,
+  observationId: string,
 ): Promise<Map<string, InventoryEntry | null>> {
   const entries = new Map<string, InventoryEntry | null>();
   const cursors = new Set<string>();
   let cursor: string | undefined;
+  let page = 0;
   do {
+    // These are fresh observations, not retries of a prior operation. The
+    // durable transport deliberately deduplicates a reused request ID; using
+    // one global ID can time out or retain old connection state. Keep every
+    // observation/provider/page distinct without weakening write idempotency.
     const response = await transport.request(method, {
       ...(method === "app/installed" ? { forceRefresh: true } : { detail: "toolsAndAuthOnly" }),
       threadId: null,
       ...(cursor ? { cursor } : {}),
-    }, "connector-native-connection-health", 10_000);
+    }, `connector-native-connection-health:${observationId}:${method === "app/installed" ? "apps" : "mcp"}:${page++}`, 10_000);
     const rows = record(response) ? response[method === "app/installed" ? "apps" : "data"] : null;
     if (!Array.isArray(rows)) throw new Error("Invalid native connection inventory.");
     for (const entry of rows) {
@@ -76,6 +84,7 @@ export async function nativeConnectionHealthForIdentity(
   const mcps = resources.filter(resource => resource.kind === "mcp");
   const native = [...apps, ...mcps];
   if (!native.length) return health;
+  const observationId = randomUUID();
   for (const resource of native) health.set(resource.id, unavailable());
   try {
     const { catalogTransportForUser } = await import("@/catalog/server-service");
@@ -85,7 +94,7 @@ export async function nativeConnectionHealthForIdentity(
       { resources: mcps, method: "mcpServerStatus/list" as const, id: (resource: CatalogResource) => resource.mcp?.server },
     ].filter(group => group.resources.length > 0);
     const results = await Promise.allSettled(groups.map(group => inventory(transport, group.method,
-      new Set(group.resources.flatMap(resource => group.id(resource) ? [group.id(resource)!] : [])))));
+      new Set(group.resources.flatMap(resource => group.id(resource) ? [group.id(resource)!] : [])), observationId)));
     for (const [index, result] of results.entries()) {
       if (result.status === "rejected") continue;
       const group = groups[index];

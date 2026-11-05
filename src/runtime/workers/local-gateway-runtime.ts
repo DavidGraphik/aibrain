@@ -1,3 +1,4 @@
+import { parseAppServerOutput } from "./codex-stdio-protocol";
 import { gatewayFailureDiagnostic, type GatewayFailureStage } from "./gateway-failure-diagnostics";
 import { acquireWorkerKernelLease, type WorkerKernelLease } from "./kernel-ownership";
 import { atomicWriteFile } from "@/storage/atomic-file";
@@ -6,7 +7,10 @@ import { assertCodexServerNotification } from "@/runtime/transport/codex-contrac
 import { parseAppServerStdoutJson } from "./app-server-output-json";
 import { encodeServerFrames, MAX_SERVER_MESSAGE_BYTES } from '../transport/bounded-server-frames';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnCodexWorker, workerTransportAuditRoot } from "./worker-launch";
+export { workerTransportAuditRoot, workerEgressEnvironment } from "./worker-launch";
+import { PrivateStdioAuthLane } from "./private-stdio-auth";
 import { stopOwnedWorkerProcess } from "./owned-process";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { Socket } from "node:net";
@@ -42,7 +46,7 @@ import type {
 } from "@/runtime/workers/types";
 import { quotaToolPermissionConfigOverrides } from "@/runtime/quota-tool-permissions";
 import { installationOwnerAuthSocket, readInstallationOwnerAccess } from "@/runtime/installation-owner-auth";
-import type { SharedAuthProvider, SharedAuthTokens } from "./shared-auth-broker";
+import type { SharedAuthProvider } from "./shared-auth-broker";
 import {
   defineVersionedSchema,
   expectIsoDate,
@@ -60,57 +64,7 @@ const DEFAULT_RETAINED_COMPLETED_REQUESTS = 4_096;
 const DEFAULT_RETAINED_OBSERVATION_BYTES = 4 * 1024 * 1024;
 const CLIENT_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-const EGRESS_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,256}$/u;
-const RUNTIME_INSTANCE_ID = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
 
-export function workerTransportAuditRoot(
-  transportAudit: string,
-  runtimeInstanceId = process.env.AIBRAIN_RUNTIME_INSTANCE?.trim() || "app",
-) {
-  if (!RUNTIME_INSTANCE_ID.test(runtimeInstanceId)) {
-    throw new Error("Worker runtime instance id is invalid.");
-  }
-  return path.join(transportAudit, "runtime-instances", runtimeInstanceId);
-}
-
-export function workerEgressEnvironment(
-  environment: NodeJS.ProcessEnv = process.env,
-): Readonly<Record<string, string>> {
-  const base = environment.AIBRAIN_EGRESS_PROXY_URL?.trim();
-  const token = environment.AIBRAIN_EGRESS_WORKER_TOKEN?.trim();
-  if (!base && !token && environment.NODE_ENV !== "production") return Object.freeze({});
-  if (!base || !token || !EGRESS_TOKEN_PATTERN.test(token)) {
-    throw new Error("Worker egress gateway URL and strong worker token are required.");
-  }
-  let url: URL;
-  try {
-    url = new URL(base);
-  } catch (error) {
-    throw new Error("Worker egress gateway URL is invalid.", { cause: error });
-  }
-  const port = url.port ? Number(url.port) : 80;
-  if (url.protocol !== "http:" || url.username || url.password || url.pathname !== "/" ||
-      url.search || url.hash || !url.hostname || !Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("Worker egress gateway must be a credential-free HTTP origin.");
-  }
-  url.username = "aibrain";
-  url.password = token;
-  const authenticatedProxy = url.toString();
-  const noProxy = "127.0.0.1,localhost,::1";
-  return Object.freeze({
-    HTTP_PROXY: authenticatedProxy,
-    HTTPS_PROXY: authenticatedProxy,
-    ALL_PROXY: authenticatedProxy,
-    NO_PROXY: noProxy,
-    // reqwest (used by Codex for ChatGPT token renewal) reads the lowercase
-    // forms. Keep both spellings so browser/Node tools and the App Server use
-    // the same authenticated, allowlisted worker channel.
-    http_proxy: authenticatedProxy,
-    https_proxy: authenticatedProxy,
-    all_proxy: authenticatedProxy,
-    no_proxy: noProxy,
-  });
-}
 
 type GatewayRequestRecord = {
   schemaVersion: 1;
@@ -166,36 +120,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function asJsonValue(value: unknown): JsonValue {
-  return value as JsonValue;
-}
 
-function parseAppServerOutput(value: unknown): AppServerEvent["message"] {
-  if (!isRecord(value)) throw new Error("Codex App Server emitted a non-object message.");
-  if ((typeof value.id === "string" || typeof value.id === "number") && typeof value.method === "string") {
-    return { kind: "rpc-request", rpc: value as never };
-  }
-  if (typeof value.method === "string" && value.id === undefined) {
-    return { kind: "rpc-notification", rpc: value as never };
-  }
-  if (typeof value.id === "string" || typeof value.id === "number") {
-    if ("result" in value) return { kind: "rpc-response", rpc: { id: value.id, result: asJsonValue(value.result) } };
-    if (isRecord(value.error) && Number.isSafeInteger(value.error.code) && typeof value.error.message === "string") {
-      return {
-        kind: "rpc-response",
-        rpc: {
-          id: value.id,
-          error: {
-            code: value.error.code as number,
-            message: value.error.message,
-            ...(value.error.data === undefined ? {} : { data: asJsonValue(value.error.data) }),
-          },
-        },
-      };
-    }
-  }
-  throw new Error("Codex App Server emitted an unsupported JSON-RPC message.");
-}
+
 
 type AppServerScope = { threadId: string; turnId: string | null };
 
@@ -376,9 +302,7 @@ export class PrivateWorkerGateway {
   endpoint: string | null = null;
 
   private readonly now: () => number;
-  private readonly sharedAuth?: SharedAuthProvider;
-  private authTokens: SharedAuthTokens | null = null;
-  private readonly privateRequests = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private readonly auth: PrivateStdioAuthLane;
   private readonly processFactory: NonNullable<PrivateWorkerGatewayOptions["processFactory"]>;
   private readonly locks: ResourceLockManager;
   private readonly events: FileTransportEventJournal;
@@ -428,7 +352,8 @@ export class PrivateWorkerGateway {
     this.context = options.context;
     this.kernelOwnershipRoot = options.kernelOwnershipRoot;
     this.kernelLockCommand = options.kernelLockCommand;
-    this.sharedAuth = options.sharedAuth;
+    this.auth = new PrivateStdioAuthLane(options.sharedAuth, rpc => this.writePrivateRpc(rpc),
+      () => this.fail(new Error("Private authentication refresh request is invalid."), "auth-refresh"));
     this.now = options.now ?? Date.now;
     this.token = randomBytes(32).toString("base64url");
     this.locks = new ResourceLockManager({
@@ -449,29 +374,7 @@ export class PrivateWorkerGateway {
     // Injected factories retain direct-child semantics: never assume that an
     // arbitrary child PID is a process group owned by this gateway.
     this.ownsProcessGroup = !options.processFactory && process.platform !== "win32";
-    this.processFactory = options.processFactory ?? ((context) => spawn(/* turbopackIgnore: true */
-      process.env.CODEX_BIN?.trim() || "codex",
-      ["app-server", "--stdio", ...(options.configOverrides ?? []).flatMap((value) => ["-c", value])],
-      {
-        cwd: context.workspace,
-        env: {
-          NODE_ENV: process.env.NODE_ENV ?? "production",
-          PATH: process.env.PATH,
-          LANG: process.env.LANG,
-          LC_ALL: process.env.LC_ALL,
-          LC_CTYPE: process.env.LC_CTYPE,
-          TZ: process.env.TZ,
-          SSL_CERT_FILE: process.env.SSL_CERT_FILE,
-          SSL_CERT_DIR: process.env.SSL_CERT_DIR,
-          NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,
-          ...workerEgressEnvironment(),
-          ...context.environment,
-          ...(this.kernelOwner ? { AIBRAIN_WORKER_LOCK_FD: "3" } : {}),
-        },
-        stdio: this.kernelOwner ? ["pipe", "pipe", "pipe", this.kernelOwner.fd] : ["pipe", "pipe", "pipe"],
-        detached: this.ownsProcessGroup,
-      },
-    ) as ChildProcessWithoutNullStreams);
+    this.processFactory = options.processFactory ?? (context => spawnCodexWorker(context, this.kernelOwner, options.configOverrides));
   }
 
   async start() {
@@ -538,13 +441,7 @@ export class PrivateWorkerGateway {
       this.child.stderr.resume();
 
 
-      if (this.sharedAuth) {
-        await this.privateRequest("initialize", { clientInfo: { name: "aibrain_workbench", version: "0.4.0" }, capabilities: { experimentalApi: true } });
-        await this.writePrivateRpc({ method: "initialized" });
-        this.authTokens = await this.sharedAuth();
-        const login = await this.privateRequest("account/login/start", { type: "chatgptAuthTokens", ...this.authTokens });
-        if (!isRecord(login) || login.type !== "chatgptAuthTokens") throw new Error("External authentication was not accepted.");
-      }
+      await this.auth.bootstrap();
 
       this.server = createServer((_, response) => {
         response.writeHead(404, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
@@ -631,53 +528,11 @@ export class PrivateWorkerGateway {
     await new Promise<void>((resolve, reject) => child.stdin.write(`${JSON.stringify(rpc)}\n`, error => error ? reject(new Error("Private authentication write failed.")) : resolve()));
   }
 
-  private async privateRequest(method: string, params: unknown) {
-    const id = `private-auth:${randomUUID()}`;
-    return new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => { this.privateRequests.delete(id); reject(new Error("Private authentication request timed out.")); }, 8_000);
-      this.privateRequests.set(id, {
-        resolve: value => { clearTimeout(timer); resolve(value); },
-        reject: error => { clearTimeout(timer); reject(error); },
-      });
-      void this.writePrivateRpc({ id, method, params }).catch(error => {
-        const pending = this.privateRequests.get(id); this.privateRequests.delete(id); pending?.reject(error);
-      });
-    });
-  }
-
-  private consumePrivateAuthLine(line: string) {
-    if (!this.sharedAuth) return false;
-    let rpc: Record<string, unknown>;
-    try { rpc = JSON.parse(line); } catch { return false; }
-    if (!isRecord(rpc)) return false;
-    if (typeof rpc.id === "string" && rpc.id.startsWith("private-auth:")) {
-      const pending = this.privateRequests.get(rpc.id);
-      this.privateRequests.delete(rpc.id);
-      if (rpc.error) pending?.reject(new Error("Private authentication was rejected.")); else pending?.resolve(rpc.result);
-      return true;
-    }
-    if (rpc.method !== "account/chatgptAuthTokens/refresh") return false;
-    const id = rpc.id;
-    const params = rpc.params;
-    if ((typeof id !== "string" && typeof id !== "number") || !isRecord(params) || params.reason !== "unauthorized" ||
-        (params.previousAccountId != null && typeof params.previousAccountId !== "string")) {
-      this.fail(new Error("Private authentication refresh request is invalid."), "auth-refresh");
-      return true;
-    }
-    // Do not block the output lane while the sole credential owner renews.
-    void this.sharedAuth(params.previousAccountId as string | null | undefined, this.authTokens?.accessToken).then(async tokens => {
-      this.authTokens = tokens;
-      await this.writePrivateRpc({ id, result: tokens });
-    }).catch(async () => {
-      await this.writePrivateRpc({ id, error: { code: -32603, message: "La sesión requiere reconexión del administrador." } }).catch(() => undefined);
-    });
-    return true;
-  }
+  private consumePrivateAuthLine(line: string) { return this.auth.consume(line); }
 
   async stop() {
     this.retired = true;
-    for (const pending of this.privateRequests.values()) pending.reject(new Error("Private authentication channel closed."));
-    this.privateRequests.clear();
+    this.auth.close();
     if (this.stopPromise) return this.stopPromise;
     if (this.state === "stopped") return;
     this.stopPromise = this.stopOnce().finally(() => { this.stopPromise = null; });
@@ -1158,8 +1013,7 @@ export class PrivateWorkerGateway {
   private fail(error: unknown, stage:GatewayFailureStage, exit?:{code:number|null;signal:NodeJS.Signals|null}) {
     if (this.retired || this.state === "failed") return;
     this.recordDiagnostic(error,stage,exit);
-    for (const pending of this.privateRequests.values()) pending.reject(new Error("Private authentication channel failed."));
-    this.privateRequests.clear();
+    this.auth.close();
     this.lastError = safeError(error);
     this.state = "failed";
     this.activeSocket?.close(1011, "Worker runtime failure");

@@ -1,5 +1,13 @@
 # Installation configuration
 
+The independent backend selects direct official Codex stdio by default.
+`AIBRAIN_CODEX_TRANSPORT=gateway` selects the legacy compatibility transport;
+`stdio` selects the new path explicitly. Other values fail closed. There is no
+automatic fallback or resend between modes. Keep the same mode during an
+admitted turn and finish/reconcile active work before a controlled change.
+Native threads and provider effect receipts remain authoritative; live event
+ordinals are not durable replay cursors. See [architecture](ARCHITECTURE.md).
+
 Keep installation JSON and all secrets outside the public repository. Set `AIBRAIN_INSTALLATION_CONFIG` to the reviewed local configuration path. The examples use synthetic companies, example domains and temporary data roots. Provider credentials belong in the installation's protected secret store, not in committed examples.
 
 An optional identity-bound host access-token channel uses

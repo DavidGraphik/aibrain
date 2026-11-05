@@ -173,7 +173,7 @@ export class AppServerRpcRouter {
     if (this.fatalError) return Promise.reject(this.fatalError);
     if (!this.startPromise) {
       this.startPromise = this.transport.connect().then(() => {
-        const deliveryStart = this.transport.deliverySequenceStart?.();
+        const deliveryStart = this.transport.capabilities?.delivery === "live" ? undefined : this.transport.deliverySequenceStart?.();
         if (deliveryStart !== undefined) {
           if (!Number.isSafeInteger(deliveryStart) || deliveryStart < 1) throw new Error("Invalid transport delivery start.");
           this.nextAcknowledgementSequence = deliveryStart;
@@ -192,6 +192,7 @@ export class AppServerRpcRouter {
 
   async assertProjectionReady() {
     await this.start();
+    if (this.transport.capabilities?.delivery === "live") return;
     // Reconnect has its own received watermark. Keep explicit reads/Stop and
     // the existing consumer usable while admission is deferred.
     await this.transport.connect();
@@ -363,7 +364,7 @@ export class AppServerRpcRouter {
     }));
     try {
       await Promise.race([submission, deadline]);
-      pending.acceptedAt ??= this.now();
+      if (this.transport.capabilities?.delivery !== "live") pending.acceptedAt ??= this.now();
     } catch (error) {
       if (error instanceof AppServerRequestTimeoutError) {
         void submission.catch(() => undefined);
@@ -450,7 +451,7 @@ export class AppServerRpcRouter {
   }
 
   private dispatch(event: AppServerEvent) {
-    this.nextAcknowledgementSequence ??= event.sequence;
+    if (this.transport.capabilities?.delivery !== "live") this.nextAcknowledgementSequence ??= event.sequence;
     const receivedTurnOwner = this.turnOwnerAtReceipt(event);
     const key = this.scopeKey(event, receivedTurnOwner);
     const previous = key ? this.scopeChains.get(key) ?? Promise.resolve() : Promise.resolve();
@@ -495,6 +496,7 @@ export class AppServerRpcRouter {
   }
 
   private async queueAcknowledgement(event: AppServerEvent) {
+    if (this.transport.capabilities?.delivery === "live") return;
     this.readyToAcknowledge.set(event.sequence, event);
     if (this.acknowledgementFlush) return this.acknowledgementFlush;
     const flush = Promise.resolve().then(async () => {

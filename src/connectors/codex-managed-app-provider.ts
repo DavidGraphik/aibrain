@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { assertBindingAccess, credentialBindingFingerprint } from "@/connectors/authorization";
 import {
   ConnectorError,
@@ -135,7 +135,7 @@ export class CodexManagedAppProvider implements ConnectorCredentialProvider {
     const apps = parseInstalledApps(await transport.request(
       "app/installed",
       { forceRefresh: false },
-      "connector-codex-app-list",
+      `connector-codex-app-list:${randomUUID()}`,
       10_000,
     ));
     const app = apps.find((candidate) => candidate.id === appId);

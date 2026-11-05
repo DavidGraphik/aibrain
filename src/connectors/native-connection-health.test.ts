@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CatalogResource } from "@/catalog/contracts";
+import type { CatalogResource, CatalogState, CatalogPrincipal } from "@/catalog/contracts";
+import { CatalogEnforcedTransport, CatalogRuntimeEnforcer } from "@/catalog/runtime-enforcement";
+import { nativeAppToolsForTurn } from "@/runtime/native-app-tools";
+import { connectedAppConfig } from "@/runtime/connected-app-config";
 import { nativeConnectionHealthForIdentity } from "./native-connection-health";
 
 const mocks = vi.hoisted(() => ({
@@ -36,11 +39,11 @@ describe("native connection health for an authenticated catalog identity", () =>
     mocks.request.mockResolvedValue({ apps: [{ id: "files", enabled: true, callable: true }] });
     expect((await check([app("files")])).get("resource-files")).toEqual(connected);
     expect(mocks.transportForUser).toHaveBeenCalledExactlyOnceWith("tenant-a", "user-a");
-    expect(mocks.request).toHaveBeenCalledExactlyOnceWith("app/installed", { forceRefresh: true, threadId: null }, "connector-native-connection-health", 10_000);
+    expect(mocks.request).toHaveBeenCalledExactlyOnceWith("app/installed", { forceRefresh: true, threadId: null }, expect.stringMatching(/^connector-native-connection-health:[a-f0-9-]{36}:apps:0$/), 10_000);
     mocks.request.mockClear().mockResolvedValue({ data: [{ name: "files", runtimeStatus: "connected", authStatus: "oAuth", toolsError: null, tools: callableTools }], nextCursor: null });
     expect((await check([mcp("files")], "user-b")).get("resource-files")).toEqual(connected);
     expect(mocks.transportForUser).toHaveBeenLastCalledWith("tenant-a", "user-b");
-    expect(mocks.request).toHaveBeenCalledExactlyOnceWith("mcpServerStatus/list", { detail: "toolsAndAuthOnly", threadId: null }, "connector-native-connection-health", 10_000);
+    expect(mocks.request).toHaveBeenCalledExactlyOnceWith("mcpServerStatus/list", { detail: "toolsAndAuthOnly", threadId: null }, expect.stringMatching(/^connector-native-connection-health:[a-f0-9-]{36}:mcp:0$/), 10_000);
   });
 
   it("requires enabled, callable installed apps and maps missing or malformed apps without affecting healthy ones", async () => {
@@ -132,6 +135,63 @@ describe("native connection health for an authenticated catalog identity", () =>
     expect(result.get(failingMethod === "app/installed" ? "resource-files" : "resource-search")).toMatchObject({ status: "degraded" });
     expect(result.get(failingMethod === "app/installed" ? "resource-search" : "resource-files")).toEqual(connected);
     expect(JSON.stringify([...result])).not.toContain("private provider failure");
+  });
+
+
+  it("uses fresh observation IDs after a successful read and across providers/pages", async () => {
+    const observed = new Set<string>();
+    let enabled = true;
+    mocks.request.mockImplementation(async (method, params, purpose) => {
+      // Mirrors the durable boundary: a completed ID cannot request a fresh
+      // provider observation. A reused ID must not accidentally prove health.
+      if (observed.has(purpose)) throw new Error("Observation ID was reused");
+      observed.add(purpose);
+      if (method === "app/installed") return { apps: [{ id: "files", enabled, callable: enabled }] };
+      return { data: params.cursor ? [{ name: "search", runtimeStatus: "connected", authStatus: "oAuth", toolsError: null, tools: callableTools }] : [],
+        nextCursor: params.cursor ? null : "page-2" };
+    });
+    const resources = [app("files"), mcp("search")];
+    expect([...await check(resources)]).toEqual([["resource-files", connected], ["resource-search", connected]]);
+    expect([...await check(resources)]).toEqual([["resource-files", connected], ["resource-search", connected]]);
+    enabled = false;
+    expect((await check(resources)).get("resource-files")).toMatchObject({ status: "not_configured", statusCode: "NATIVE_APP_DISABLED" });
+    expect(observed.size).toBe(9);
+    expect(mocks.request.mock.calls.map(call => call[2])).toEqual(expect.arrayContaining([
+      expect.stringMatching(/:apps:0$/), expect.stringMatching(/:mcp:0$/), expect.stringMatching(/:mcp:1$/),
+    ]));
+  });
+
+  it("admits an assigned provider connector ID distinct from its resource ID through health and read-only tool configuration", async () => {
+    const appId = "connector_0123456789abcdef0123456789abcdef";
+    const userId = "00000000-0000-4000-8000-000000000001";
+    const resource: CatalogResource = { ...app("fixture"), id: "native-gmail", appId };
+    const state: CatalogState = { schemaVersion: 1, installationId: "tenant-a", revision: 1, resources: [resource], rules: [
+      { id: "own-read", resourceId: resource.id, scope: "user", subjectId: userId, effect: "allow", operations: ["read"] },
+      { id: "own-deny-write", resourceId: resource.id, scope: "user", subjectId: userId, effect: "deny", operations: ["write"] },
+    ] };
+    const principal: CatalogPrincipal = { installationId: "tenant-a", userId, roleId: "workspace-member", groupIds: [], workspaceCanExecute: true };
+    const catalog = new CatalogRuntimeEnforcer(state, principal);
+    const inner = { request: vi.fn(async (method: string) => {
+      if (method === "config/read") return { config: { apps: null } };
+      if (method === "app/installed") return { apps: [{ id: appId, enabled: true, callable: true }, { id: "connector_foreign", enabled: true, callable: true }] };
+      return { apps: [{ id: appId, toolSummaries: [
+        { name: "get_profile", title: "Profile", description: "Read own profile", isEnabled: true, disabledReason: null, isReadOnly: true },
+        { name: "send_email", title: "Send", description: "Send mail", isEnabled: true, disabledReason: null, isReadOnly: false },
+      ] }], missingAppIds: [] };
+    }) };
+    const transport = new CatalogEnforcedTransport(inner, catalog);
+    mocks.transportForUser.mockResolvedValue(transport);
+    expect((await check([resource], userId)).get(resource.id)).toEqual(connected);
+    const policies = await nativeAppToolsForTurn(inner, async () => catalog, [appId], "fixture-turn", true);
+    const config = connectedAppConfig([appId], policies);
+    expect(config["features.apps"]).toBe(true);
+    expect(config.apps).toMatchObject({
+      [appId]: { enabled: true, default_tools_enabled: false,
+        tools: { get_profile: { enabled: true }, send_email: { enabled: false } } },
+      connector_foreign: { enabled: false },
+    });
+    const foreign = new CatalogRuntimeEnforcer(state, { ...principal, userId: "00000000-0000-4000-8000-000000000002" });
+    expect(foreign.filterApps({ apps: [{ id: appId, enabled: true, callable: true }] }, true)).toEqual({ apps: [] });
   });
 
   it("fails closed for a transport failure, malformed installed snapshot or duplicate entry", async () => {

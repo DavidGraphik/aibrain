@@ -5,6 +5,13 @@ import { itemActivity, itemSources, itemToolResult } from "@/runtime/codex-app-s
 const observedAt = "2026-08-28T09:00:00.000Z";
 
 describe("runtime source and tool result projection", () => {
+  it("keeps native tool and process errors failed when a completion event arrives", () => {
+    const failure = itemToolResult({ item: { id: "failed-native", type: "mcpToolCall", tool: "search",
+      status: "completed", result: null, error: { message: "Provider unavailable" } } }, true, observedAt);
+    expect(failure).toMatchObject({ status: "failed", summary: "Provider unavailable" });
+    expect(itemToolResult({ item: { id: "failed-command", type: "commandExecution", command: "false",
+      status: "completed", exitCode: 1 } }, true, observedAt)).toMatchObject({ status: "failed" });
+  });
   it("projects only explicit HTTP(S) web result metadata", () => {
     const params = { item: {
       id: "web-1", type: "webSearch", query: "informe",

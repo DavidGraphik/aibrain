@@ -1,10 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type { CatalogRuntimeEnforcer, CatalogRuntimeTransport } from "@/catalog/runtime-enforcement";
 
 /** Reads only server names from the private config. Addresses, headers and
  * credentials never enter developer instructions or the browser. */
 export async function nativeMcpConfigForTurn(transport: CatalogRuntimeTransport, resolveCatalog: () => Promise<CatalogRuntimeEnforcer>,
   connectedResourceIds: ReadonlySet<string>, purpose: string, allowWrites = false) {
-  const response = await transport.request("config/read", { includeLayers: false }, purpose, 10_000);
+  const response = await transport.request("config/read", { includeLayers: false }, `${purpose}:${randomUUID()}`, 10_000);
   if (!response || typeof response !== "object" || Array.isArray(response) || !("config" in response)
     || !response.config || typeof response.config !== "object" || Array.isArray(response.config)) throw new Error("NATIVE_MCP_CONFIG_UNAVAILABLE");
   const configured = "mcp_servers" in response.config ? response.config.mcp_servers : undefined;

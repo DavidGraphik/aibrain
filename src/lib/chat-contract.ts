@@ -29,7 +29,7 @@ export type ActivityItem = {
   detail?: string;
   output?: string;
   files?: ActivityFileChange[];
-  /** Monotonic App Server transport sequence for cross-kind timeline ordering. */
+  /** Monotonic display order within one assistant message, not a replay cursor. */
   sequence?: number;
   status: ActivityStatus;
 };
@@ -63,7 +63,7 @@ export type ToolResult = {
   output: string | null;
   sourceIds: string[];
   createdAt: string;
-  /** Monotonic App Server transport sequence for cross-kind timeline ordering. */
+  /** Monotonic display order within one assistant message, not a replay cursor. */
   sequence?: number;
   /** Server-observed record references; optional for older persisted results. */
   publicReferences?: string[];

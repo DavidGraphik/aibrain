@@ -16,6 +16,7 @@ import ntpath
 import os
 from pathlib import Path
 import re
+import select
 import socket
 import socketserver
 import stat
@@ -162,6 +163,27 @@ def plan(config, value, allow_writes=False):
     require(isinstance(value['requestId'], str) and str(uuid.UUID(value['requestId'])) == value['requestId'])
     args = value['input']
     require(isinstance(args, dict))
+    if value['operation'] == 'filename_search':
+        require(set(args) == {'roots', 'needle', 'cursor', 'binding', 'limit', 'budgetMs'})
+        require(type(args['limit']) is int and 1 <= args['limit'] <= 50)
+        require(type(args['budgetMs']) is int and 100 <= args['budgetMs'] <= 4000)
+        require(isinstance(args['binding'], str) and re.fullmatch(r'[a-f0-9]{64}', args['binding']))
+        require(args['cursor'] is None or isinstance(args['cursor'], str) and str(uuid.UUID(args['cursor'])) == args['cursor'])
+        require(args['needle'] is None if args['cursor'] else isinstance(args['needle'], str) and
+                1 <= len(args['needle']) <= 128 and not any(unicodedata.category(c).startswith('C') or c in '\\/' for c in args['needle']))
+        require(isinstance(args['roots'], list) and 1 <= len(args['roots']) <= 16)
+        sources = []
+        for root in args['roots']:
+            source, part = source_reference(config['connectionId'], root)
+            require(part == 1 and '?' not in root and path_allowed(source, config['roots'], True), 'PATH_DENIED')
+            # Intersect the employee request with the protected source policy.
+            for allowed in config['roots']:
+                if within(source, allowed): sources.append(source)
+                elif within(allowed, source): sources.append(allowed)
+        sources = sorted(set(sources), key=str.casefold)
+        sources = [p for p in sources if not any(p.casefold() != q.casefold() and within(p, q) for q in sources)]
+        require(1 <= len(sources) <= 16, 'PATH_DENIED')
+        return {'operation': 'filename_search', 'roots': sources, **{k: args[k] for k in ('needle', 'cursor', 'binding', 'limit', 'budgetMs')}}
     if value['operation'] == 'snapshot':
         require(allow_writes and config['writesEnabled'], 'WRITES_NOT_ENABLED')
         require(set(args) == {'path'})
@@ -231,47 +253,71 @@ class Relay:
         self.deadline = deadline
         self.lock = threading.Lock()
         self.jobs = {}
+        self.cancelled_jobs = {}
+        self.filename_agent_seen = None
         self.stopped = False
 
-    def request(self, value, allow_writes=False):
+    def request(self, value, allow_writes=False, cancelled=None):
         try:
             task = plan(self.config, value, allow_writes)
         except (ValueError, TypeError, KeyError, AttributeError):
             return failure('SERVER_REQUEST_DENIED')
         with self.lock:
+            if task['operation'] == 'filename_search':
+                if self.filename_agent_seen is None: return failure('FILENAME_SEARCH_UNSUPPORTED')
+                if time.monotonic() - self.filename_agent_seen > 30: return failure('SEARCH_SOURCE_OFFLINE')
+                if any(job.get('state') == 'sent' for job in self.jobs.values()): return failure('SEARCH_SOURCE_BUSY')
             if self.stopped:
                 return failure('CONNECTOR_STOPPED')
             if len(self.jobs) >= 4:
-                return failure('SERVER_FILES_BUSY')
+                return failure('SEARCH_SOURCE_BUSY' if task['operation'] == 'filename_search' else 'SERVER_FILES_BUSY')
             job_id = str(uuid.uuid4())
             event = threading.Event()
             job = {'event': event, 'state': 'queued', 'task': task, 'result': None,
-                'expires': time.monotonic() + self.deadline}
+                'expires': time.monotonic() + min(self.deadline, task.get('budgetMs', 55000) / 1000 + 5)}
             self.jobs[job_id] = job
         try:
-            event.wait(self.deadline)
+            while not event.wait(min(.05, max(0, job['expires'] - time.monotonic()))):
+                if task['operation'] == 'filename_search' and cancelled and cancelled():
+                    with self.lock:
+                        self.cancelled_jobs = {k: v for k, v in self.cancelled_jobs.items() if v[1] > time.monotonic()}
+                        if len(self.cancelled_jobs) >= 64: self.cancelled_jobs.pop(next(iter(self.cancelled_jobs)))
+                        self.cancelled_jobs[job_id] = (job.get('pollId'), time.monotonic() + 60)
+                    return failure('SEARCH_CANCELLED')
+                if time.monotonic() >= job['expires']: break
             with self.lock:
                 result = job['result']
             if result is None:
                 return failure('WRITE_OUTCOME_UNCERTAIN_RETRY_SAME_OPERATION' if task['operation'] in ('create','replace')
-                               and job['state'] != 'queued' else 'CONNECTOR_OFFLINE_OR_TIMEOUT')
+                               and job['state'] != 'queued' else 'SEARCH_SOURCE_OFFLINE' if task['operation'] == 'filename_search' else 'CONNECTOR_OFFLINE_OR_TIMEOUT')
             return self.convert(task, value['input'], result, job.get('protocol', 1))
         except Exception:
-            return failure('WRITE_OUTCOME_UNCERTAIN_RETRY_SAME_OPERATION' if task['operation'] in ('create','replace') else 'SERVER_READBACK_REJECTED')
+            return failure('WRITE_OUTCOME_UNCERTAIN_RETRY_SAME_OPERATION' if task['operation'] in ('create','replace') else
+                           'SEARCH_SOURCE_INVALID_RESPONSE' if task['operation'] == 'filename_search' else 'SERVER_READBACK_REJECTED')
         finally:
             with self.lock:
+                if task['operation'] == 'filename_search' and job['state'] != 'complete' and job.get('pollId'):
+                    self.cancelled_jobs = {k: v for k, v in self.cancelled_jobs.items() if v[1] > time.monotonic()}
+                    if len(self.cancelled_jobs) >= 64: self.cancelled_jobs.pop(next(iter(self.cancelled_jobs)))
+                    self.cancelled_jobs[job_id] = (job['pollId'], time.monotonic() + 60)
                 self.jobs.pop(job_id, None)
 
-    def poll(self, protocol=1, poll_id=None):
+    def poll(self, protocol=1, poll_id=None, capabilities=None):
         require(type(protocol) is int and protocol in (1, 2))
+        require(capabilities is None or protocol == 2 and capabilities == ['filename_search_v1'])
         if protocol == 2:
             require(isinstance(poll_id, str) and re.fullmatch(r'[a-f0-9]{32}', poll_id))
         with self.lock:
+            if capabilities == ['filename_search_v1']:
+                require(protocol == 2)
+                self.filename_agent_seen = time.monotonic()
             for job_id, job in self.jobs.items():
                 if job['state'] != 'queued' or time.monotonic() >= job['expires']:
                     continue
+                if job['task']['operation'] == 'filename_search' and capabilities != ['filename_search_v1']:
+                    continue  # A legacy poll must never consume an unknown operation.
                 remaining = min(55, job['expires'] - time.monotonic())
-                budget_ms = int(remaining * 1000)
+                budget_ms = min(int(remaining * 1000), job['task'].get('budgetMs', 55000))
                 if budget_ms <= 0:
                     continue
                 job.update(state='sent', protocol=protocol, pollId=poll_id)
@@ -279,7 +325,7 @@ class Relay:
                           {'expiresAt': (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=remaining)).isoformat()})
                 return {'schemaVersion': protocol, 'installationId': self.config['installationId'],
                     'connectionId': self.config['connectionId'], 'policyHash': self.policy,
-                    'jobId': job_id, **timing, **job['task']}
+                    'jobId': job_id, **job['task'], **timing}
         return None
 
     def submit(self, value):
@@ -293,11 +339,23 @@ class Relay:
         require(isinstance(value['jobId'], str) and isinstance(value['result'], dict))
         with self.lock:
             job = self.jobs.get(value['jobId'])
+            if job is None and protocol == 2 and self.cancelled_jobs.get(value['jobId'], (None, 0))[0] == value.get('pollId'):
+                return False
             require(job is not None and job['state'] == 'sent' and time.monotonic() < job['expires'], 'EXPIRED_OR_REPLAYED_RESULT')
             require(job['protocol'] == protocol and (protocol == 1 or value['pollId'] == job['pollId']), 'WRONG_POLL_BINDING')
             job['state'] = 'complete'
             job['result'] = value['result']
             job['event'].set()
+            return True
+
+    def active(self, value):
+        require(set(value) == {'schemaVersion', 'installationId', 'connectionId', 'policyHash', 'jobId', 'pollId'})
+        require(value['schemaVersion'] == 2 and value['installationId'] == self.config['installationId'] and
+                value['connectionId'] == 'g03' and value['policyHash'] == self.policy)
+        with self.lock:
+            job = self.jobs.get(value['jobId'])
+            return bool(job and job['state'] == 'sent' and job['task']['operation'] == 'filename_search' and
+                        job['pollId'] == value['pollId'] and time.monotonic() < job['expires'])
 
     def stop(self):
         with self.lock:
@@ -305,8 +363,45 @@ class Relay:
             for job in self.jobs.values():
                 job['event'].set()
 
+    def convert_filename(self, task, result):
+        errors = {'SEARCH_SOURCE_INACCESSIBLE', 'SEARCH_SOURCE_BUSY', 'SEARCH_SOURCE_OFFLINE', 'SEARCH_CANCELLED',
+                  'SEARCH_CURSOR_EXPIRED_OR_DENIED', 'SEARCH_POLICY_CHANGED', 'SEARCH_CAPACITY'}
+        if not result['ok']:
+            require(set(result) == {'ok', 'error'} and result['error'] in errors)
+            return failure(result['error'])
+        require(set(result) in ({'ok', 'checkedAt', 'entries', 'nextCursor', 'limited', 'coverage'},
+                               {'ok', 'checkedAt', 'entries', 'nextCursor', 'limited', 'coverage', 'error'}))
+        iso_time(result['checkedAt'])  # Source wall time is metadata, never a lease clock.
+        token = result['nextCursor']
+        require(token is None or isinstance(token, str) and str(uuid.UUID(token)) == token)
+        require(type(result['limited']) is bool and result['limited'] == (token is not None))
+        coverage = result['coverage']
+        require(isinstance(coverage, dict) and set(coverage) == {'complete', 'snapshot', 'scannedEntries', 'scannedFolders', 'pendingFolders'})
+        require(type(coverage['complete']) is bool and coverage['complete'] != result['limited'] and coverage['snapshot'] is False)
+        for key in ('scannedEntries', 'scannedFolders', 'pendingFolders'):
+            require(type(coverage[key]) is int and 0 <= coverage[key] <= 100000)
+        require(isinstance(result['entries'], list) and len(result['entries']) <= task['limit'])
+        rows, seen = [], set()
+        for item in result['entries']:
+            require(isinstance(item, dict) and set(item) == {'source', 'name', 'kind', 'size', 'modifiedAt'})
+            source = windows_path(item['source'])
+            require(path_allowed(source, task['roots']) and path_allowed(source, self.config['roots']), 'PATH_DENIED')
+            require(item['name'] == ntpath.basename(source) and item['kind'] in ('file', 'directory'))
+            require(type(item['size']) is int and 0 <= item['size'] <= 2**53-1)
+            iso_time(item['modifiedAt'])
+            key = unicodedata.normalize('NFC', source).casefold()
+            require(key not in seen); seen.add(key)
+            rows.append({'scope': 'company', 'path': reference('g03', source), **{k: item[k] for k in ('name', 'kind', 'size', 'modifiedAt')}})
+        error = result.get('error')
+        require(error is None or error in errors and result['limited'])
+        return {'available': True, 'sourceChecked': True, 'checkedAt': timestamp(), 'lookupMode': 'source-filename-search-v1',
+                'results': rows, 'nextCursor': token, 'limited': result['limited'], 'coverage': coverage,
+                **({'error': error} if error else {})}
+
     def convert(self, task, args, result, protocol=1):
         require(type(result.get('ok')) is bool)
+        if task['operation'] == 'filename_search':
+            return self.convert_filename(task, result)
         if not result['ok']:
             allowed = {'WINDOWS_PATH_UNAVAILABLE', 'SERVER_FORMAT_NOT_READABLE', 'SERVER_SOURCE_CHANGED',
                        'SERVER_COPY_LIMIT', 'CONNECTOR_DEADLINE', 'PATH_DENIED', 'DIRECTORY_LIMIT',
@@ -571,26 +666,32 @@ class HttpHandler(http.server.BaseHTTPRequestHandler):
             value = decode(raw)
             if self.path == '/v1/poll':
                 require(isinstance(value, dict))
+                if value.get('active') is True:
+                    require(set(value) == {'schemaVersion', 'installationId', 'connectionId', 'policyHash', 'jobId', 'pollId', 'active'})
+                    self.reply(200, {'active': self.server.relay.active({k: v for k, v in value.items() if k != 'active'})})
+                    return
                 protocol = value.get('schemaVersion')
                 require(type(protocol) is int and protocol in (1, 2))
                 poll_id = value.get('pollId')
                 probe = value.get('probe', False)
+                capabilities = value.get('capabilities')
+                require(capabilities is None or protocol == 2 and capabilities == ['filename_search_v1'] and not probe)
                 require(type(probe) is bool and (not probe or protocol == 2))
                 if protocol == 2:
                     require(isinstance(poll_id, str) and re.fullmatch(r'[a-f0-9]{32}', poll_id))
                 require(value == {'schemaVersion': protocol, 'installationId': self.server.relay.config['installationId'],
                     'connectionId': 'g03', 'policyHash': self.server.relay.policy,
-                    **({'pollId': poll_id} if protocol == 2 else {}), **({'probe': True} if probe else {})})
+                    **({'pollId': poll_id} if protocol == 2 else {}), **({'probe': True} if probe else {}),
+                    **({'capabilities': capabilities} if capabilities is not None else {})})
                 # A setup probe cannot consume an employee's queued operation.
-                reply = {'job': None if probe else self.server.relay.poll(protocol, poll_id)}
+                reply = {'job': None if probe else self.server.relay.poll(protocol, poll_id, capabilities)}
                 if protocol == 2:
                     reply.update(schemaVersion=2, pollId=poll_id)
                 if probe:
                     reply['probe'] = True
                 self.reply(200, reply)
             else:
-                self.server.relay.submit(value)
-                self.reply(200, {'accepted': True})
+                self.reply(200, {'accepted': self.server.relay.submit(value)})
         except Exception as error:
             try:
                 self.reply(401 if str(error) == 'UNAUTHORIZED' else 400, {'error': 'REQUEST_REJECTED'})
@@ -617,11 +718,14 @@ class UnixHandler(socketserver.StreamRequestHandler):
     def handle(self):
         self.connection.settimeout(100)
         try:
-            maximum = MAX_BODY if self.server.allow_writes else 8192
+            maximum = MAX_BODY if self.server.allow_writes else 128 * 1024
             raw = self.rfile.readline(maximum + 1)
             require(len(raw) <= maximum and raw.endswith(b'\n'))
             request = decode(raw)
-            response = self.server.relay.request(request, self.server.allow_writes)
+            def disconnected():
+                ready, _, _ = select.select([self.connection], [], [], 0)
+                return bool(ready and self.connection.recv(1, socket.MSG_PEEK) == b'')
+            response = self.server.relay.request(request, self.server.allow_writes, disconnected)
             result = encode({**response, 'requestId': request['requestId'],
                 'installationId': self.server.relay.config['installationId'], 'connectionId': 'g03'})
             maximum_reply = MAX_BODY if request.get('operation') == 'read' and request.get('input', {}).get('format') == 'original' else MAX_REPLY
@@ -740,7 +844,7 @@ def main():
                if ntpath.normcase(ntpath.normpath(p)) in configured_roots]
     require(len(entries) <= 8, 'NAVIGATION_LIMIT')
     descriptor_value = {'schemaVersion': 1, 'installationId': config['installationId'], 'connectionId': 'g03',
-                        'scope': 'company', 'mode': 'read-only', 'entryPoints': entries}
+                        'scope': 'company', 'mode': 'read-only', 'entryPoints': entries, 'capabilities': ['filename_search_v1']}
     lease = ConnectionLease(directory, descriptor_value, 0, config['appGid'])
     unix = UnixServer(sock, relay)
     os.chown(sock, 0, config['appGid']); os.chmod(sock, 0o660)

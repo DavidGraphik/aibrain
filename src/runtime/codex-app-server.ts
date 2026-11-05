@@ -356,7 +356,9 @@ function mcpOutput(result: unknown) {
 }
 
 function toolResultStatus(item: Record<string, unknown>, completed: boolean): ToolResult["status"] {
-  if (item.status === "failed" || item.success === false) return "failed";
+  if (item.status === "failed" || item.success === false ||
+      item.type === "mcpToolCall" && isRecord(item.error) ||
+      item.type === "commandExecution" && typeof item.exitCode === "number" && item.exitCode !== 0) return "failed";
   if (item.status === "declined") return "stopped";
   if (item.status === "completed" || completed) return "complete";
   return "running";

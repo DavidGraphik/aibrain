@@ -76,5 +76,12 @@
   "src/lib/public-references.test.ts",
   "src/lib/chat-contract.test.ts",
   "tests/unit/public-activity.test.ts",
-  "src/runtime/private-workspace-text.test.ts"
+  "src/runtime/private-workspace-text.test.ts",
+  "src/connectors/native-connection-durable.test.ts",
+  "src/documents/source-filename-search.test.ts",
+  "src/workbench/turn-projection-store.test.ts",
+  "src/runtime/worker-runtime-service.test.ts",
+  "src/runtime/workers/direct-stdio-runtime.test.ts",
+  "src/runtime/source-projection.test.ts",
+  "src/runtime/transport/app-server-rpc-router.test.ts"
 ]

@@ -317,7 +317,7 @@ describe("Codex managed App connector", () => {
     expect(request).toHaveBeenCalledWith(
       "app/installed",
       { forceRefresh: false },
-      "connector-codex-app-list",
+      expect.stringMatching(/^connector-codex-app-list:[a-f0-9-]{36}$/),
       10_000,
     );
     expect(result).toMatchObject({ health: { status: "connected", code: null }, handle: { bindingVersion: 1 } });

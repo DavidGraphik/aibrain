@@ -12,6 +12,8 @@ import type { EnterpriseDocumentNetwork, EnterpriseDocumentRoot } from "./enterp
 
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 type ServerResult = { available: boolean; results?: unknown[]; [key: string]: unknown };
+type FilenameSearchInput = { roots: string[]; needle: string | null; cursor: string | null; binding: string; limit: number; budgetMs: number };
+type ServerInput = { query: string; limit: number } | { path: string; offset?: number; format?: "original" } | FilenameSearchInput;
 type NameWork = { query: string; depth: number };
 type NameMatch = { item: unknown; origin: string };
 type NameReplay = { version: 1; result: ServerResult; matches: NameMatch[] };
@@ -113,6 +115,10 @@ export class ServerDocumentFiles {
 
   async search(roots: readonly EnterpriseDocumentRoot[], query: string, limit = 50, fresh = false) {
     if (!query.trim() || query.length > 200 || /\p{C}/u.test(query) || !Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("Invalid server query");
+    if (!fresh && !isServerDirectoryQuery(query) && !query.startsWith("name-cursor:")) {
+      const native = await this.searchSourceNames(roots, query, limit);
+      if (native !== null) return native;
+    }
     if (this.network.config.installationId === "g03-production" && !isServerDirectoryQuery(query) && !fresh) {
       return this.searchNames(roots, query, limit);
     }
@@ -126,6 +132,45 @@ export class ServerDocumentFiles {
     } else if (/[\\/]/.test(normalized)) throw new Error("Invalid server query");
     if (fresh && !normalized.startsWith("server:/")) throw new Error("Live browsing requires a directory");
     return this.call(roots, fresh ? "browse" : "search", { query, limit });
+  }
+
+  /** An optional source capability. A legacy descriptor causes no new RPC. */
+  private async searchSourceNames(roots: readonly EnterpriseDocumentRoot[], query: string, limit: number): Promise<ServerResult | null> {
+    if (this.options.signal?.aborted) return { available: false, error: "SEARCH_CANCELLED" };
+    const continuation = /^filename-cursor:([a-z0-9][a-z0-9-]{0,62}):([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/u.exec(query);
+    if (query.startsWith("filename-cursor:") && !continuation) throw Error("Invalid filename cursor");
+    if (!this.options.userId) return continuation ? { available: false, error: "SEARCH_CURSOR_EXPIRED_OR_DENIED" } : null;
+    const navigation = await this.navigation(roots);
+    if (!navigation?.available) return continuation ? navigation : null;
+    const grants = await serverUserRoots(this.network.config.installationId, this.network.config.paths.dataRoot, this.options.userId, this.options.ownerUid ?? 0);
+    let seeds = grants ?? (navigation.results ?? []).filter(record).map(item => String(item.path));
+    const parsed = /^(?:name:)?(.+?)(?:\s+in:(server:\/.+))?$/u.exec(query);
+    if (!continuation && (!parsed || /[\\/]/u.test(parsed[1]))) return null;
+    if (!continuation && parsed && parsed[1].trim().length > 128) return null;
+    if (!continuation && parsed?.[2]) {
+      const location = canonicalDirectoryQuery(parsed[2]);
+      if (location.includes("?")) throw Error("A filename search requires a folder, not a browse offset");
+      seeds = [...new Set(seeds.map(root => `${root.split("/")[0]}/${location.slice(8)}`))]
+        .filter(root => serverPathAllowed(root, grants));
+    }
+    const connections = [...new Set(seeds.map(root => root.split("/")[0].slice(7)))];
+    const connection = continuation?.[1] ?? (connections.length === 1 ? connections[0] : null);
+    if (!connection) return null;
+    seeds = seeds.filter(root => root.startsWith(`server-${connection}/`));
+    if (!seeds.length || seeds.length > 16) return continuation ? { available: false, error: "SEARCH_CURSOR_EXPIRED_OR_DENIED" } : null;
+    for (const seed of seeds) validatePath(seed);
+    const input: FilenameSearchInput = {
+      roots: seeds, needle: continuation ? null : parsed![1].trim().normalize("NFC"), cursor: continuation?.[2] ?? null,
+      binding: createHash("sha256").update(JSON.stringify([this.network.config.installationId, this.options.userId, roots, grants])).digest("hex"),
+      limit, budgetMs: 4000,
+    };
+    const result = await this.call(roots, "filename_search", input);
+    if (result?.error === "FILENAME_SEARCH_UNSUPPORTED") return continuation ? { available: false, error: "SEARCH_CURSOR_EXPIRED_OR_DENIED", restartRequired: true, nextQuery: null } : null;
+    if (!result) return continuation ? { available: false, error: "SEARCH_SOURCE_OFFLINE" } : null;
+    const { nextCursor, ...visible } = result;
+    if (["SEARCH_CURSOR_EXPIRED_OR_DENIED", "SEARCH_POLICY_CHANGED"].includes(String(visible.error))) return { ...visible, nextQuery: null, restartRequired: true,
+      warning: "La continuación ya no corresponde al estado o los permisos actuales. Inicia una búsqueda nueva en las carpetas autorizadas; no se ha demostrado que el archivo no exista." };
+    return { ...visible, nextQuery: typeof nextCursor === "string" ? `filename-cursor:${connection}:${nextCursor}` : !visible.available && continuation ? query : null };
   }
 
   /** G03's outbound reader browses directories; name search stays bounded in the app. */
@@ -209,6 +254,7 @@ export class ServerDocumentFiles {
       if (refreshed.length) state.checkedAt = new Date().toISOString();
       const results = refreshed, coverage: string[] = [];
       let pages = 0, quotaPaused = false;
+      let sourceError: string | undefined;
       while (queue.length && pages < NAME_SEARCH_MAX_PAGES && results.length < limit && !signal.aborted) {
         // A page is committed into the next cursor as a unit. If it exceeds
         // quota, restore the pre-page state and preserve that page to retry.
@@ -216,7 +262,7 @@ export class ServerDocumentFiles {
           buffered: [...state.buffered], results: [...results], checkedAt: state.checkedAt, incomplete: state.incomplete };
         const current = queue.shift()!;
         if (visited.has(current.query)) continue;
-        visited.add(current.query); pages++;
+        visited.add(current.query);
         const pageRoots = await serverUserRoots(this.network.config.installationId, this.network.config.paths.dataRoot, this.options.userId, owner);
         if (JSON.stringify(pageRoots) !== rootsBinding) return unavailable();
         const page = await bounded.call(roots, "browse", { query: current.query, limit: 50 });
@@ -224,8 +270,10 @@ export class ServerDocumentFiles {
           // Never discard an unavailable branch. Move it behind other work so
           // an inaccessible path does not starve the rest; a later call can
           // retry it, and it prevents a false complete-coverage claim.
+          sourceError = typeof page?.error === "string" && /^[A-Z_]{1,80}$/u.test(page.error) ? page.error : "SEARCH_SOURCE_OFFLINE";
           visited.delete(current.query); queue.push(current); break;
         }
+        pages++;
         state.checkedAt = new Date().toISOString();
         coverage.push(current.query);
         for (const item of page.results ?? []) {
@@ -282,7 +330,7 @@ export class ServerDocumentFiles {
             priorPagesExcluded: state.priorPagesExcluded, remainingInScopeComplete, pendingCount: queue.length, pendingQueries: [],
             bufferedMatches: state.buffered.length, totalMatchesObserved: found.size, resultsIncludePriorPages: false, snapshot: false,
             maxPages: NAME_SEARCH_MAX_PAGES, maxDepth: null, maxMilliseconds: NAME_SEARCH_MAX_MS },
-          ...(quotaPaused ? { error: "SEARCH_QUOTA_PAUSED" } : {}),
+          ...(sourceError ? { error: sourceError } : {}), ...(quotaPaused ? { error: "SEARCH_QUOTA_PAUSED" } : {}),
           warning: (limited ? (continuation ? "Búsqueda parcial por nombre. Sigue nextQuery para continuar el mismo recorrido completo; conserva los resultados de cada página. El cursor es privado y caduca en 10 minutos." : "Búsqueda parcial sin continuación disponible. Acota la carpeta o inicia una búsqueda nueva; no demuestra que el archivo no exista.") : "Búsqueda por nombre completada en las carpetas autorizadas indicadas; reúne las páginas anteriores.") + " No es una captura instantánea: los cambios durante el recorrido pueden afectar los resultados. No incluye contenido de archivos ni unidades no conectadas." };
         return result;
       }, result => ({ version: 1, result, matches: visible }));
@@ -367,7 +415,7 @@ export class ServerDocumentFiles {
     return result;
   }
 
-  private async call(roots: readonly EnterpriseDocumentRoot[], operation: "search" | "browse" | "read" | "inventory", input: { query: string; limit: number } | { path: string; offset?: number; format?: "original" }): Promise<ServerResult | null> {
+  private async call(roots: readonly EnterpriseDocumentRoot[], operation: "search" | "browse" | "read" | "inventory" | "filename_search", input: ServerInput): Promise<ServerResult | null> {
     await this.network.validateSyncRoots(roots);
     // Do not read even the host descriptor for a turn without company access.
     if (!roots.some((root) => root.scope === "company" && root.scopeId === null)) return null;
@@ -382,17 +430,22 @@ export class ServerDocumentFiles {
       for (const entry of entries) {
         const connection = entry.slice(0, -5);
         if ("path" in input && !input.path.startsWith(`server-${connection}/`)) continue;
+        if ("binding" in input && !input.roots.every(root => root.startsWith(`server-${connection}/`))) continue;
         const metadata = await lstat(path.join(directory, entry));
         if (metadata.uid !== owner || (metadata.mode & 0o022)) return unavailable();
         const descriptor: unknown = JSON.parse((await readRegularFileWithin(directory, entry, 4096)).toString("utf8"));
         if (!record(descriptor) || descriptor.schemaVersion !== 1 || descriptor.connectionId !== connection ||
           !ID.test(connection) || descriptor.installationId !== this.network.config.installationId ||
           descriptor.scope !== "company" || descriptor.mode !== "read-only") return unavailable();
+        if (operation === "filename_search" && (!Array.isArray(descriptor.capabilities) || !descriptor.capabilities.includes("filename_search_v1"))) {
+          return { available: false, error: "FILENAME_SEARCH_UNSUPPORTED" };
+        }
         const socketPath = path.join(directory, `${connection}.sock`);
         const socket = await lstat(socketPath);
         if (!socket.isSocket() || socket.uid !== owner || (socket.mode & 0o007)) return unavailable();
         const userRoots = await serverUserRoots(this.network.config.installationId,this.network.config.paths.dataRoot,this.options.userId,owner);
         if (userRoots?.length === 0) return unavailable();
+        if ("binding" in input && !input.roots.every(root => serverPathAllowed(root, userRoots))) return { available: false, error: "SEARCH_CURSOR_EXPIRED_OR_DENIED" };
         if ("path" in input && !serverPathAllowed(input.path,userRoots)) return unavailable();
         if ("query" in input && (input.query.startsWith("server:/") || /^[A-Za-z]:[\\/]/.test(input.query))) {
           const location=input.query.startsWith("server:/") ? input.query.slice(8) : input.query[0]+"/"+input.query.slice(3).replaceAll("\\","/");
@@ -401,6 +454,8 @@ export class ServerDocumentFiles {
         const result=await this.request(socketPath, connection, operation, input);
         // Re-read revocable grants after the potentially slow Windows operation.
         const latestRoots=await serverUserRoots(this.network.config.installationId,this.network.config.paths.dataRoot,this.options.userId,owner);
+        await this.network.validateSyncRoots(roots);
+        if ("binding" in input && JSON.stringify(latestRoots) !== JSON.stringify(userRoots)) return { available: false, error: "SEARCH_CURSOR_EXPIRED_OR_DENIED" };
         if (latestRoots?.length === 0 || "path" in input && !serverPathAllowed(input.path,latestRoots)) return unavailable();
         if(Array.isArray(result.results)) result.results=result.results.filter(entry=>record(entry) && typeof entry.path==='string' && serverPathAllowed(entry.path,latestRoots,entry.kind==='directory'));
         return result;
@@ -427,7 +482,8 @@ export class ServerDocumentFiles {
         socket.destroy();
         resolve(result);
       };
-      const abort = () => finish(unavailable());
+      const abort = () => finish(operation === "filename_search" ? { available: false, error: this.options.signal?.aborted ? "SEARCH_CANCELLED" : "SEARCH_SOURCE_OFFLINE" } : unavailable());
+      const reject = () => finish(operation === "filename_search" ? { available: false, error: "SEARCH_SOURCE_INVALID_RESPONSE" } : unavailable());
       const timer = setTimeout(abort, this.options.timeoutMs ?? 220_000);
       socket.on("error", abort);
       socket.on("end", () => { if (!finished) abort(); });
@@ -447,10 +503,24 @@ export class ServerDocumentFiles {
         try {
           const value: unknown = JSON.parse(received.subarray(0, end).toString("utf8"));
           if (!record(value) || value.requestId !== requestId || value.connectionId !== connectionId || value.installationId !== this.network.config.installationId || typeof value.available !== "boolean") return abort();
+          if (operation === "filename_search" && !value.available && (!/^(FILENAME_SEARCH_UNSUPPORTED|SEARCH_(SOURCE_(BUSY|OFFLINE|INACCESSIBLE|INVALID_RESPONSE)|CANCELLED|CURSOR_EXPIRED_OR_DENIED|POLICY_CHANGED|CAPACITY))$/u.test(String(value.error)) || value.nextCursor !== undefined)) return reject();
           if (value.available) {
             if (typeof value.checkedAt !== "string" || !Number.isFinite(Date.parse(value.checkedAt)) || Math.abs(Date.now() - Date.parse(value.checkedAt)) > 5 * 60_000) return abort();
             if (operation === "browse" && value.sourceChecked !== true) return abort();
-            if (operation === "search" || operation === "browse" || operation === "inventory") {
+            if (operation === "filename_search") {
+              const args = input as FilenameSearchInput;
+              if (value.sourceChecked !== true || value.lookupMode !== "source-filename-search-v1" || !Array.isArray(value.results) || value.results.length > args.limit ||
+                  typeof value.limited !== "boolean" || !(value.nextCursor === null || typeof value.nextCursor === "string" && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u.test(value.nextCursor)) ||
+                  value.limited !== (value.nextCursor !== null) || !record(value.coverage) || value.coverage.snapshot !== false || typeof value.coverage.complete !== "boolean" || value.coverage.complete === value.limited) return reject();
+              for (const entry of value.results) {
+                if (!record(entry) || entry.scope !== "company" || typeof entry.path !== "string" || !entry.path.startsWith(`server-${connectionId}/`) ||
+                    !serverPathAllowed(entry.path, args.roots) || !["file", "directory"].includes(String(entry.kind)) ||
+                    typeof entry.name !== "string" || entry.name.length > 255 || /\p{C}/u.test(entry.name) ||
+                    !Number.isSafeInteger(entry.size) || Number(entry.size) < 0 || typeof entry.modifiedAt !== "string" || !Number.isFinite(Date.parse(entry.modifiedAt))) return reject();
+                validatePath(entry.path);
+                if (decodeURIComponent(entry.path.split("/").at(-1) ?? "").normalize("NFC") !== entry.name.normalize("NFC")) return reject();
+              }
+            } else if (operation === "search" || operation === "browse" || operation === "inventory") {
               if (!Array.isArray(value.results) || value.results.length > 50) return abort();
               for (const entry of value.results) {
                 if (!record(entry) || entry.scope !== "company" || typeof entry.path !== "string" || !entry.path.startsWith(`server-${connectionId}/`)) return abort();

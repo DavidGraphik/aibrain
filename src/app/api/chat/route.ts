@@ -145,7 +145,7 @@ function chatStreamHeaders(additional: Record<string, string> = {}) {
 }
 
 class TurnProjectionBatchWriter {
-  private pending: TurnProjectionTransportEvent[] = [];
+  private pending: Array<TurnProjectionTransportEvent | ChatStreamEvent> = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private chain = Promise.resolve();
   private failure: unknown = null;
@@ -156,7 +156,7 @@ class TurnProjectionBatchWriter {
     private readonly assistantMessageId: string,
   ) {}
 
-  enqueue(event: TurnProjectionTransportEvent) {
+  enqueue(event: TurnProjectionTransportEvent | ChatStreamEvent) {
     if (this.failure) return;
     this.pending.push(event);
     if (this.pending.length >= PROJECTION_BATCH_MAX_EVENTS) {
@@ -180,11 +180,25 @@ class TurnProjectionBatchWriter {
     if (batch.length > 0) {
       this.chain = this.chain.then(async () => {
         if (this.failure) return;
-        await this.store.applyTransportEvents(
-          this.threadId,
-          this.assistantMessageId,
-          batch,
-        );
+        // Live stdio has no durable event cursor. Preserve arrival order while
+        // checkpointing the UI; only the legacy replay transport writes ACKs.
+        let offset = 0;
+        while (offset < batch.length) {
+          const first = batch[offset];
+          if ("envelope" in first) {
+            const group: TurnProjectionTransportEvent[] = [];
+            while (offset < batch.length && "envelope" in batch[offset]) {
+              group.push(batch[offset++] as TurnProjectionTransportEvent);
+            }
+            await this.store.applyTransportEvents(this.threadId, this.assistantMessageId, group);
+          } else {
+            const group: ChatStreamEvent[] = [];
+            while (offset < batch.length && !("envelope" in batch[offset])) {
+              group.push(batch[offset++] as ChatStreamEvent);
+            }
+            await this.store.applyLocalEvents(this.threadId, this.assistantMessageId, group);
+          }
+        }
       }).catch((error: unknown) => {
         this.failure ??= error;
       });
@@ -736,19 +750,21 @@ export async function POST(request: Request) {
         sendToClient({ type: "snapshot", message: assistantMessage });
       }, CHAT_STREAM_KEEPALIVE_MS);
       keepalive.unref?.();
+      // Render order belongs to this assistant message, not a process epoch.
+      // Continue from its saved checkpoint if native history is recovered.
+      let liveTimelineOrder = [...assistantMessage.activity, ...(assistantMessage.toolResults ?? [])]
+        .reduce((maximum, item) => Math.max(maximum, item.sequence ?? 0), 0);
       const emit = async (event: ChatStreamEvent, projection?: WorkerTurnProjection) => {
         const projectedEvent = projectChatStreamEvent(event, {
-          sequence: projection?.envelope.sequence,
+          sequence: projection?.envelope.delivery === "live" ? ++liveTimelineOrder : projection?.envelope.sequence,
           terminalDurationMs: Math.max(0, Math.round(performance.now() - requestStartedAt)),
         });
         if (persistent && turnProjectionStore && projectionWriter) {
           if (projection) {
-            // Deliver the live App Server delta immediately. The durable
-            // transport journal already owns replay; compact the refresh
-            // projection in short atomic batches instead of blocking every
-            // token on a full filesystem write.
+            // Deliver immediately and checkpoint the UI in bounded batches.
+            // A live epoch ordinal is never persisted as a replay cursor.
             assistantMessage = applyChatStreamEvent(assistantMessage, projectedEvent);
-            projectionWriter.enqueue({
+            projectionWriter.enqueue(projection.envelope.delivery === "live" ? projectedEvent : {
               envelope: projection.envelope,
               projectionKey: projection.key,
               event: projectedEvent,

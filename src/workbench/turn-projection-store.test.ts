@@ -77,6 +77,37 @@ describe("turn projection store", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("checkpoints a live stream atomically without creating a transport replay cursor", async () => {
+    const store = new FileTurnProjectionStore({ installationId, userId, usersRoot });
+    const thread = "00000000-0000-4000-8000-000000000081";
+    const id = "00000000-0000-4000-8000-000000000082";
+    await store.initialize(thread, assistant(id));
+    await expect(store.applyTransportEvent(thread, id, { ...envelope(1), delivery: "live", epoch: "process-1" },
+      "delta", { type: "delta", value: "Not a durable cursor" })).rejects.toThrow();
+    await store.applyLocalEvents(thread, id, [
+      { type: "delta", value: "Native " },
+      { type: "delta", value: "result" },
+      { type: "done" },
+    ]);
+    const reopened = await new FileTurnProjectionStore({ installationId, userId, usersRoot }).read(thread, id);
+    expect(reopened).toMatchObject({
+      lastTransportSequence: 0, lastTransportEventId: null, appliedKeysAtLastSequence: [],
+      localRevision: 3, message: { content: "Native result", status: "complete" },
+    });
+  });
+
+  it("rejects a live batch with a foreign snapshot before persisting any of its deltas", async () => {
+    const store = new FileTurnProjectionStore({ installationId, userId, usersRoot });
+    const thread = "00000000-0000-4000-8000-000000000081";
+    const id = "00000000-0000-4000-8000-000000000082";
+    const original = await store.initialize(thread, assistant(id));
+    await expect(store.applyLocalEvents(thread, id, [
+      { type: "delta", value: "Do not persist" },
+      { type: "snapshot", message: assistant("00000000-0000-4000-8000-000000000083") },
+    ])).rejects.toThrow("snapshot");
+    expect(await store.read(thread, id)).toEqual(original);
+  });
+
   it("stops only a backed-up unbound start from before the verified restart", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-05T00:00:00Z"));

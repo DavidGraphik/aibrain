@@ -43,7 +43,7 @@ describe("native personal connection lifecycle", () => {
     expect(snapshot.status).toBe("connected");
     expect(snapshot.tools.map(tool => [tool.name, tool.operation])).toEqual([["search", "read"], ["write", "write"]]);
     expect(JSON.stringify(snapshot)).not.toMatch(/private|foreign/);
-    expect(request).toHaveBeenCalledExactlyOnceWith("mcpServerStatus/list", { serverName: "mail", threadId: null, detail: "toolsAndAuthOnly", limit: 100 }, "connector-native-lifecycle", 15_000);
+    expect(request).toHaveBeenCalledExactlyOnceWith("mcpServerStatus/list", { serverName: "mail", threadId: null, detail: "toolsAndAuthOnly", limit: 100 }, expect.stringMatching(/^connector-native-lifecycle:[a-f0-9-]{36}:[0-9]+$/), 15_000);
   });
 
   it.each([
@@ -69,7 +69,7 @@ describe("native personal connection lifecycle", () => {
     const { context, request } = fixture({ authStatus: "notLoggedIn", runtimeStatus: "authenticationRequired" });
     const result = await startNativeConnectionOAuth(context);
     expect(result).toMatchObject({ completion: "pending", verification: "provider-consent-required", loginId: "native-login" });
-    expect(request).toHaveBeenLastCalledWith("mcpServer/oauth/login", { name: "mail", threadId: null }, "connector-native-lifecycle", 15_000);
+    expect(request).toHaveBeenLastCalledWith("mcpServer/oauth/login", { name: "mail", threadId: null }, expect.stringMatching(/^connector-native-lifecycle:[a-f0-9-]{36}:[0-9]+$/), 15_000);
     await expect(startNativeConnectionOAuth(context)).rejects.toMatchObject({ code: "NATIVE_OAUTH_ALREADY_PENDING" });
     const completed = { name: "mail", threadId: null, loginId: "native-login", success: true };
     expect(completeNativeConnectionOAuth({ ...context, userId: "foreign" }, completed)).toBe(false);
@@ -157,7 +157,7 @@ describe("native personal connection lifecycle", () => {
     });
     const result = await setNativeConnectionEnabled(context, false);
     expect(result).toMatchObject({ effect: "local-connection-disabled", providerCredentialsRevoked: false, connection: { status: "disabled" } });
-    expect(request).toHaveBeenCalledWith("config/value/write", { keyPath: "mcp_servers.mail.enabled", value: false, mergeStrategy: "upsert" }, "connector-native-lifecycle", 15_000);
+    expect(request).toHaveBeenCalledWith("config/value/write", { keyPath: "mcp_servers.mail.enabled", value: false, mergeStrategy: "upsert" }, expect.stringMatching(/^connector-native-lifecycle:[a-f0-9-]{36}:[0-9]+$/), 15_000);
     expect(request.mock.calls.some(([method]) => /logout|revoke|plugin/.test(method))).toBe(false);
   });
 

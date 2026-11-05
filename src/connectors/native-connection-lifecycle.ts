@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { CatalogResource } from "@/catalog/contracts";
 import type { CatalogRuntimeTransport } from "@/catalog/runtime-enforcement";
 import type { McpServerOauthLoginCompletedNotification } from "../../contracts/codex/0.162.1/types/v2/McpServerOauthLoginCompletedNotification";
@@ -27,6 +28,12 @@ const logins = new Map<string, Login>();
 const starting = new Set<string>();
 const earlyCompletions = new Map<string, { loginId: string; success: boolean }>();
 const changing = new Set<string>();
+// A timed-out mutation may already have reached Codex. Keep this worker's
+// uncertainty fenced until a fresh read proves its effect; never replay it.
+const uncertainOAuth = new Set<string>();
+const uncertainChanges = new Map<string, boolean>();
+type Operation = { id: string; next: number };
+const operation = (): Operation => ({ id: randomUUID(), next: 0 });
 const LOGIN_TTL_MS = 10 * 60_000;
 const MAX_LOGINS = 128;
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -88,8 +95,8 @@ function configurableServer(context: NativeConnectionContext) {
   return server;
 }
 
-async function rpc(context: NativeConnectionContext, method: Parameters<CatalogRuntimeTransport["request"]>[0], params: unknown) {
-  try { return await context.transport.request(method, params, "connector-native-lifecycle", 15_000); }
+async function rpc(context: NativeConnectionContext, execution: Operation, method: Parameters<CatalogRuntimeTransport["request"]>[0], params: unknown) {
+  try { return await context.transport.request(method, params, `connector-native-lifecycle:${execution.id}:${execution.next++}`, 15_000); }
   catch (error) {
     if (error instanceof NativeConnectionError) throw error;
     // Provider errors can contain URLs or credentials. Preserve only our known
@@ -117,8 +124,8 @@ function callbackUrl(value: unknown) {
  * listener cannot receive its redirect. External callback ingress and its
  * private forwarding to the exact employee listener must be provisioned by the
  * host. A URL setting is readiness information, not proof of a working proxy. */
-async function configuredCallback(context: NativeConnectionContext) {
-  const response = await rpc(context, "config/read", { includeLayers: false });
+async function configuredCallback(context: NativeConnectionContext, execution: Operation) {
+  const response = await rpc(context, execution, "config/read", { includeLayers: false });
   const config = record(response) && record(response.config) ? response.config : null;
   const servers = config?.mcp_servers;
   const server = record(servers) ? servers[mcpServer(context)] : null;
@@ -146,7 +153,7 @@ function verifyNativeCallback(authorizationUrl: URL, configured: URL) {
   }
 }
 
-export async function nativeConnectionSnapshot(context: NativeConnectionContext, now = Date.now()): Promise<NativeConnectionSnapshot> {
+async function snapshotForOperation(context: NativeConnectionContext, now: number, execution: Operation): Promise<NativeConnectionSnapshot> {
   const resource = context.resource;
   if (resource.kind !== "app" && resource.kind !== "mcp") throw new NativeConnectionError("NATIVE_RESOURCE_REQUIRED", 400);
   const base = {
@@ -155,7 +162,7 @@ export async function nativeConnectionSnapshot(context: NativeConnectionContext,
     tools: [],
   };
   if (resource.kind === "app") {
-    const response = await rpc(context, "app/installed", { threadId: null, forceRefresh: true });
+    const response = await rpc(context, execution, "app/installed", { threadId: null, forceRefresh: true });
     if (!record(response) || !Array.isArray(response.apps)) throw new NativeConnectionError("NATIVE_CONNECTION_INVENTORY_INVALID", 503);
     const matches = response.apps.filter(app => record(app) && app.id === resource.appId);
     if (!matches.length) return { ...base, status: "not_configured", code: "NATIVE_APP_NOT_INSTALLED" };
@@ -167,11 +174,11 @@ export async function nativeConnectionSnapshot(context: NativeConnectionContext,
       code: !app.enabled ? "NATIVE_APP_DISABLED" : app.callable ? null : "NATIVE_APP_NOT_CALLABLE" };
   }
   const server = mcpServer(context);
-  const response = await rpc(context, "mcpServerStatus/list", { threadId: null, serverName: server, detail: "toolsAndAuthOnly", limit: 100 });
+  const response = await rpc(context, execution, "mcpServerStatus/list", { threadId: null, serverName: server, detail: "toolsAndAuthOnly", limit: 100 });
   if (!record(response) || !Array.isArray(response.data) || response.nextCursor) throw new NativeConnectionError("NATIVE_CONNECTION_INVENTORY_INVALID", 503);
   const matches = response.data.filter(item => record(item) && item.name === server);
   if (!matches.length) {
-    const effective = await rpc(context, "config/read", { includeLayers: false });
+    const effective = await rpc(context, execution, "config/read", { includeLayers: false });
     const servers = record(effective) && record(effective.config) ? effective.config.mcp_servers : null;
     const configured = record(servers) ? servers[server] : null;
     return record(configured) && configured.enabled === false
@@ -204,19 +211,29 @@ export async function nativeConnectionSnapshot(context: NativeConnectionContext,
     code: status === "connected" ? null : status === "disabled" ? "NATIVE_MCP_DISABLED" : status === "reauth_required" ? "NATIVE_MCP_LOGIN_REQUIRED" : "NATIVE_MCP_NOT_CALLABLE" };
 }
 
+export async function nativeConnectionSnapshot(context: NativeConnectionContext, now = Date.now()) {
+  return snapshotForOperation(context, now, operation());
+}
+
 export async function startNativeConnectionOAuth(context: NativeConnectionContext, now = Date.now()) {
+  const execution = operation();
   const server = mcpServer(context), key = keyFor(context, server);
   expireLogins(now);
   if (starting.has(key) || logins.get(key)?.state === "pending") throw new NativeConnectionError("NATIVE_OAUTH_ALREADY_PENDING");
   if (logins.size >= MAX_LOGINS) throw new NativeConnectionError("NATIVE_OAUTH_CAPACITY_REACHED", 503);
   starting.add(key);
   try {
-    const before = await nativeConnectionSnapshot(context, now);
+    const before = await snapshotForOperation(context, now, execution);
+    if (uncertainOAuth.has(key)) {
+      if (before.status !== "connected") throw new NativeConnectionError("NATIVE_OAUTH_OUTCOME_UNCERTAIN");
+      uncertainOAuth.delete(key);
+    }
     if (before.status === "not_configured") throw new NativeConnectionError("NATIVE_MCP_NOT_CONFIGURED");
     if (!before.capabilities.oauthLogin) throw new NativeConnectionError("NATIVE_MCP_OAUTH_UNSUPPORTED");
     if (before.status === "disabled") throw new NativeConnectionError("NATIVE_MCP_DISABLED");
-    const callback = await configuredCallback(context);
-    const response = await rpc(context, "mcpServer/oauth/login", { name: server, threadId: null });
+    const callback = await configuredCallback(context, execution);
+    uncertainOAuth.add(key);
+    const response = await rpc(context, execution, "mcpServer/oauth/login", { name: server, threadId: null });
     if (!record(response) || typeof response.authorizationUrl !== "string") throw new NativeConnectionError("NATIVE_OAUTH_RESPONSE_INVALID", 503);
     let url: URL;
     try { url = new URL(response.authorizationUrl); } catch { throw new NativeConnectionError("NATIVE_OAUTH_RESPONSE_INVALID", 503); }
@@ -228,7 +245,7 @@ export async function startNativeConnectionOAuth(context: NativeConnectionContex
     const loginId = typeof response.loginId === "string" && /^[A-Za-z0-9._:-]{1,256}$/.test(response.loginId) ? response.loginId : null;
     const early = earlyCompletions.get(key);
     const state = loginId && early?.loginId === loginId ? early.success ? "completed" as const : "failed" as const : "pending" as const;
-    if (loginId) logins.set(key, { server, loginId, startedAt: now, state });
+    if (loginId) { logins.set(key, { server, loginId, startedAt: now, state }); uncertainOAuth.delete(key); }
     return { resourceId: context.resource.id, authorizationUrl: url.href, loginId,
       completion: loginId ? state : "uncorrelated" as const,
       verification: "provider-consent-required" as const,
@@ -240,21 +257,35 @@ export async function startNativeConnectionOAuth(context: NativeConnectionContex
  * Codex 0.162.1 exposes no MCP OAuth logout/revoke RPC. Stored provider consent
  * is therefore explicitly retained; never report remote credentials revoked. */
 export async function setNativeConnectionEnabled(context: NativeConnectionContext, enabled: boolean) {
+  const execution = operation();
   const server = configurableServer(context), key = keyFor(context, server);
   if (changing.has(key) || starting.has(key)) throw new NativeConnectionError("NATIVE_CONNECTION_CHANGE_PENDING");
   changing.add(key);
   try {
-    const before = await nativeConnectionSnapshot(context);
+    const before = await snapshotForOperation(context, Date.now(), execution);
+    const pending = uncertainChanges.get(key);
+    if (pending !== undefined) {
+      const effective = await rpc(context, execution, "config/read", { includeLayers: false });
+      const servers = record(effective) && record(effective.config) ? effective.config.mcp_servers : null;
+      const entry = record(servers) ? servers[server] : null;
+      if (!record(entry) || entry.enabled !== pending) throw new NativeConnectionError("NATIVE_CONNECTION_CHANGE_PENDING");
+      if (!pending && before.status !== "disabled") throw new NativeConnectionError("NATIVE_CONNECTION_DISABLE_PENDING");
+      uncertainChanges.delete(key);
+      if (pending === enabled) return { connection: before, enabled, providerCredentialsRevoked: false as const,
+        effect: enabled ? "local-connection-enabled" as const : "local-connection-disabled" as const };
+    }
     if (before.status === "not_configured") throw new NativeConnectionError("NATIVE_MCP_NOT_CONFIGURED");
-    await rpc(context, "config/value/write", { keyPath: `mcp_servers.${server}.enabled`, value: enabled, mergeStrategy: "upsert" });
-    await rpc(context, "config/mcpServer/reload", undefined);
-    const effective = await rpc(context, "config/read", { includeLayers: false });
+    uncertainChanges.set(key, enabled);
+    await rpc(context, execution, "config/value/write", { keyPath: `mcp_servers.${server}.enabled`, value: enabled, mergeStrategy: "upsert" });
+    await rpc(context, execution, "config/mcpServer/reload", undefined);
+    const effective = await rpc(context, execution, "config/read", { includeLayers: false });
     const servers = record(effective) && record(effective.config) ? effective.config.mcp_servers : null;
     const entry = record(servers) ? servers[server] : null;
     if (!record(entry) || entry.enabled !== enabled) throw new NativeConnectionError("NATIVE_CONNECTION_CONFIG_NOT_EFFECTIVE");
     if (!enabled) logins.delete(key);
-    const connection = await nativeConnectionSnapshot(context);
+    const connection = await snapshotForOperation(context, Date.now(), execution);
     if (!enabled && connection.status !== "disabled") throw new NativeConnectionError("NATIVE_CONNECTION_DISABLE_PENDING");
+    uncertainChanges.delete(key);
     return { connection, enabled, providerCredentialsRevoked: false as const,
       effect: enabled ? "local-connection-enabled" as const : "local-connection-disabled" as const };
   } finally { changing.delete(key); }

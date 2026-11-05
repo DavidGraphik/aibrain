@@ -28,6 +28,8 @@ export type JsonRpcFailure = {
  * identifies the submission across reconnects; it is deliberately separate
  * from a JSON-RPC response id because replies to server-initiated requests
  * reuse the server's id.
+ * A live transport uses only the native RPC id for in-flight correlation;
+ * clientRequestId is not an exactly-once receipt or a replay promise there.
  */
 export type AppServerRequest =
   | {
@@ -56,7 +58,13 @@ export type AppServerEvent = {
   sequence: number;
   occurredAt: string;
   message: AppServerRpcEvent;
+  /** Live sequence numbers are local ordinals, never restart/replay cursors. */
+  delivery?: "live";
+  epoch?: string;
+  nativeIds?: { threadId?: string; turnId?: string; itemId?: string; requestId?: RequestId };
 };
+
+export type AppServerTransportCapabilities = { delivery: "durable-replay" } | { delivery: "live"; epoch: string };
 
 export type ReplayCursor = {
   eventId: string;
@@ -89,6 +97,8 @@ export type TransportHealth = {
 };
 
 export interface AppServerTransport {
+  /** Omitted means the existing durable replay contract. */
+  readonly capabilities?: AppServerTransportCapabilities;
   connect(): Promise<void>;
   send(message: AppServerRequest): Promise<void>;
   /** Private durable lookup only: never dispatch or replay an uncertain request. */

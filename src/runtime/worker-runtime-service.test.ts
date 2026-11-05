@@ -21,6 +21,7 @@ import {
   registerWorkerTurnCancellation,
   requestPendingWorkerTurnCancellation,
   WorkerAppServerClient,
+  configuredWorkerTransport,
   workerAppServerForUser,
   workerExistingMetadataRequest,
   stopWorkerRuntimeForUser,
@@ -28,6 +29,13 @@ import {
 import type { WorkerRuntimeHandle, WorkerRoots } from "@/runtime/workers/types";
 import { WeeklyTokenBudgetStore } from "@/usage/weekly-token-budget";
 import { RuntimeProjectionAdmissionDeferred } from "@/runtime/transport/projection-readiness";
+
+it("selects direct stdio by default and requires an explicit valid compatibility mode", () => {
+  expect(configuredWorkerTransport({})).toBe("stdio");
+  expect(configuredWorkerTransport({ AIBRAIN_CODEX_TRANSPORT: "gateway" })).toBe("gateway");
+  expect(configuredWorkerTransport({ AIBRAIN_CODEX_TRANSPORT: "stdio" })).toBe("stdio");
+  expect(() => configuredWorkerTransport({ AIBRAIN_CODEX_TRANSPORT: "websocket" })).toThrow();
+});
 
 class AsyncEvents implements AsyncIterable<AppServerEvent> {
   private values: AppServerEvent[] = [];

@@ -369,7 +369,7 @@ export class FileTurnProjectionStore {
     events: readonly TurnProjectionTransportEvent[],
   ) {
     if (events.length < 1 || events.length > 256 || events.some(({ envelope, projectionKey, event }) =>
-      !envelope || !Number.isSafeInteger(envelope.sequence) || envelope.sequence < 1 ||
+      !envelope || envelope.delivery === "live" || !Number.isSafeInteger(envelope.sequence) || envelope.sequence < 1 ||
       typeof envelope.eventId !== "string" || !EVENT_ID_PATTERN.test(envelope.eventId) ||
       typeof projectionKey !== "string" || !PROJECTION_KEY_PATTERN.test(projectionKey) || !isChatStreamEvent(event))) {
       throw new WorkbenchPersistenceError("El lot d’esdeveniments de projecció no és vàlid.");
@@ -429,17 +429,34 @@ export class FileTurnProjectionStore {
     assistantMessageId: string,
     event: ChatStreamEvent,
   ) {
-    if (!isChatStreamEvent(event)) throw new WorkbenchPersistenceError("L’esdeveniment local no és vàlid.");
+    return this.applyLocalEvents(threadId, assistantMessageId, [event]);
+  }
+
+  /** UI checkpoints for a live Codex stream. These events have no durable
+   * transport cursor: a restart recovers the native thread, never replays stdin.
+   * Keep this projection atomic without writing once for every token. */
+  async applyLocalEvents(
+    threadId: string,
+    assistantMessageId: string,
+    events: readonly ChatStreamEvent[],
+  ) {
+    if (events.length < 1 || events.length > 256 || events.some(event => !isChatStreamEvent(event))) {
+      throw new WorkbenchPersistenceError("L’esdeveniment local no és vàlid.");
+    }
     const identity = await this.prepare(threadId, assistantMessageId);
     return this.locks.withLock(identity.lockKey, async () => {
       const projection = await this.readUnlocked(identity.filePath);
       if (!projection) throw new WorkbenchPersistenceError("La projecció del torn no existeix.");
       this.assertBinding(projection, threadId, assistantMessageId);
-      this.assertSnapshotBinding(event, projection.message);
+      let message = projection.message;
+      for (const event of events) {
+        this.assertSnapshotBinding(event, projection.message);
+        message = applyChatStreamEvent(message, event);
+      }
       const next = turnProjectionSchema.parse({
         ...projection,
-        localRevision: projection.localRevision + 1,
-        message: applyChatStreamEvent(projection.message, event),
+        localRevision: projection.localRevision + events.length,
+        message,
         updatedAt: new Date().toISOString(),
       });
       await this.write(identity.filePath, next);

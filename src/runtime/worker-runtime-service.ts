@@ -29,6 +29,7 @@ import { AppServerRpcRouter, AppServerRpcResponseError } from "@/runtime/transpo
 import { validateAppServerRequest } from "@/runtime/transport/wire-protocol";
 import type { AppServerEvent, JsonValue } from "@/runtime/transport";
 import { LocalGatewayWorkerRuntimeFactory, workerEgressEnvironment } from "@/runtime/workers/local-gateway-runtime";
+import { DirectStdioWorkerRuntimeFactory } from "@/runtime/workers/direct-stdio-runtime";
 import { sharedAuthProvider } from "@/runtime/workers/shared-auth-broker";
 import { userAccessAuthProvider } from "@/runtime/personal-auth-provider";
 import { privateCodexToolPermissionsRequired } from "@/runtime/quota-tool-permissions";
@@ -44,6 +45,14 @@ const CATALOG_STALE_TTL_MS = 30 * 60_000;
 const DISCONNECTED_ACCOUNT_RECHECK_COOLDOWN_MS = 5_000;
 const PENDING_TURN_CANCELLATION_TTL_MS = 5 * 60_000;
 
+/** This independent backend uses the official local protocol. The gateway is
+ * an explicit compatibility choice, never a reconnect fallback for a turn. */
+export function configuredWorkerTransport(environment: Readonly<Record<string, string | undefined>> = process.env) {
+  const value = environment.AIBRAIN_CODEX_TRANSPORT?.trim() || "stdio";
+  if (value !== "stdio" && value !== "gateway") throw new Error("Worker transport configuration is invalid.");
+  return value;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -57,6 +66,7 @@ function installationFingerprint(config: Readonly<InstallationConfig>) {
     sourceReadRoot: config.paths.sourceReadRoot,
     publishWriteRoot: config.paths.publishWriteRoot,
     usageLimits: config.usageLimits,
+    transport: configuredWorkerTransport(),
   })).digest("hex");
 }
 
@@ -468,7 +478,7 @@ async function serviceState(): Promise<RuntimeServiceState> {
       config,
       registry: new WorkerRuntimeRegistry({
         config,
-        factory: new LocalGatewayWorkerRuntimeFactory({
+        factory: new (configuredWorkerTransport() === "stdio" ? DirectStdioWorkerRuntimeFactory : LocalGatewayWorkerRuntimeFactory)({
           quotaToolPrivacy: privateCodexToolPermissionsRequired(config),
           sharedAuth: sharedAuthProvider(config, process.env.AIBRAIN_CODEX_AUTH_SCOPE === "shared-qa" ? workerEgressEnvironment() : {}),
           authForContext: userAccessAuthProvider,

@@ -9,6 +9,7 @@ const mocked = vi.hoisted(() => {
     releaseMaintenance: vi.fn(),
     runWorkerCodexTurn: vi.fn(),
     persistProjection: vi.fn(async (): Promise<void> => undefined),
+    persistLiveProjection: vi.fn(async (_events: unknown): Promise<void> => undefined),
     projectionRead: vi.fn(),
     WorkerTurnRecoveryPendingError,
   };
@@ -82,6 +83,9 @@ vi.mock("@/workbench/turn-projection-store", () => ({
     private message: unknown;
     async initialize(_thread: string, message: unknown) { this.message = message; return { message }; }
     async applyTransportEvents() { await mocked.persistProjection(); return { message: this.message }; }
+    async applyLocalEvents(_thread: string, _message: string, events: unknown) {
+      await mocked.persistLiveProjection(events); return { message: this.message };
+    }
     async read() { return mocked.projectionRead(); }
   },
 }));
@@ -334,6 +338,35 @@ describe("chat turn transport lifecycle", () => {
     expect(turnArguments[16]).toMatchObject({ tenant: { id: "qa-company" } });
     expect(turnArguments[17]).toBe(turnArguments[16]);
     expect(turnArguments[18]).toBe(false);
+  });
+
+  it("checkpoints live stdio output without treating its epoch ordinals as durable cursors", async () => {
+    vi.mocked(isBrowserPreviewWorkbench).mockReturnValueOnce(false);
+    vi.mocked(prepareThreadTurn).mockResolvedValueOnce({
+      context: { projectId: "00000000-0000-4000-8000-000000000011", projectName: "Test",
+        workspaceKey: "workspace", projectInstructions: "", projectMemory: "", projectSources: [],
+        visibleProjects: [], runtimeThreadToken: null, branchHistory: null },
+      begin: async (_user: unknown, assistantMessage: unknown) => ({ outcome: "created", assistantMessage }),
+    } as never);
+    mocked.runWorkerCodexTurn.mockImplementation(async (...args: unknown[]) => {
+      const emit = args[10] as (event: unknown, projection: unknown) => Promise<void>;
+      const envelope = { delivery: "live", epoch: "native-process-1", eventId: "live-1", sequence: 99,
+        occurredAt: new Date().toISOString(), message: { kind: "rpc-notification", rpc: {} } };
+      await emit({ type: "activity", item: { id: "native-item", kind: "reasoning", label: "Working", status: "complete" } },
+        { envelope, key: "item:native-item" });
+      await emit({ type: "delta", value: "Native result" }, { envelope: { ...envelope, sequence: 2 }, key: "delta" });
+      await emit({ type: "done" }, { envelope: { ...envelope, sequence: 3 }, key: "done" });
+    });
+    const response = await POST(chatRequest(new AbortController().signal));
+    const events = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
+    expect(events).toContainEqual(expect.objectContaining({ type: "activity", item: expect.objectContaining({ id: "native-item" }) }));
+    expect(events.find(event => event.type === "activity").item.sequence).toBe(1);
+    expect(mocked.persistProjection).not.toHaveBeenCalled();
+    expect(mocked.persistLiveProjection).toHaveBeenCalledOnce();
+    expect(mocked.persistLiveProjection.mock.calls[0][0]).toEqual(expect.arrayContaining([
+      { type: "delta", value: "Native result" }, expect.objectContaining({ type: "done" }),
+    ]));
+    expect(mocked.runWorkerCodexTurn).toHaveBeenCalledOnce();
   });
 
   it("re-bootstraps stale toolsets while preserving current runtime threads", () => {
