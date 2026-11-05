@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -186,7 +186,7 @@ afterEach(async () => {
 
 describe("multi-user private worker acceptance", () => {
   it("keeps four turns isolated through approval, stop, crash, replay and restart", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "aibrain-multi-user-worker-"));
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "aibrain-multi-user-worker-")));
     roots.push(root);
     const [context1, context2, server1, server2] = await Promise.all([
       workerContext(root, USER_1),

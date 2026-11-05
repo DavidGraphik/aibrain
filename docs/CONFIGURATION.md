@@ -13,3 +13,11 @@ The provisioning tools require caller-supplied identities. Keep the private mapp
 ## Business service endpoints
 
 `AIBRAIN_SIBEMA_ORIGIN` supplies the protected ERP service origin. It must be HTTPS without credentials, path, query or fragment; the public default is a non-operational example domain. `AIBRAIN_ATTIO_WORKSPACE` supplies the installation's external CRM workspace selector where required. Keep actual values in private deployment configuration and verify them against the connected account.
+
+## Approved private artwork
+
+Default brand assets and profile examples are synthetic. A deployment can supply a reviewed design-asset registry with `AIBRAIN_DESIGN_BRAND_ASSETS_FILE` and its protected asset directory with `AIBRAIN_BRAND_ASSET_ROOT`. Each registry entry binds an installation/company to an exact asset hash. Invalid or absent artwork does not authorize a foreign asset or block unrelated work. Original artwork and identity data belong in private deployment storage.
+
+## Host-loss decisions
+
+Offline host preflight requires a fresh `AIBRAIN_HOST_LOSS_ACCEPTANCE_ID` matching the reviewed host configuration, plus the exact HTTPS `AIBRAIN_EXPECTED_PUBLIC_ORIGIN`. Old historical approvals are not inherited by this preparation. Installation scope, replica/alert policy and token checks remain enforced. Supplying an example value is not evidence that a real host has been accepted.

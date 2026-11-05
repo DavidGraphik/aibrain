@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -78,7 +78,7 @@ describe("worker gateway crash and durable turn recovery", () => {
   });
 
   it("survives refresh, reconnect and worker restart without duplicate or cross-thread projections", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "aibrain-worker-crash-recovery-"));
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "aibrain-worker-crash-recovery-")));
     roots.push(root);
     const usersRoot = path.join(root, "users");
     const userRoot = path.join(usersRoot, USER_ID);

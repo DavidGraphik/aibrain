@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,7 +12,7 @@ afterEach(async () => {
 
 describe("worker replay soak harness", () => {
   it("measures concurrent workers, streaming, durable replay, restarts and resource cleanup", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "aibrain-soak-test-"));
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "aibrain-soak-test-")));
     roots.push(root);
     const report = await runWorkerReplaySoak({
       workRoot: root,
@@ -55,7 +55,7 @@ describe("worker replay soak harness", () => {
   }, 60_000);
 
   it("rejects unbounded or unsafe configuration before starting workers", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "aibrain-soak-invalid-"));
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "aibrain-soak-invalid-")));
     roots.push(root);
     await expect(runWorkerReplaySoak({
       workRoot: root,
@@ -70,7 +70,7 @@ describe("worker replay soak harness", () => {
   });
 
   it("fails the report when a measured resource exceeds a configured gate", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "aibrain-soak-gate-"));
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "aibrain-soak-gate-")));
     roots.push(root);
     const report = await runWorkerReplaySoak({
       workRoot: root,

@@ -88,14 +88,14 @@ async function fixture(installationId = "company-alpha") {
 
 async function run(envFile: string, installationId = "company-alpha") {
   return execFileAsync(process.execPath, [script, "--env-file", envFile, "--installation", installationId], {
-    env: { ...process.env, AIBRAIN_PREFLIGHT_ALLOW_OFFLINE: "1" },
+    env: { ...process.env, AIBRAIN_PREFLIGHT_ALLOW_OFFLINE: "1", AIBRAIN_HOST_LOSS_ACCEPTANCE_ID: "synthetic-test-explicit-host-loss", AIBRAIN_EXPECTED_PUBLIC_ORIGIN: "https://g03.example-platform.invalid" },
   });
 }
 
 describe("Hetzner host preflight", () => {
   async function hostLocalFixture(installationId = "g03-production") {
     const input = await fixture(installationId);
-    const decision = "AIBRAIN_G03_RECOVERY_DECISION=host-loss-risk-accepted-20261005\n";
+    const decision = "AIBRAIN_G03_RECOVERY_DECISION=synthetic-test-explicit-host-loss\n";
     await writeFile(input.envFile, await readFile(input.envFile, "utf8") + decision);
     await writeFile(path.join(input.configRoot, "installation.json"), JSON.stringify({
       installationId, publicUrl: "https://g03.example-platform.invalid",
@@ -118,8 +118,18 @@ describe("Hetzner host preflight", () => {
     await expect(run(other.envFile)).rejects.toThrow();
     const unacknowledged = await hostLocalFixture();
     await writeFile(unacknowledged.envFile, (await readFile(unacknowledged.envFile, "utf8"))
-      .replace("AIBRAIN_G03_RECOVERY_DECISION=host-loss-risk-accepted-20261005\n", ""));
+      .replace("AIBRAIN_G03_RECOVERY_DECISION=synthetic-test-explicit-host-loss\n", ""));
     await expect(run(unacknowledged.envFile, "g03-production")).rejects.toThrow();
+  });
+
+  it("requires a new operator acceptance and an exact reviewed origin for host-only recovery", async () => {
+    const input = await hostLocalFixture();
+    const invoke = (approval: string, origin: string) => execFileAsync(process.execPath, [script, "--env-file", input.envFile, "--installation", "g03-production"], {
+      env: { ...process.env, AIBRAIN_PREFLIGHT_ALLOW_OFFLINE: "1", AIBRAIN_HOST_LOSS_ACCEPTANCE_ID: approval, AIBRAIN_EXPECTED_PUBLIC_ORIGIN: origin },
+    });
+    await expect(invoke("", "https://g03.example-platform.invalid")).rejects.toThrow();
+    await expect(invoke("synthetic-test-explicit-host-loss", "https://foreign.example.invalid")).rejects.toThrow();
+    await expect(invoke("synthetic-test-explicit-host-loss", "http://g03.example-platform.invalid")).rejects.toThrow();
   });
 
   it("rejects mismatched G03 recovery policies and pretend replica destinations", async () => {

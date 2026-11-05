@@ -26,5 +26,17 @@
   "src/runtime/trinalum-native-rejection.test.ts",
   "src/runtime/trinalum-dynamic-tools.test.ts",
   "src/g03/runtime-preparation.test.ts",
-  "src/g03/outbound-contract.test.ts"
+  "src/g03/outbound-contract.test.ts",
+  "src/catalog/baseline.test.ts",
+  "src/auth/profile-avatar.test.ts",
+  "src/runtime/design-brand-assets.test.ts",
+  "src/runtime/internal-agent-context.test.ts",
+  "src/runtime/worker-codex-turn.test.ts",
+  "src/connectors/company-mail-server-service.test.ts",
+  "src/connectors/company-mail.test.ts",
+  "tests/component/host-jobs-panel.test.tsx",
+  "tests/integration/host-preflight.integration.test.ts",
+  "src/operations/soak.test.ts",
+  "tests/integration/multi-user-worker-acceptance.integration.test.ts",
+  "tests/integration/worker-crash-recovery.integration.test.ts"
 ]

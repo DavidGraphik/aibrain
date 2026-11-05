@@ -17,12 +17,12 @@ import JSZip from "jszip";
 const USER = "00000000-0000-4000-8000-000000000001";
 const OTHER = "00000000-0000-4000-8000-000000000002";
 const PROJECT = "10000000-0000-4000-8000-000000000001";
-const credential = { email: "billing@example.invalid", password: "private-test-password", folder: "INBOX", since: "2026-10-01" };
+const credential = { email: "billing@example-company.invalid", password: "private-test-password", folder: "INBOX", since: "2026-10-01" };
 const roots: string[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function setup() {
   const root = await mkdtemp(path.join(os.tmpdir(), "aibrain-company-mail-")); roots.push(root);
-  const config = { installationId: "company-qa", paths: { dataRoot: root, usersRoot: path.join(root, "users") }, connectors: { companyMail: { enabled: true, host: "hc65.infoselfcloud.com", emailDomain: "example-company.invalid" } } } as InstallationConfig;
+  const config = { installationId: "company-qa", paths: { dataRoot: root, usersRoot: path.join(root, "users") }, connectors: { companyMail: { enabled: true, host: "imap.example-company.invalid", emailDomain: "example-company.invalid" } } } as InstallationConfig;
   const store = new FileCompanyMailStore(config, randomBytes(32));
   const ledger = await invoiceLedgerForMailbox(await store.root(USER), { installationId: config.installationId, userId: USER, projectId: PROJECT, mailboxKey: mailboxIdentity(config.connectors!.companyMail!.host, credential) });
   return { config, store, ledger, root };
@@ -44,9 +44,9 @@ function client(messages: Array<{ uid: number; parts: Array<{ name: string; data
 describe("company mailbox boundary", () => {
   it("pins exact admin-owned host, TLS validation and server-only proxy; never accepts missing proxy", async () => {
     const { config } = await setup();
-    const env = { AIBRAIN_EGRESS_MAIL_HOSTS: "hc65.infoselfcloud.com", AIBRAIN_EGRESS_PROXY_URL: "http://egress-gateway:8080", AIBRAIN_EGRESS_SERVER_TOKEN: "x".repeat(48) };
+    const env = { AIBRAIN_EGRESS_MAIL_HOSTS: "imap.example-company.invalid", AIBRAIN_EGRESS_PROXY_URL: "http://egress-gateway:8080", AIBRAIN_EGRESS_SERVER_TOKEN: "x".repeat(48) };
     const options = companyMailClientOptions(config, credential, env);
-    expect(options).toMatchObject({ host: "hc65.infoselfcloud.com", port: 993, secure: true, logger: false, tls: { rejectUnauthorized: true }, auth: { user: credential.email, pass: credential.password } });
+    expect(options).toMatchObject({ host: "imap.example-company.invalid", port: 993, secure: true, logger: false, tls: { rejectUnauthorized: true }, auth: { user: credential.email, pass: credential.password } });
     expect(new URL(options.proxy!).username).toBe("aibrain");
     expect(() => companyMailClientOptions(config, credential, {})).toThrow();
     expect(() => companyMailClientOptions(config, credential, { ...env, AIBRAIN_EGRESS_PROXY_URL: "http://attacker.example:8080" })).toThrow();

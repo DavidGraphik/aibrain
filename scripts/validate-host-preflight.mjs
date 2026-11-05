@@ -244,16 +244,21 @@ if (required(runtimePolicy, "NEXT_PUBLIC_SUPABASE_URL") !== supabaseOrigin.origi
   fail("Supabase auth URL and server egress origin must match exactly");
 }
 const alertPolicy = parseEnv(readFileSync(alertsEnv, "utf8"));
-// David explicitly selected host-only recovery for G03 on 2026-10-05.
-// This is not an off-host replica and must never silently apply to a tenant.
+// Host-only recovery requires a newly reviewed acceptance supplied by the operator.
+// No historical acceptance is inherited by this public source; tenant and origin stay bound.
 const recoveryDecision = env.get("AIBRAIN_G03_RECOVERY_DECISION");
-const hostLocal = recoveryDecision === "host-loss-risk-accepted-20261005";
+const expectedDecision = process.env.AIBRAIN_HOST_LOSS_ACCEPTANCE_ID;
+const expectedPublicOrigin = process.env.AIBRAIN_EXPECTED_PUBLIC_ORIGIN || "https://brain.example.com";
+const hostLocal = typeof expectedDecision === "string" && /^[a-z0-9][a-z0-9-]{7,127}$/u.test(expectedDecision) && recoveryDecision === expectedDecision;
 if (recoveryDecision !== undefined && (!hostLocal || installationId !== "g03-production")) {
   fail("host-only recovery is authorized exclusively for G03 with its explicit decision");
 }
 if (hostLocal) {
+  let reviewedOrigin;
+  try { reviewedOrigin = new URL(expectedPublicOrigin); } catch { fail("Reviewed host-local origin is invalid"); }
+  if (reviewedOrigin.protocol !== "https:" || reviewedOrigin.origin !== expectedPublicOrigin || reviewedOrigin.username || reviewedOrigin.password) fail("Reviewed host-local origin must be an exact credential-free HTTPS origin");
   const config = JSON.parse(readFileSync(configFile, "utf8"));
-  if (config.installationId !== "g03-production" || config.publicUrl !== "https://g03.graphikai.com"
+  if (config.installationId !== "g03-production" || config.publicUrl !== expectedPublicOrigin
     || alertPolicy.get("AIBRAIN_G03_RECOVERY_DECISION") !== recoveryDecision
     || alertPolicy.get("AIBRAIN_ALERT_SINK") !== "file") {
     fail("G03 host-local recovery and local alert policy disagree");

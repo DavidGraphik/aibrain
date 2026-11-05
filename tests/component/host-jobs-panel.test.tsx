@@ -11,7 +11,7 @@ describe("host scope review UI", () => {
     expect(fetcher).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Revisar autorización" }));
     expect(screen.getByRole("heading", { name: "Confirmar: Prueba manual" })).toBeVisible();
-    expect(screen.getByText("Cuenta: David · operator@example.invalid · Trinalum.")).toBeVisible();
+    expect(screen.getByText("Cuenta vinculada a la instalación.")).toBeVisible();
     expect(fetcher).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" })); expect(fetcher).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Revisar autorización" }));

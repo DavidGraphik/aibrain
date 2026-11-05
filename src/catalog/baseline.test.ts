@@ -26,7 +26,7 @@ describe("installation catalog baseline", () => {
       publishWriteRoot: path.join(root, "publish-rw"),
       backupsRoot: path.join(root, "data/backups"),
     };
-    fixture.connectors = { ...(fixture.connectors as object), companyMail: { enabled: true, host: "hc65.infoselfcloud.com", emailDomain: "example-company.invalid" } };
+    fixture.connectors = { ...(fixture.connectors as object), gmail: { enabled: true }, outlook: { enabled: true }, companyMail: { enabled: true, host: "mail.example.invalid", emailDomain: "example-company.invalid" } };
     const installation = parseInstallationConfig(fixture);
     const state = await ensureInstallationCatalog(
       new FileCatalogStore(installation.installationId, installation.paths.dataRoot),

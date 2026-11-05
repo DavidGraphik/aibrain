@@ -17,12 +17,12 @@ import { FileCompanyMailStore, companyMailEncryptionKey } from "./company-mail-s
 import { CompanyMailError } from "./company-mail-contracts";
 const userId = "00000000-0000-4000-8000-000000000001";
 const session = { provider: "local", tenant: { id: "company-qa" }, user: { id: userId } } as AuthSession;
-const credential = { email: "billing@example.invalid", password: "test-private-password", folder: "INBOX", since: "2026-10-01" };
+const credential = { email: "billing@example-company.invalid", password: "test-private-password", folder: "INBOX", since: "2026-10-01" };
 const roots: string[] = [];
 afterEach(async () => { vi.resetAllMocks(); vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function setup() {
   const root = await mkdtemp(path.join(os.tmpdir(), "mail-binding-")); roots.push(root);
-  const config = { installationId: "company-qa", paths: { dataRoot: root }, connectors: { companyMail: { enabled: true, host: "hc65.infoselfcloud.com", emailDomain: "example-company.invalid" } } } as InstallationConfig;
+  const config = { installationId: "company-qa", paths: { dataRoot: root }, connectors: { companyMail: { enabled: true, host: "imap.example-company.invalid", emailDomain: "example-company.invalid" } } } as InstallationConfig;
   vi.mocked(loadInstallationConfig).mockResolvedValue(config);
   vi.mocked(catalogRuntimeEnforcer).mockResolvedValue({ allowsConnector: () => true } as unknown as Awaited<ReturnType<typeof catalogRuntimeEnforcer>>);
   vi.stubEnv("AIBRAIN_COMPANY_MAIL_ENCRYPTION_KEY", randomBytes(32).toString("base64"));
