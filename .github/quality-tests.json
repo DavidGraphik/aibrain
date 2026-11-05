@@ -44,5 +44,7 @@
   "src/runtime/workers/app-server-output-json.test.ts",
   "src/runtime/workers/local-gateway-runtime.test.ts",
   "tests/component/workbench-content.test.tsx",
-  "tests/unit/mail-folder-ordering.test.ts"
+  "tests/unit/mail-folder-ordering.test.ts",
+  "tests/component/use-task-center.test.tsx",
+  "src/runtime/worker-turn-tools.test.ts"
 ]

@@ -113,45 +113,9 @@ import {
   type ThreadActivity,
   type ThreadReadMarker,
 } from "@/workbench/thread-activity";
-import {
-  DEFAULT_TASK_NOTIFICATION_PREFERENCES,
-  deriveTaskCenterItems,
-  isTaskCenterPayload,
-  type TaskCenterItem,
-  type TaskCenterPayload,
-} from "@/task-center/contracts";
+import { useTaskCenter } from "@/components/use-task-center";
 
-export function createTaskCenterResponseGate() {
-  let generation = 0;
-  let activeMutations = 0;
-  let activePoll: number | null = null;
-  return {
-    beginPoll() {
-      if (activeMutations > 0 || activePoll !== null) return null;
-      generation += 1;
-      activePoll = generation;
-      return generation;
-    },
-    finishPoll(candidate: number) {
-      if (activePoll === candidate) activePoll = null;
-    },
-    beginMutation() {
-      activeMutations += 1;
-      generation += 1;
-      return generation;
-    },
-    finishMutation() {
-      activeMutations = Math.max(0, activeMutations - 1);
-      return activeMutations;
-    },
-    hasMutation() {
-      return activeMutations > 0;
-    },
-    isCurrent(candidate: number) {
-      return candidate === generation;
-    },
-  };
-}
+export { createTaskCenterResponseGate } from "./use-task-center";
 
 type SideWindowId = Exclude<BrainWindowId, "chat" | "runtime">;
 type WorkbenchNotice = Readonly<{
@@ -438,21 +402,6 @@ function loadThreadReadMarkers(key: string, threads: WorkbenchThread[]) {
   return stored;
 }
 
-function loadTaskCenterCache(key: string): TaskCenterPayload {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
-    if (isTaskCenterPayload(value)) return value;
-  } catch {
-    // Invalid browser-preview state is replaced by the empty safe default.
-  }
-  return {
-    tasks: [],
-    readTaskIds: [],
-    preferences: DEFAULT_TASK_NOTIFICATION_PREFERENCES,
-    continuity: "worker_required",
-  };
-}
-
 function localProject(projects: WorkbenchProject[], name: string): WorkbenchProject {
   const normalized = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "projecte";
@@ -629,17 +578,8 @@ export function BrainApp({
   const [customizationOpen, setCustomizationOpen] = useState(false);
   const [customizationInitialTab, setCustomizationInitialTab] = useState<"appearance" | "connectors" | "memory" | "archived">("appearance");
   const [projectOpen, setProjectOpen] = useState(false);
-  const [taskCenterPayload, setTaskCenterPayload] = useState<TaskCenterPayload>({
-    tasks: [],
-    readTaskIds: [],
-    preferences: DEFAULT_TASK_NOTIFICATION_PREFERENCES,
-    continuity: "worker_required",
-  });
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
   const [taskCenterRequested, setTaskCenterRequested] = useState(false);
-  const [taskCenterBusy, setTaskCenterBusy] = useState(false);
-  const taskCenterGateRef = useRef(createTaskCenterResponseGate());
-  const taskCenterOpenRef = useRef(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
   const [newAutomationRequested, setNewAutomationRequested] = useState(false);
   const [productView, setProductView] = useState<"production" | "apps" | "reception" | null>(null);
@@ -689,15 +629,18 @@ export function BrainApp({
     projectId: null,
     threadId: null,
   });
-  const taskStatusRef = useRef(new Map<string, TaskCenterItem["status"]>());
-  const taskCenterInitializedRef = useRef(false);
   const sidebarReturnFocusRef = useRef<HTMLElement | null>(null);
   const mobileSidebarOpenerRef = useRef<HTMLElement | null>(null);
   const mobileSidebarHandoffRef = useRef<"customization" | "project" | "text" | "confirm" | "command" | null>(null);
 
-  useEffect(() => {
-    taskCenterOpenRef.current = taskCenterOpen;
-  }, [taskCenterOpen]);
+  const {
+    payload: taskCenterPayload, items: taskCenterItems, summary: taskSummary,
+    busy: taskCenterBusy, mutate: mutateTaskCenter, restorePreview: restoreTaskCenterPreview,
+  } = useTaskCenter({
+    hydrated, persistence: initialWorkbench.persistence, projects, threads,
+    cacheKey: taskCenterKey, productName: branding.productName, selection: activeSelectionRef,
+    open: taskCenterOpen, requestOpen: setTaskCenterRequested, onNotice: setNotice,
+  });
 
   const beginSidebarOverlay = useCallback((surface: NonNullable<typeof mobileSidebarHandoffRef.current>, returnFocus?: HTMLElement | null) => {
     sidebarReturnFocusRef.current = returnFocus ?? null;
@@ -824,12 +767,11 @@ export function BrainApp({
     setPreferences(loadPreferences(preferencesKey, defaultPreferences));
     setThreadReadMarkers(loadThreadReadMarkers(threadReadKey, snapshot.threads));
     if (initialWorkbench.persistence === "browser-preview") {
-      const taskCenter = loadTaskCenterCache(taskCenterKey);
-      setTaskCenterPayload(taskCenter);
+      restoreTaskCenterPreview();
     }
     threadByProjectRef.current = savedSelection.threadByProject;
     setHydrated(true);
-  }, [connectorDraftsKey, serverDraftsKey, composerDraftsKey, defaultPreferences, initialWorkbench, preferencesKey, previewKey, selectionKey, taskCenterKey, threadReadKey]);
+  }, [connectorDraftsKey, serverDraftsKey, composerDraftsKey, defaultPreferences, initialWorkbench, preferencesKey, previewKey, selectionKey, restoreTaskCenterPreview, threadReadKey]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -1082,126 +1024,6 @@ export function BrainApp({
       message.artifacts.some((artifact) => artifact.id === previewDocument.id)) ?? false;
     if (!remainsInConversation) setPreviewDocument(null);
   }, [activeThread, previewDocument]);
-  const taskCenterItems = useMemo(() => {
-    const local = deriveTaskCenterItems({ projects, threads }, taskCenterPayload.readTaskIds);
-    const merged = initialWorkbench.persistence === "browser-preview"
-      ? new Map(taskCenterPayload.tasks.map((task) => [task.id, task]))
-      : new Map(local.map((task) => [task.id, task]));
-    for (const task of initialWorkbench.persistence === "browser-preview" ? local : taskCenterPayload.tasks) {
-      merged.set(task.id, task);
-    }
-    return [...merged.values()].sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
-  }, [initialWorkbench.persistence, projects, taskCenterPayload.readTaskIds, taskCenterPayload.tasks, threads]);
-  const taskSummary = useMemo(() => ({
-    unread: taskCenterItems.filter((task) => task.unread).length,
-    running: taskCenterItems.filter((task) => task.status === "running").length,
-    needsAttention: taskCenterItems.filter((task) => task.status === "needs_attention").length,
-  }), [taskCenterItems]);
-
-  const applyTaskCenterPayload = useCallback((payload: TaskCenterPayload, notify = true) => {
-    const previous = taskStatusRef.current;
-    const shouldNotify = taskCenterInitializedRef.current && notify;
-    const fresh = shouldNotify ? payload.tasks.filter((task) => {
-      if (!task.unread || task.threadId === activeSelectionRef.current.threadId) return false;
-      const prior = previous.get(task.id);
-      return prior === "running" || (prior === undefined && task.status !== "running");
-    }) : [];
-    taskStatusRef.current = new Map(payload.tasks.map((task) => [task.id, task.status]));
-    taskCenterInitializedRef.current = true;
-    setTaskCenterPayload(payload);
-
-    const newest = fresh[0];
-    if (!newest) return;
-    if (payload.preferences.inApp) {
-      setNotice(workbenchNotice(newest.status === "needs_attention"
-        ? t("Una tarea necesita tu atención: {p0}", { p0: newest.threadTitle })
-        : newest.status === "completed"
-          ? `Tarea completada: ${newest.threadTitle}`
-          : t("Una tarea ha terminado con error: {p0}", { p0: newest.threadTitle }),
-        newest.status === "completed" ? "success" : newest.status === "failed" ? "error" : "warning"));
-    }
-    if (payload.preferences.desktop && typeof Notification !== "undefined" && Notification.permission === "granted") {
-      const notification = new Notification(
-        newest.status === "needs_attention" ? t("{p0} necesita tu atención", { p0: branding.productName }) :
-          newest.status === "completed" ? t("{p0} ha terminado una tarea", { p0: branding.productName }) : t("Una tarea de {p0} ha fallado", { p0: branding.productName }),
-        { body: newest.threadTitle, tag: newest.id },
-      );
-      notification.onclick = () => {
-        window.focus();
-        setTaskCenterRequested(!taskCenterOpenRef.current);
-        notification.close();
-      };
-    }
-  }, [branding.productName, t]);
-
-  const refreshTaskCenter = useCallback(async (notify = true) => {
-    const requestGeneration = taskCenterGateRef.current.beginPoll();
-    if (requestGeneration === null) return null;
-    try {
-      const response = await fetch("/api/task-center", { cache: "no-store" });
-      const value: unknown = await response.json().catch(() => null);
-      if (!response.ok || !isTaskCenterPayload(value)) throw new Error(t("No se ha podido actualizar el centro de tareas."));
-      if (!taskCenterGateRef.current.isCurrent(requestGeneration)) return value;
-      applyTaskCenterPayload(value, notify);
-      return value;
-    } finally {
-      taskCenterGateRef.current.finishPoll(requestGeneration);
-    }
-  }, [applyTaskCenterPayload, t]);
-
-  const mutateTaskCenter = useCallback(async (body: unknown) => {
-    const requestGeneration = taskCenterGateRef.current.beginMutation();
-    setTaskCenterBusy(true);
-    try {
-      const response = await fetch("/api/task-center", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const value: unknown = await response.json().catch(() => null);
-      if (!response.ok || !isTaskCenterPayload(value)) throw new Error(t("No se ha podido guardar el centro de tareas."));
-      if (!taskCenterGateRef.current.isCurrent(requestGeneration)) return;
-      applyTaskCenterPayload(value, false);
-    } catch (error) {
-      setNotice(workbenchNotice(error instanceof Error ? error.message : t("No se ha podido guardar el centro de tareas."), "error"));
-    } finally {
-      taskCenterGateRef.current.finishMutation();
-      setTaskCenterBusy(false);
-    }
-  }, [applyTaskCenterPayload, t]);
-
-  useEffect(() => {
-    if (!hydrated || initialWorkbench.persistence === "browser-preview") return;
-    void refreshTaskCenter(false).catch(() => {
-      setNotice(workbenchNotice(t("El historial de tareas no se ha podido sincronizar. Tus conversaciones siguen disponibles."), "warning"));
-    });
-  }, [hydrated, initialWorkbench.persistence, refreshTaskCenter, t]);
-
-  useEffect(() => {
-    if (!hydrated || initialWorkbench.persistence !== "browser-preview") return;
-    taskStatusRef.current = new Map(taskCenterItems.map((task) => [task.id, task.status]));
-    taskCenterInitializedRef.current = true;
-  }, [hydrated, initialWorkbench.persistence, taskCenterItems]);
-
-  useEffect(() => {
-    if (!hydrated || initialWorkbench.persistence === "browser-preview") return;
-    const refresh = () => void refreshTaskCenter(true).catch(() => undefined);
-    const interval = window.setInterval(refresh, taskSummary.running ? 5_000 : 30_000);
-    const onVisibility = () => { if (document.visibilityState === "visible") refresh(); };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [hydrated, initialWorkbench.persistence, refreshTaskCenter, taskSummary.running]);
-
-  useEffect(() => {
-    if (!hydrated || initialWorkbench.persistence !== "browser-preview") return;
-    localStorage.setItem(taskCenterKey, JSON.stringify({ ...taskCenterPayload, tasks: taskCenterItems }));
-  }, [hydrated, initialWorkbench.persistence, taskCenterItems, taskCenterKey, taskCenterPayload]);
 
   useEffect(() => {
     if (!hydrated) return;
