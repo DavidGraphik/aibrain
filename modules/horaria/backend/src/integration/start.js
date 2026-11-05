@@ -1,0 +1,10 @@
+import 'dotenv/config';
+import { createHorariaApp } from './app.js';
+import { stateDirectory } from './durable-state.js';
+import { startHeartbeat } from './heartbeat.js';
+import { prisma } from '../services/prisma.js';
+stateDirectory();
+const app = createHorariaApp({ secret: process.env.HORARIA_BRIDGE_SECRET, installationId: process.env.HORARIA_INSTALLATION_ID });
+const server = app.listen(Number(process.env.PORT || 3210), process.env.HOST || '127.0.0.1', () => { void app.locals.startInbox(); });
+const stopHeartbeat = startHeartbeat();
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { stopHeartbeat(); server.close(async () => { await app.locals.stopInbox(); await prisma.$disconnect(); process.exit(0); }); });

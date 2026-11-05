@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "human-writing",
+  "label": "human-writing",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "Bundled from installed human-writing skill on 2026-09-10; whitespace normalized; ux-writing supporting documents relocated under resources. AiBrain routing and editorial constraints take precedence.",
+  "files": [
+    "SKILL.md",
+    "resources/references/format-routing.md",
+    "resources/references/pattern-catalog.md"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "presentation-craft",
+  "label": "Presentaciones: narrativa y revisi\u00f3n",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "Adapted from Codex Presentations bundle 26.905.11957 on 2026-09-10. Writing/style/cover/finance retained; desktop-only APIs replaced with supported installation-owned PptxGenJS and render/deliver workflow.",
+  "files": [
+    "SKILL.md",
+    "resources/charts.md",
+    "resources/cover.md",
+    "resources/finance.md",
+    "resources/review.md",
+    "resources/style.md",
+    "resources/templates.md",
+    "resources/writing.md"
+  ]
+}

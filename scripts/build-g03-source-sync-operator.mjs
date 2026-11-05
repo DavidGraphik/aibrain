@@ -1,0 +1,13 @@
+import {build} from 'esbuild';
+import {mkdir,readFile,chmod} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {spawnSync} from 'node:child_process';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const output=path.join(root,'dist','g03-source-sync-operator.mjs');
+await mkdir(path.dirname(output),{recursive:true});
+await chmod(output,0o644).catch(e=>{if(e.code!=='ENOENT')throw e;});
+await build({entryPoints:[path.join(root,'scripts/g03/sync-production-source.ts')],outfile:output,bundle:true,platform:'node',format:'esm',target:'node24',conditions:['react-server','node','import'],alias:{'@':path.join(root,'src')},legalComments:'none',define:{__G03_V7_IMPORTER__:JSON.stringify(await readFile(path.join(root,'scripts/g03/import-v7.py'),'utf8'))},banner:{js:'import {createRequire as __g03CreateRequire} from "node:module";const require=__g03CreateRequire(import.meta.url);'}});
+const smoke=spawnSync(process.execPath,[output,'--bundle-smoke-test'],{encoding:'utf8',timeout:15000});
+if(smoke.status!==1||smoke.stderr.trim()!=='G03_SOURCE_CLI_ARGUMENTS_INVALID')throw Error('G03_SOURCE_OPERATOR_SMOKE_FAILED');
+await chmod(output,0o555);

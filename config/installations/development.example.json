@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "installationId": "example-lab-dev",
+  "companyName": "Example Laboratory",
+  "companySlug": "example-laboratory",
+  "publicUrl": "http://localhost:3000",
+  "branding": {
+    "productName": "Example AI",
+    "logoPath": "/branding/example-lab/logo.svg",
+    "faviconPath": "/branding/example-lab/favicon.svg",
+    "accentColor": "#315ee7"
+  },
+  "paths": {
+    "dataRoot": "/tmp/aibrain-example-lab/data",
+    "companyContextRoot": "/tmp/aibrain-example-lab/data/company",
+    "usersRoot": "/tmp/aibrain-example-lab/data/users",
+    "sourceReadRoot": "/tmp/aibrain-example-lab/documents/source-ro",
+    "publishWriteRoot": "/tmp/aibrain-example-lab/documents/publish-rw",
+    "backupsRoot": "/tmp/aibrain-example-lab/data/backups"
+  }
+}

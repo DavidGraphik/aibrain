@@ -1,0 +1,627 @@
+{
+  "source": "User-supplied Migraci\u00f3.zip, 01-app-horaris/codi",
+  "snapshotDate": "2026-08-28",
+  "importDate": "2026-09-13",
+  "files": [
+    {
+      "path": "backend/package-lock.json",
+      "sha256": "e745cd2d54df4e5930c9c7042ae3c8bbc74a9aedc057551e8eecb10b574b2428"
+    },
+    {
+      "path": "backend/package.json",
+      "sha256": "0d52a15e86a39ab4848683b8f70e4629e99a499159998f4307b82b87c379c965"
+    },
+    {
+      "path": "backend/eslint.config.js",
+      "sha256": "450b80a5c9c1b26c806e8da4f76c4106d57c5e30edbe5c4d5fdac12e334da127"
+    },
+    {
+      "path": "backend/.env.example",
+      "sha256": "00ed6e4bc4242dec1b5b1aba3022f11054e3e823f76e48f9467b416721f958bd"
+    },
+    {
+      "path": "backend/test/alternancaEndollada.test.js",
+      "sha256": "0857f2b447b6dbecef1516e52a24704491b8c1a7c66cc27a045fa20b4c95c3ec"
+    },
+    {
+      "path": "backend/test/equipComplet.test.js",
+      "sha256": "cf5d958fc329cc1563367ea021bb160e0342ac49f32ca1c06e5c6cb991e4729b"
+    },
+    {
+      "path": "backend/test/relevancia.test.js",
+      "sha256": "e85dcb5f92f4e6a024c5d16858e01b0bef63b8403858482f658082f8c506d768"
+    },
+    {
+      "path": "backend/test/traductorCondicions.test.js",
+      "sha256": "0ceaf945e3df61adf8f71d5778c07dfe1666de20814fc9832f6856b202a5fbb5"
+    },
+    {
+      "path": "backend/test/condicions.test.js",
+      "sha256": "f552358ec51520040f6ceffe352cb151f56cfd99749e6e68dd9ee8f04cd8ea0a"
+    },
+    {
+      "path": "backend/test/permisosAbsencies.test.js",
+      "sha256": "885b42497ebda572682ba8a76b748e49100a7a509f6ae61fff47057415edc0ae"
+    },
+    {
+      "path": "backend/test/vigilant.test.js",
+      "sha256": "7e804ebab87375ef4f722468798ed2dab61f17a28f40250b37c90fb2f229f8be"
+    },
+    {
+      "path": "backend/test/absences.test.js",
+      "sha256": "b42ae9d9b1f23e5beed82f9ce14ae5f3ec750373b75a56850f56e8274e4ae419"
+    },
+    {
+      "path": "backend/test/fallaEndollat.test.js",
+      "sha256": "cfa5268810d0a1acf21b466d30bc58851f8210ed94bd47791365dfd116d9e509"
+    },
+    {
+      "path": "backend/test/recuentosExactos.test.js",
+      "sha256": "206a59dfab7c5667e542b8da2ce5241e30d3ed48e1fc961e03ff1929a12c9e13"
+    },
+    {
+      "path": "backend/test/templateLang.test.js",
+      "sha256": "f0035a877d79362cf10207a3a70b6583d568e88857175734f71203c779f2c60b"
+    },
+    {
+      "path": "backend/test/healthCheck.test.js",
+      "sha256": "f9d72e504827dc425ef9ecd22509ec0b08e11b5ff5f0387cb5d05f2ea8e0daf1"
+    },
+    {
+      "path": "backend/test/isoWeek.test.js",
+      "sha256": "5d88db056e2aa0d872c551f03d36211c971928e1a72494ebb1b40d651c537b0e"
+    },
+    {
+      "path": "backend/test/condicionsEndollades.test.js",
+      "sha256": "98258c46c236c4006c9de176e423bc483ef174f5b9dce17a4f19fac007969971"
+    },
+    {
+      "path": "backend/test/whatsappErrors.test.js",
+      "sha256": "91992a60f9751ca9082f30f8c6597a7f7e33785a91617a9ccda7fa3ee38a07b3"
+    },
+    {
+      "path": "backend/test/festesLocals.test.js",
+      "sha256": "60f9fd4ffe5317d76d7ecb5727d33cf3b79ed64a7e5e7580fdac40a65ffeda5f"
+    },
+    {
+      "path": "backend/test/promptSenseContracte.test.js",
+      "sha256": "c5bde0466f763ccfc30d6433dede585a17c5ebb458014fda20d1ffab4751fe08"
+    },
+    {
+      "path": "backend/test/turnoPermitido.test.js",
+      "sha256": "78273174cca2d71ae2384ed4ad9f39c2788c07e10ce84d7709fce0e31df3cf4b"
+    },
+    {
+      "path": "backend/test/ids.test.js",
+      "sha256": "69b7d826127086a0c382fbca7fd22da48be468fad2bdcb0d5ddc1707ca755d61"
+    },
+    {
+      "path": "backend/test/shiftHours.test.js",
+      "sha256": "7fcb591e4b4d322281e3894bcd80655f0e58bb0444df8e6c29a491895d0cf216"
+    },
+    {
+      "path": "backend/test/alternancaPass.test.js",
+      "sha256": "6fed438e07d8f68d36002c99ceee9cc2dd99c405ada68f58991664b8f98754c6"
+    },
+    {
+      "path": "backend/test/esFallidaDeFeina.test.js",
+      "sha256": "1a05626380fead01b48432f7e024d6023e2856fb58b14f47df0d05abcdf6810a"
+    },
+    {
+      "path": "backend/test/tocaRecordar.test.js",
+      "sha256": "f1dd130ea710157eca4e7b75b1481c7b16e48c626369295ebc318982b8fae888"
+    },
+    {
+      "path": "backend/test/webhookSignature.test.js",
+      "sha256": "fe66dfb6138b53e2790df83c459baec40938dbe3d75b9f0a14c49d50300db9d2"
+    },
+    {
+      "path": "backend/test/zonaHoraria.test.js",
+      "sha256": "7a058b35022b39a5cd870a3a6ede0af9af09ced588e0e8980d7f6e071ec2c446"
+    },
+    {
+      "path": "backend/test/enviamentAutomatic.test.js",
+      "sha256": "519f3301d22f7d5b59f4cb4f6def9787abece9dd92f52f4c677739fff7e4f110"
+    },
+    {
+      "path": "backend/test/responsableSenseBotiga.test.js",
+      "sha256": "035558619165ee7484881d6f5202edd0f0d87a64da6246a9c82ec938b3cbf7a8"
+    },
+    {
+      "path": "backend/test/backup.test.js",
+      "sha256": "1c3ff614d5f431f393e736649315c266bca0b7c152f9161d6e8bc436695c85a0"
+    },
+    {
+      "path": "backend/test/potRectificar.test.js",
+      "sha256": "a91770f00ed29bef2212f1a0c90ca726cdd5d7b8c9f9387033c24169b1c570b7"
+    },
+    {
+      "path": "backend/test/reobrirEsTemporal.test.js",
+      "sha256": "f4c88196633d67fe2a39f031992ebbaeca257403b6a5dec3b0cb7647a55f0183"
+    },
+    {
+      "path": "backend/test/peticions.test.js",
+      "sha256": "f4838b41463cabab4efb4e67ad92f45af8b65c409ccaecd350f76936754a55e2"
+    },
+    {
+      "path": "backend/test/horaDescans.test.js",
+      "sha256": "b2282e686b689580729c2166cbb91b636c576c1eff73a2d9d12de48a66970200"
+    },
+    {
+      "path": "backend/test/whatsapp.test.js",
+      "sha256": "f605b9bed5459961fddefa4bfffe840b6c7794992cb334757abb6043aac76a6b"
+    },
+    {
+      "path": "backend/test/finestraPeticions.test.js",
+      "sha256": "a4685f884a29e072a34c987df83060327d93c376b0c2ed27ed6d196c915f0202"
+    },
+    {
+      "path": "backend/test/ruleRanges.test.js",
+      "sha256": "a74c07db39fd708d033dd6e114ad45319ac8ee1ea54d0f13c914246a48fde8e3"
+    },
+    {
+      "path": "backend/test/condicionsIPeticions.test.js",
+      "sha256": "93aa17f7e0e03a3f95454c0088a0d83a46aea2904339777fdbdcecb0391b96d3"
+    },
+    {
+      "path": "backend/test/conditionCheck.test.js",
+      "sha256": "c464a7be2275ea97116112fbdbbbe84701891106ca33fd0e2e81adbd0de9eb9c"
+    },
+    {
+      "path": "backend/test/fusioPaper.test.js",
+      "sha256": "673487b768dc9ac6b882f1c0e7a3584853f7de3c3f26763bcb337d2e87905944"
+    },
+    {
+      "path": "backend/test/telefonRepetit.test.js",
+      "sha256": "5e747beca09f0c089c3b6d5462123e1c87f25f8728d2cdea323a8d9da086165a"
+    },
+    {
+      "path": "backend/test/permisos.test.js",
+      "sha256": "6b395ab36fce60c20e33a33cfe937d9bc74c4be428153945eb54c4fffb3eecc7"
+    },
+    {
+      "path": "backend/test/cadaRutaGuardada.test.js",
+      "sha256": "f3ede102d316c366272518d7bb8661f23990c3e4935c920d8d5316dbb9d84b3a"
+    },
+    {
+      "path": "backend/test/dissabteRetirat.test.js",
+      "sha256": "2efe332af075d418632e0d59e96b41459bfaa634aa7618ae36299e1623c8f3ee"
+    },
+    {
+      "path": "backend/test/avisAlDemanar.test.js",
+      "sha256": "709615fb909a17cbcde4a06d4a346f167b45507e2af1e917f7025db844ec72e5"
+    },
+    {
+      "path": "backend/test/edicionsNetes.test.js",
+      "sha256": "649f0d4f032be82387be57ad37d86b11154ba5086c3e97beffc7d01eec797931"
+    },
+    {
+      "path": "backend/test/condicionsALaPantalla.test.js",
+      "sha256": "1ab6d3c99a2f46e582e3c53109205e4c382071db9b7d0bfe3bfffcb7d0102afa"
+    },
+    {
+      "path": "backend/test/weeklyTarget.test.js",
+      "sha256": "1fa6a9d49479047cb76e4b26e4aeb0f59833071a57a52d1260ee9b10fd202f1f"
+    },
+    {
+      "path": "backend/test/passadesCondicions.test.js",
+      "sha256": "d150c05cd736568dd111f456179beefbafe5f1f2b80857a513333dc5770e167b"
+    },
+    {
+      "path": "backend/test/saturdayRotation.test.js",
+      "sha256": "4d335158e48cf1b8b96e94646733836cb97d4ee62b647af1dc4e1041027ff597"
+    },
+    {
+      "path": "backend/test/swapPass.test.js",
+      "sha256": "0a8ae83ec571c238e6af054ddcc3fa9d2e143824ba929a11990279acca583673"
+    },
+    {
+      "path": "backend/test/textRebuig.test.js",
+      "sha256": "d7aa1d0a98269795dc6dd93a69b3f6f7416f00819b711e21ca74a37406868ea7"
+    },
+    {
+      "path": "backend/test/recolocarFestes.test.js",
+      "sha256": "ec3877e0c7da029715b80fcce045f414ac6707f76d7377862a15da084cbf22a5"
+    },
+    {
+      "path": "backend/test/altresBotigues.test.js",
+      "sha256": "de397e5cd70d361c1bc973b9e1b6755d86c85c934f8554417c5370d0c49e1385"
+    },
+    {
+      "path": "backend/test/sense-produccio.js",
+      "sha256": "823224ca42cd1e0a54e76671e196b32b030cd809fcbb1ed6432c930868f6a02b"
+    },
+    {
+      "path": "backend/test/calendariPrompt.test.js",
+      "sha256": "384dc93ec6910f78ec2f3886f71614bf7e110b46f45d8263be7f59a3489566a7"
+    },
+    {
+      "path": "backend/test/reportCheck.test.js",
+      "sha256": "05479641db580a6b97c16f2ac44cccfeb13d0ee522575cafd3058951af2135a7"
+    },
+    {
+      "path": "backend/test/comiats.test.js",
+      "sha256": "e149dc1a0755cce5e3190b032feb39071d12677858d57d0201f0f781733f600e"
+    },
+    {
+      "path": "backend/test/conflictosFiltrados.test.js",
+      "sha256": "ca23cd20970eb6e520f10c5bc939a18ba83d62a5e717e247802c99c938ae6f11"
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "sha256": "08280d65d6fa2b0111fe4eb030170db2264dc596d96fa712a572981463be6e64"
+    },
+    {
+      "path": "backend/src/index.js",
+      "sha256": "52227d78ba839f6464838a5934aade2599ece12ed0eb8ffeb5da8a3a3979ffe6"
+    },
+    {
+      "path": "backend/src/middleware/auth.js",
+      "sha256": "1ad2a16ea73ee9e5b07910942e5c062f4a2f90bfe19412fb8c56a0acbb4e0112"
+    },
+    {
+      "path": "backend/src/middleware/roles.js",
+      "sha256": "0742574f7150398cc329bfa2c8492fd7115ed1f6fd0b37d460d67637ee92f2c7"
+    },
+    {
+      "path": "backend/src/utils/whatsappErrors.js",
+      "sha256": "df95baf767e2f85e34283da0acc82f20ffa2c1ac87a2ac69b1d4d1a483b4fff5"
+    },
+    {
+      "path": "backend/src/utils/ajustos.js",
+      "sha256": "67e184acd56f565781b6662f843f2e1a54ccf0fff9dc5bdbd244a16c7f8ed7e9"
+    },
+    {
+      "path": "backend/src/utils/absenceDays.js",
+      "sha256": "d58ce721691bc49e280885507123dc4a1637ec56256bc95b5cd90347af6fcefd"
+    },
+    {
+      "path": "backend/src/utils/isoWeek.js",
+      "sha256": "9323a78b93d2981980dfba6241205dd605c69d3b9e5bacfba847d4fbcd658353"
+    },
+    {
+      "path": "backend/src/utils/zonaHoraria.js",
+      "sha256": "e62ed1169dfecdd84fb2651287a3387e04c9f6f71d4e71e4bf845fcddd507006"
+    },
+    {
+      "path": "backend/src/utils/verifyMetaSignature.js",
+      "sha256": "06b282e568fb0a2c9e3bf1942b91d7eac63443cd3ee61163d0b0c7956a59703e"
+    },
+    {
+      "path": "backend/src/utils/permisos.js",
+      "sha256": "dddbc6ed528c7a626adaeeb732bdc6a7e9c9d95fd380f9d5799607bbb21b990c"
+    },
+    {
+      "path": "backend/src/utils/fusioPaper.js",
+      "sha256": "ec189d71f90591553492f287f80044c8308551cfce68b2fff10ca446aa38a1a6"
+    },
+    {
+      "path": "backend/src/utils/etiquetes.js",
+      "sha256": "5893a844f4259a02f5e05f7b4ec8c5da87026514b256fa652157b59b8613a7e6"
+    },
+    {
+      "path": "backend/src/utils/weeklyTarget.js",
+      "sha256": "bfc397c8f505a9d7e5bec6a1e02d3429e22876ef0ef61b5d916214c0f49db3b2"
+    },
+    {
+      "path": "backend/src/utils/condicions.js",
+      "sha256": "dc42e2b1fb1399568163f3f39aae353cb96f2e86e95eaec098b4b40896c12e7c"
+    },
+    {
+      "path": "backend/src/utils/shiftHours.js",
+      "sha256": "12e2f650d799efcb013d02844503cab058763110b5ab414b0bbed35f1721ce66"
+    },
+    {
+      "path": "backend/src/utils/asyncHandler.js",
+      "sha256": "08a991b9217372326e5612af6996fbd0ee8c05aff3f4abee76683dedf4132fba"
+    },
+    {
+      "path": "backend/src/utils/backupModels.js",
+      "sha256": "884cbcead8eff660cd3a0c54c806d358f284dc0745618a4ff7ae3f3aaa8eb53c"
+    },
+    {
+      "path": "backend/src/utils/ids.js",
+      "sha256": "e98ce07a83a153401023ad51815c695f3a13b830040863e2c7e7d3d84dd9ed22"
+    },
+    {
+      "path": "backend/src/utils/missatges.js",
+      "sha256": "14e1b26b8c41ebd99f9636e716cc82998665e5ded4a8390f717be0cb967c03a9"
+    },
+    {
+      "path": "backend/src/utils/absenceOverlap.js",
+      "sha256": "df7e73d5b1eb88b964f7c41a3de53132f3adfd6fe9f3d062099d15adaab6e75f"
+    },
+    {
+      "path": "backend/src/utils/comiats.js",
+      "sha256": "23271278e9f3322e9e0073c488eeb62153214d6cd2cb7e10ef6582cb052fd6b6"
+    },
+    {
+      "path": "backend/src/controllers/rules.js",
+      "sha256": "15c8eff462e98438b4a300ad6729422673fcbedc0d7886e73ea253622839b484"
+    },
+    {
+      "path": "backend/src/controllers/preferences.js",
+      "sha256": "158992bb0e844039e95f951d21c4f04f95771a0260a4fb5d017e5650d0dcb047"
+    },
+    {
+      "path": "backend/src/controllers/ajustos.js",
+      "sha256": "06785b047f715ce7ae5068dfc6f9073cc48cd7e18f619e38e3a35edba4a5c6fe"
+    },
+    {
+      "path": "backend/src/controllers/establishments.js",
+      "sha256": "c7c67e36b42423c967da824b42c3b8c34364650ae64024ad9f6490b3ff61b848"
+    },
+    {
+      "path": "backend/src/controllers/auth.js",
+      "sha256": "bd3c2f75766e7e24bdaf90866fc0a9c7369090ec6472d6c66e752b9540eb3c58"
+    },
+    {
+      "path": "backend/src/controllers/correccions.js",
+      "sha256": "dc59b525553e27f349659984d05d269eecd046fa355fd00c032eac666e46a591"
+    },
+    {
+      "path": "backend/src/controllers/whatsapp.js",
+      "sha256": "ece3a47b1c7f86c26e70e3947b698f424164fa339ba421c59e38b6d07057a6f1"
+    },
+    {
+      "path": "backend/src/controllers/freeRules.js",
+      "sha256": "94ae36ebfcc444d707f1bac9684328c38827421c335c20637d83386043ee875f"
+    },
+    {
+      "path": "backend/src/controllers/employees.js",
+      "sha256": "9263ea2adce61a5efd320d2f35a3ef48e1df8231b20ff623f6c36e5b6904f5e1"
+    },
+    {
+      "path": "backend/src/controllers/errors.js",
+      "sha256": "50f1350d9f7987b37f2783642ffcbac70a4cf9d1631e43329ce12ef7d8b94062"
+    },
+    {
+      "path": "backend/src/controllers/schedules.js",
+      "sha256": "7d55c925b8d0e28caeba5c91ee16764605283ddb47be499c0c7af1c2c0a4538c"
+    },
+    {
+      "path": "backend/src/controllers/absences.js",
+      "sha256": "e527c0d45cf2db2a518404094cd3177982c05d533b24cb3466a8275d2a6921b1"
+    },
+    {
+      "path": "backend/src/controllers/summary.js",
+      "sha256": "fde2c257d8f807427a72571276267febf1614df165bcb97b2dd105954eb3fc39"
+    },
+    {
+      "path": "backend/src/routes/rules.js",
+      "sha256": "72e79f0ec2387043ec8b7dbfef27704f964dc27047ef3742f2295638460248c1"
+    },
+    {
+      "path": "backend/src/routes/preferences.js",
+      "sha256": "dbab5eb26eeaaa8f9a957c3a1b48d3ba92df3053a88a305d0bc211687d66cd2f"
+    },
+    {
+      "path": "backend/src/routes/ajustos.js",
+      "sha256": "04ab1808d9044f7c12c062c9f82570a26941b570b4d7b7a76f03800c9e0c8ef8"
+    },
+    {
+      "path": "backend/src/routes/establishments.js",
+      "sha256": "2e4a700c7d0cc75df17593eeedd7c5fca3c8e14dc52c68684bdf922d66b2a3c0"
+    },
+    {
+      "path": "backend/src/routes/auth.js",
+      "sha256": "1547a0d2426f403b49efa1c11a49b77d2541cffa349742548e20b11cd03abe58"
+    },
+    {
+      "path": "backend/src/routes/whatsapp.js",
+      "sha256": "b7fa1a87db631f9b01af916af29e488584eb44004bc78373be9d179185431ef4"
+    },
+    {
+      "path": "backend/src/routes/freeRules.js",
+      "sha256": "b54c2ac6a51fa502765d2f2c73ca1bf67fabc6035fcb3743c0cf8616cee51297"
+    },
+    {
+      "path": "backend/src/routes/employees.js",
+      "sha256": "3e83535984564d3b65897e53ecc485806b6498bdcfa1c420f898792877d70a6c"
+    },
+    {
+      "path": "backend/src/routes/errors.js",
+      "sha256": "63924d6fa006192b44ee853065f4a1d0e97de8381abed032b739d7d5aaf39a2f"
+    },
+    {
+      "path": "backend/src/routes/schedules.js",
+      "sha256": "346999a3c9ddeb84ee62426261e5ff9affe6f71db1ddeb0ece8b695d3624a9ce"
+    },
+    {
+      "path": "backend/src/routes/absences.js",
+      "sha256": "f5c90932cfd5412c64a6b1dfc357d220ba8304cb397f2e16b3ff6ddffddb4691"
+    },
+    {
+      "path": "backend/src/routes/summary.js",
+      "sha256": "16f9371b7ade6d97c7bdae40ae39c682518a28fe28310434046d388d4871ea92"
+    },
+    {
+      "path": "backend/src/services/passadesCondicions.js",
+      "sha256": "aeeb64cd5761c8dfd5893feac921e6efea14b7d62b22a6d8618760124fb37877"
+    },
+    {
+      "path": "backend/src/services/traductorCondicions.js",
+      "sha256": "87c65b9bc4807f6025d1cd791a0b29cc35162ceb4fe2f84b62a421ad548b5cf0"
+    },
+    {
+      "path": "backend/src/services/reportCheck.js",
+      "sha256": "c92ae6efb92c149bc873535dbec88de4cfe20e9b8079a51c4824916cc36bc436"
+    },
+    {
+      "path": "backend/src/services/festesLocals.js",
+      "sha256": "ab4130822ee3449340d4f24242549e8843117a14ca6c75f125c4a29dd6cc8ada"
+    },
+    {
+      "path": "backend/src/services/conditionCheck.js",
+      "sha256": "631759ac82d62e613bed02a7db73f13288a8d6915b02b9ff2ac372c368107396"
+    },
+    {
+      "path": "backend/src/services/altresBotigues.js",
+      "sha256": "153c9a38b4a1dd72419510d695d73c26ce34d2db2c63a5af95e09762d3ad3d71"
+    },
+    {
+      "path": "backend/src/services/whatsapp.js",
+      "sha256": "1daae78a028c1cd9540dd92a572e92516693d91322fa4d39ded928499498438f"
+    },
+    {
+      "path": "backend/src/services/aiScheduler.js",
+      "sha256": "eea0856ad7dcbd25f48f195e231aabf7ba65d6f29a2ff19cb2b114e3b5b3318f"
+    },
+    {
+      "path": "backend/src/services/peticions.js",
+      "sha256": "68982a3c330bed46fbb5ac598adfdc467abbc475d65552507846c979a0119032"
+    },
+    {
+      "path": "backend/src/services/vigilant.js",
+      "sha256": "69156b9c88cc3d3e9f8d3a42be093424447e2c8a31c5e271c53c9d3ef66ef4c1"
+    },
+    {
+      "path": "backend/src/services/prisma.js",
+      "sha256": "08efef264f5d92af0a53cdbb8c3adfcf3763599aa94a14ee4ef91b4b69c34702"
+    },
+    {
+      "path": "backend/src/services/saturdayRotation.js",
+      "sha256": "150b833dad8eed99e056e8650bda34153d7913e2f435ea3538bd15420babff09"
+    },
+    {
+      "path": "backend/src/services/edicionsNetes.js",
+      "sha256": "5af92e21eb523d763e40b353003715e3d9144f526d0728f9bd62176feff2b14d"
+    },
+    {
+      "path": "backend/prisma/migrations/migration_lock.toml",
+      "sha256": "693566b52c49db47a2b0901d12400aa3d710d13a49f4a2a154b80c0505ed737c"
+    },
+    {
+      "path": "backend/prisma/migrations/20260713140000_establishment_comunidad/migration.sql",
+      "sha256": "3e8be391a24c3d314ebe35b85556d55ef3d19ff8cab92033acc08b6438d9d067"
+    },
+    {
+      "path": "backend/prisma/migrations/20260817200000_pendent_alternanca/migration.sql",
+      "sha256": "74d2a3d61d4b68b447ad24d24f39e769dabf10da01057e079c6e767f6bf2b195"
+    },
+    {
+      "path": "backend/prisma/migrations/20260405112634_add_funcion_freetextrules/migration.sql",
+      "sha256": "b77eb5954135ec1c75f3cbec128db7eccb7b5e7b153ece7bf6632fd879c91e4a"
+    },
+    {
+      "path": "backend/prisma/migrations/20260811180000_ultim_recordatori/migration.sql",
+      "sha256": "a3a13e77ca06135ca99f69baf2e4e479703596f8e3fe2d5d58aaf2efa4b5149d"
+    },
+    {
+      "path": "backend/prisma/migrations/20260424180000_whatsapp_lock_fields/migration.sql",
+      "sha256": "83144fa1454395fb409430f614c3802a982c159ee1de5a8549c73db3f738fd18"
+    },
+    {
+      "path": "backend/prisma/migrations/20260414120000_add_absences/migration.sql",
+      "sha256": "439788b9a3a9e650f596ee5d36d85b833b42805ee677f30421bb56007b385981"
+    },
+    {
+      "path": "backend/prisma/migrations/20260726120000_semana_intensidad/migration.sql",
+      "sha256": "517396aaa7465f1856f38425f686a1f2ed3850f8980e93af5b5bdc4d8a20deb2"
+    },
+    {
+      "path": "backend/prisma/migrations/20260408132749_add_dias_aplica_to_rules/migration.sql",
+      "sha256": "0ffa6e86648d5fee7dc4c6b064fcf30e203d84c593fde24803e65720e487db48"
+    },
+    {
+      "path": "backend/prisma/migrations/20260811150000_motiu_correccio/migration.sql",
+      "sha256": "da4332aa08dc6a5cb48de2450419a0e1f85d22bbdf9a49601c972ad9b5007951"
+    },
+    {
+      "path": "backend/prisma/migrations/20260405221622_add_hora_descanso/migration.sql",
+      "sha256": "d3466d7342c3c71f1aede606f014e97e9efdc5f247d9dd8762386fe30f924858"
+    },
+    {
+      "path": "backend/prisma/migrations/20260811170000_ajustos/migration.sql",
+      "sha256": "5df91fe7dfa900bbb1b641f849d2e000841c284c8c689da50f8fac568809ca1a"
+    },
+    {
+      "path": "backend/prisma/migrations/20260713120000_establishment_open_days/migration.sql",
+      "sha256": "0d24e269402fc185d80ae2b57f6ad1cefaaf1ec62bf93c399e8d89865223dbc4"
+    },
+    {
+      "path": "backend/prisma/migrations/20260824130000_dissabte_retirat/migration.sql",
+      "sha256": "7ef35429c06c4d09653ee997192922c09af56bd5c752e7dbacd8461870f396bc"
+    },
+    {
+      "path": "backend/prisma/migrations/20260715140000_horario_informe/migration.sql",
+      "sha256": "c31fe38d4b35858daeffeaf88e36cdb978c9c0f1b138f4de806c29a898b0f186"
+    },
+    {
+      "path": "backend/prisma/migrations/20260403182715_npm_run_db_seed/migration.sql",
+      "sha256": "b48d4d64effca18c0a45180fd780889e05fecff89c5ddd4d65ffd8102b5bc8bd"
+    },
+    {
+      "path": "backend/prisma/migrations/20260811120000_turno_ia/migration.sql",
+      "sha256": "3ba2b61f417aa1818f4e911fec95879b2f3afdc777beb652d2e45571a96c790e"
+    },
+    {
+      "path": "backend/prisma/migrations/20260804100000_jornada_reducida/migration.sql",
+      "sha256": "b7d0f638a54a2b42ebaa34757f5cc27b218a2e45ff555da0cce31785ef08237d"
+    },
+    {
+      "path": "backend/prisma/migrations/20260805170000_municipi/migration.sql",
+      "sha256": "a91811833e348f92f629d8b4d7cac07f979774fada34edb7f7093c74c4a5b8aa"
+    },
+    {
+      "path": "backend/prisma/migrations/20260405223059_add_establishment_schedule_fields/migration.sql",
+      "sha256": "ee143f10697209a62ed51aff22f1024b2da8766b67ffb4653ea2f9b3d8dc072d"
+    },
+    {
+      "path": "backend/prisma/migrations/20260417120000_whatsapp_cascade/migration.sql",
+      "sha256": "5b6781ebe8e3dbceb63c9fa3b651271d4b337696e9dedfe99e4244f30caf5d57"
+    },
+    {
+      "path": "backend/prisma/migrations/20260821120000_condicions_estructurades/migration.sql",
+      "sha256": "4384415bc2b13dbdfc428c37dbf07d9d2c18aae8bc1380125f22264a7b1c0b00"
+    },
+    {
+      "path": "backend/prisma/migrations/20260715120000_whatsapp_fecha_limite/migration.sql",
+      "sha256": "b9c021b3609af281016e7e7530d3caeba2c7e2b87a6eee3b64b84dbaa97aba4e"
+    },
+    {
+      "path": "backend/prisma/migrations/20260714120000_employee_disponibilidad/migration.sql",
+      "sha256": "3fa5e2c8e9317e9ced1dc7f9699eda823a38ba12feafe9362079c0e99c7ad812"
+    },
+    {
+      "path": "backend/prisma/migrations/20260713150000_origen_papel/migration.sql",
+      "sha256": "91a3e713852e7d573472dcfd7a06775a43fe6d944dc3034c9b80b79dff49cfcc"
+    },
+    {
+      "path": "backend/prisma/migrations/20260817140000_errors_del_navegador/migration.sql",
+      "sha256": "7fa5e6e44d862c547b9ff876fe31b31883d4082012c64cdfa44d10f5ef295801"
+    },
+    {
+      "path": "backend/prisma/migrations/20260413094046_add_schedule_edits/migration.sql",
+      "sha256": "7a0127fa43c0d6e343efce67684bfe188bb0a80ab52bbf713aef01a41b3f5cd7"
+    },
+    {
+      "path": "backend/prisma/migrations/20260405111126_phase2_funcion_rules_horaentrada/migration.sql",
+      "sha256": "c5d058638e19a38a3dff90599232d130ee9568ba7ac2cf7cd4d8f26b784e2ce5"
+    },
+    {
+      "path": "backend/prisma/migrations/20260408124201_add_max_coverage_fields/migration.sql",
+      "sha256": "1f4e52c052f74edb0a348c3c93d6ce7d6c1cc0dbec3843279bd4918d5e8c9aca"
+    },
+    {
+      "path": "backend/prisma/migrations/20260731150000_turnos_por_dia/migration.sql",
+      "sha256": "b8b0ae19a351b04d5ea7ab68eff61b7512d1d38d411dd800e175a367df4f54bb"
+    },
+    {
+      "path": "backend/prisma/migrations/20260813100000_missatges_per_setmana/migration.sql",
+      "sha256": "3a9904a7a8018654a7d3d83c2b14d85ac0e41e4fb9d39bdea418a4d73460859f"
+    },
+    {
+      "path": "backend/prisma/migrations/20260811123000_turno_ia_correccio/migration.sql",
+      "sha256": "b06741ae88b4210646066ca145992e6b477ce6224da1eba4cf9601bae37a0d96"
+    },
+    {
+      "path": "backend/prisma/migrations/20260805110000_paper_sheets/migration.sql",
+      "sha256": "f17f605775c5d055b8ca11b88326a1510f39a47a8682726e8f73005c7e2a8928"
+    },
+    {
+      "path": "backend/prisma/migrations/20260713130000_establishment_cierra_festivos/migration.sql",
+      "sha256": "03bd39110defa96963808c129f356bd686feb0f1ab8ff779f7ab3f8f6f6b6266"
+    }
+  ]
+}

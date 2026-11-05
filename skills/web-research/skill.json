@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "web-research",
+  "label": "Investigación y web",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "GraphikAI generic baseline for source-backed public research; versioned 2026-08-30.",
+  "files": ["SKILL.md"]
+}

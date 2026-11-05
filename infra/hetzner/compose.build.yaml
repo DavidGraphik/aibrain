@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        AIBRAIN_UID: "${AIBRAIN_UID:-10001}"
+        AIBRAIN_GID: "${AIBRAIN_GID:-10001}"
+        AIBRAIN_REVISION: "${AIBRAIN_REVISION:?set AIBRAIN_REVISION to the exact git commit}"
+  egress-gateway:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: egress-gateway
+      args:
+        AIBRAIN_EGRESS_UID: "${AIBRAIN_EGRESS_UID:-10002}"
+        AIBRAIN_EGRESS_GID: "${AIBRAIN_EGRESS_GID:-10002}"
+        AIBRAIN_REVISION: "${AIBRAIN_REVISION:?set AIBRAIN_REVISION to the exact git commit}"

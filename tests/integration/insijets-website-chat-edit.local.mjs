@@ -1,0 +1,81 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+import websiteChat from '../../src/insijets/website-chat-edit.ts';
+const { handleWebsiteChatTool, WEBSITE_CHAT_TOOLS } = websiteChat;
+
+test('local scripted authenticated chat tools → signed CMS HTTP → real website SQLite → rendered HTML → approved inverse revision', async () => {
+  const website = path.resolve(process.env.INSIJETS_LOCAL_WEBSITE_SOURCE || '../website-friday-review');
+  const { createApplication } = await import(pathToFileURL(path.join(website, 'app/server.mjs')).href);
+  const scratch = await mkdtemp(path.join(os.tmpdir(), 'insijets-chat-local-'));
+  const signingKey = 'synthetic-local-only-signing-key-00000000000000';
+  const app = createApplication({ port: 0, host: '127.0.0.1', origin: 'http://127.0.0.1:4184', databasePath: path.join(scratch, 'website.sqlite'), publicProduction: false, production: false,
+    brainCMS: { enabled: true, tenant: 'insijets-demo', signingKey }, uploadDirectory: path.join(scratch, 'uploads') });
+  const evidence = { kind: 'LOCAL SCRIPTED CHAT-TOOL DEMO', modelInferenceExercised: false, realBrowserChatExercised: false, productionAccess: false, checks: [], events: [] };
+  app.backend.store.user({ email: 'cms-owner@example.invalid', password: 'synthetic-test-password-not-a-live-credential', role: 'editor', name: 'Local Luca fixture', membership: 'active' });
+  const note = (name, value) => { evidence.checks.push(name); if (value) evidence.events.push(value); };
+  try {
+    const address = await app.listen();
+    const origin = `http://127.0.0.1:${address.port}`;
+    const session = { provider: 'local', user: { id: 'synthetic-luca-chat-review', name: 'Local Luca fixture', email: 'cms-owner@example.invalid' }, tenant: { id: 'insijets-demo', name: 'InsiJets' }, expiresAt: new Date(Date.now() + 600_000).toISOString() };
+    const context = { session, configuration: { installationId: 'insijets-demo', enabled: true, upstreamOrigin: origin, brainOrigin: 'http://127.0.0.1:4190', signingKey, allowLoopback: true }, sourceThreadId: 'local-demonstration-thread', sourceTurnId: 'turn-propose', sourceMessage: 'Please update the English G550 search description to the text below.', proposalDatabase: path.join(scratch, 'proposals.sqlite') };
+    const pagePath = '/aircrafts/gulfstream-g550';
+    const before = await handleWebsiteChatTool('read', { pagePath }, context);
+    const htmlBefore = await (await fetch(origin + '/en' + pagePath)).text();
+    assert.ok(htmlBefore.includes('name="description"'));
+    const value = 'Explore the Gulfstream G550 for your next journey. Request current aircraft details and a tailored InsiJets quotation.';
+    const proposal = await handleWebsiteChatTool('propose', { pagePath, field: 'metaDescription', value }, context);
+    assert.equal(proposal.oldText, before.fields.metaDescription);
+    assert.equal(proposal.contentSaved, false);
+    assert.equal((await handleWebsiteChatTool('read', { pagePath }, context)).revision, before.revision);
+    note('proposal_exposes_exact_old_new_without_content_write', { human: context.sourceMessage, tool: 'propose', result: proposal });
+    await assert.rejects(handleWebsiteChatTool('approve', { proposalId: proposal.proposalId }, { ...context, sourceMessage: proposal.approvalPhrase }), /EXACT_LATER_HUMAN_APPROVAL_REQUIRED/);
+    await assert.rejects(handleWebsiteChatTool('approve', { proposalId: proposal.proposalId }, { ...context, sourceTurnId: 'later-unapproved', sourceMessage: 'go ahead' }), /EXACT_LATER_HUMAN_APPROVAL_REQUIRED/);
+    await assert.rejects(handleWebsiteChatTool('approve', { proposalId: proposal.proposalId }, { ...context, sourceThreadId: 'another-thread', sourceTurnId: 'later', sourceMessage: proposal.approvalPhrase }), /PROPOSAL_NOT_FOUND/);
+    await assert.rejects(handleWebsiteChatTool('read', { pagePath }, { ...context, session: { ...session, tenant: { id: 'foreign-tenant', name: 'Foreign' } } }), /ACCESS_DENIED/);
+    await assert.rejects(handleWebsiteChatTool('read', { pagePath }, { ...context, configuration: { ...context.configuration, upstreamOrigin: 'https://travel.example.invalid' } }), /LOCAL_DEMO_ONLY/);
+    await assert.rejects(handleWebsiteChatTool('propose', { pagePath, field: 'metaDescription', value: '<script>bad</script>' }, context), /PLAIN_EDITABLE_TEXT_REQUIRED/);
+    note('same_turn_ambiguous_approval_foreign_thread_tenant_production_and_html_injection_rejected');
+    const approvalContext = { ...context, sourceTurnId: 'turn-approve', sourceMessage: proposal.approvalPhrase };
+    const saved = await handleWebsiteChatTool('approve', { proposalId: proposal.proposalId }, approvalContext);
+    assert.equal(saved.savedRevision, before.revision + 1);
+    const after = await handleWebsiteChatTool('read', { pagePath }, context);
+    assert.equal(after.fields.metaDescription, value);
+    const htmlAfter = await (await fetch(origin + '/en' + pagePath)).text();
+    assert.ok(htmlAfter.includes(`<meta name="description" content="${value}">`));
+    note('later_exact_approval_saves_new_revision_and_real_rendered_meta_changes', { human: approvalContext.sourceMessage, tool: 'approve', result: saved, htmlReadback: `<meta name="description" content="${value}">` });
+    const replay = await handleWebsiteChatTool('approve', { proposalId: proposal.proposalId }, approvalContext);
+    assert.equal(replay.replay, true);
+    assert.equal((await handleWebsiteChatTool('read', { pagePath }, context)).revision, saved.savedRevision);
+    note('replayed_approval_does_not_write_second_revision');
+    const staleA = await handleWebsiteChatTool('propose', { pagePath, field: 'metaDescription', value: 'First stale candidate.' }, { ...context, sourceTurnId: 'stale-a' });
+    const staleB = await handleWebsiteChatTool('propose', { pagePath, field: 'metaDescription', value: 'Second independent candidate.' }, { ...context, sourceTurnId: 'stale-b' });
+    await handleWebsiteChatTool('approve', { proposalId: staleB.proposalId }, { ...context, sourceTurnId: 'stale-b-approve', sourceMessage: staleB.approvalPhrase });
+    await assert.rejects(handleWebsiteChatTool('approve', { proposalId: staleA.proposalId }, { ...context, sourceTurnId: 'stale-a-approve', sourceMessage: staleA.approvalPhrase }), /STALE_REVISION/);
+    note('concurrent_content_change_fails_stale_proposal_without_overwrite');
+    const rollback = await handleWebsiteChatTool('propose_rollback', { proposalId: proposal.proposalId }, { ...context, sourceTurnId: 'turn-rollback-propose', sourceMessage: 'Restore the previous English description.' });
+    assert.equal(rollback.newText, before.fields.metaDescription);
+    assert.equal(rollback.oldText, 'Second independent candidate.');
+    const restored = await handleWebsiteChatTool('approve', { proposalId: rollback.proposalId }, { ...context, sourceTurnId: 'turn-rollback-approve', sourceMessage: rollback.approvalPhrase });
+    assert.equal((await handleWebsiteChatTool('read', { pagePath }, context)).fields.metaDescription, before.fields.metaDescription);
+    const htmlRestored = await (await fetch(origin + '/en' + pagePath)).text();
+    assert.ok(!htmlRestored.includes(value));
+    assert.ok(htmlRestored.includes(before.fields.metaDescription.replaceAll('&', '&amp;').replaceAll('"', '&quot;')));
+    const history = app.backend.store.all('SELECT revision FROM content_versions WHERE id=? AND locale=?', app.backend.store.listContent({ locale: 'en', publishedOnly: false }).find(r => r.data.renderPath === pagePath).id, 'en');
+    assert.ok(history.length >= 3);
+    note('separately_approved_inverse_edit_restores_previous_text_as_new_revision_preserving_history', { human: 'Restore the previous English description.', tool: 'propose_rollback then later approve', proposal: rollback, result: restored, historyRevisions: history.map(x => x.revision) });
+    evidence.tools = WEBSITE_CHAT_TOOLS[0].tools.map(x => x.name);
+    evidence.htmlSHA256 = { before: createHash('sha256').update(htmlBefore).digest('hex'), changed: createHash('sha256').update(htmlAfter).digest('hex'), restored: createHash('sha256').update(htmlRestored).digest('hex') };
+    evidence.result = 'passed';
+    if (process.env.INSIJETS_CHAT_EVIDENCE_DIRECTORY) {
+      const destination = path.resolve(process.env.INSIJETS_CHAT_EVIDENCE_DIRECTORY); await mkdir(destination, { recursive: true });
+      await writeFile(path.join(destination, 'local-chat-edit-evidence.json'), JSON.stringify(evidence, null, 2));
+      const escape = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+      await writeFile(path.join(destination, 'Local_Chat_Edit_Demo.html'), `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>InsiJets local chat editing demonstration</title><style>body{max-width:940px;margin:48px auto;padding:0 24px;background:#101c2b;color:#f5f3ec;font:17px/1.6 system-ui}h1{font-size:34px}section{background:#192b40;border:1px solid #3e5670;padding:24px;margin:20px 0;border-radius:14px}pre{white-space:pre-wrap;font-size:14px;color:#d7e3ed}small{color:#b7c8d8}.ok{color:#83dfc1}</style><h1>Website editing through chat tools</h1><p class="ok">Local integration demonstration passed</p><p>This is a recorded, scripted tool demonstration with a synthetic authenticated Luca session. It calls the real website API, SQLite content store and HTML renderer. A language model and browser chat UI were not exercised. No production access, deployment or publication.</p>${evidence.events.map((event, i) => `<section><h2>Step ${i + 1}</h2><pre>${escape(JSON.stringify(event, null, 2))}</pre></section>`).join('')}<section><h2>Verified boundaries</h2><ul>${evidence.checks.map(x => `<li>${escape(x.replaceAll('_', ' '))}</li>`).join('')}</ul></section><small>English only. The current narrow candidate edits title, description, search description and two plain-text hero fields. It is not full CMS feature parity; existing CMS and durable content remain intact.</small></html>`);
+    }
+  } finally { await app.close(); await rm(scratch, { recursive: true, force: true }); }
+});

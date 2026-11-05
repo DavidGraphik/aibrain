@@ -1,0 +1,28 @@
+name: Public source quality
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: public-quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24.18.1'
+          cache: npm
+      - run: node .github/scripts/check-public-source.mjs
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck -- --incremental false
+      - run: node .github/scripts/run-quality-tests.mjs
+      - run: npm run build -- --webpack

@@ -1,0 +1,66 @@
+import { WorkbenchNotFoundError } from "@/workbench/errors";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+import type { AuthSession } from "@/auth/types";
+import { loadInstallationConfig } from "@/config/installation";
+import { UserProvisioner } from "@/users/provisioner";
+import { FileWorkbenchStore } from "@/workbench/filesystem-store";
+import { createProject, createThread, updateProject, updateThread } from "@/workbench/store";
+import { readConversationReference } from "@/workbench/conversation-reference";
+import { handleConversationDynamicToolCall } from "./conversation-dynamic-tools";
+vi.mock("server-only", () => ({}));
+let root: string | undefined;
+const previousConfig = process.env.AIBRAIN_INSTALLATION_CONFIG;
+afterEach(async () => {
+  if (previousConfig === undefined) delete process.env.AIBRAIN_INSTALLATION_CONFIG;
+  else process.env.AIBRAIN_INSTALLATION_CONFIG = previousConfig;
+  vi.restoreAllMocks();
+  if (root) await rm(root, { recursive: true, force: true });
+});
+it("uses real authorized stores: private foreign history is unreadable, archived own and shared viewer history remain visible", async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), "aibrain-conversation-access-"));
+  const dataRoot = path.join(root, "data"); await mkdir(dataRoot, { mode: 0o700 });
+  const configPath = path.join(root, "installation.json");
+  await writeFile(configPath, JSON.stringify({ schemaVersion: 1, installationId: "history-qa", companyName: "History QA", companySlug: "history-qa", publicUrl: "http://localhost:3000",
+    branding: { productName: "AiBrain", logoPath: "/logo.svg", faviconPath: "/favicon.ico", accentColor: "#111111" },
+    paths: { dataRoot, companyContextRoot: path.join(dataRoot, "company"), usersRoot: path.join(dataRoot, "users"), sourceReadRoot: path.join(root, "source"), publishWriteRoot: path.join(root, "publish"), backupsRoot: path.join(dataRoot, "backups") } }));
+  process.env.AIBRAIN_INSTALLATION_CONFIG = configPath;
+  const config = await loadInstallationConfig(), provisioner = new UserProvisioner(config);
+  const ids = ["00000000-0000-4000-8000-000000000011", "00000000-0000-4000-8000-000000000012"];
+  const sessions: AuthSession[] = ids.map((id, index) => ({ provider: "local", user: { id, name: `User ${index}`, email: `user${index}@example.test` }, tenant: { id: config.installationId, name: "History QA" }, expiresAt: "2099-01-01T00:00:00Z" }));
+  for (const session of sessions) await provisioner.provision({ userId: session.user.id, email: session.user.email, displayName: session.user.name });
+  const privateProject = await createProject(sessions[0], "Foreign private project");
+  const foreign = await createThread(sessions[0], privateProject.id, "Foreign private chat");
+  const ownProject = await createProject(sessions[1], "Own project");
+  const own = await createThread(sessions[1], ownProject.id, "Own archived chat");
+  await updateThread(sessions[1], own.id, { status: "archived" });
+  const sharedProject = await createProject(sessions[0], "Shared history");
+  await updateProject(sessions[0], sharedProject.id, { sharing: { visibility: "shared", members: [{ id: "00000000-0000-4000-8000-000000000013", email: sessions[1].user.email, name: "Viewer", role: "viewer", status: "active", addedAt: new Date().toISOString() }] } });
+  const shared = await createThread(sessions[0], sharedProject.id, "Shared viewer chat");
+  const context = { session: sessions[1], installationId: config.installationId, userId: sessions[1].user.id, runtimeThreadId: "runtime", runtimeTurnId: "turn" };
+  const call = async (tool: string, args: Record<string, string> = {}) => {
+    const response = await handleConversationDynamicToolCall({ namespace: "aibrain_conversations", tool, arguments: args, threadId: "runtime", turnId: "turn", callId: "call" }, context);
+    return { success: response.success, value: JSON.parse(response.contentItems[0].type === "inputText" ? response.contentItems[0].text : "{}") };
+  };
+  const readSpy = vi.spyOn(FileWorkbenchStore.prototype as unknown as { read: (userId: string) => unknown }, "read");
+  const denied = await call("read", { threadId: foreign.id });
+  expect(denied).toEqual({ success: false, value: { code: "CONVERSATION_NOT_FOUND_OR_INACCESSIBLE" } });
+  expect(readSpy.mock.calls.map(([userId]) => userId)).not.toContain(sessions[0].user.id);
+  const listing = await call("list");
+  expect(listing.success).toBe(true);
+  const threads = listing.value.threads as { id: string; status: string; url: string }[];
+  expect(threads.some(thread => thread.id === foreign.id)).toBe(false);
+  expect(threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: own.id, status: "archived" }), expect.objectContaining({ id: shared.id })]));
+  expect((await call("read", { threadId: own.id })).success).toBe(true);
+  expect((await call("read", { threadId: shared.id })).success).toBe(true);
+  const ownReference = threads.find(thread => thread.id === own.id)!.url.split("/").at(-1)!;
+  expect((await readConversationReference(sessions[1], ownReference)).id).toBe(own.id);
+  await expect(readConversationReference(sessions[0], ownReference)).rejects.toBeInstanceOf(WorkbenchNotFoundError);
+  await expect(readConversationReference({ ...sessions[1], tenant: { id: "other-installation", name: "Other" } }, ownReference)).rejects.toThrow();
+  const sharedReference = threads.find(thread => thread.id === shared.id)!.url.split("/").at(-1)!;
+  expect((await readConversationReference(sessions[1], sharedReference)).id).toBe(shared.id);
+  await updateProject(sessions[0], sharedProject.id, { sharing: { visibility: "private", members: [] } });
+  await expect(readConversationReference(sessions[1], sharedReference)).rejects.toBeInstanceOf(WorkbenchNotFoundError);
+});

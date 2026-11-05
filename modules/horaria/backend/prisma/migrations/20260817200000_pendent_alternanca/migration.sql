@@ -1,0 +1,12 @@
+-- Què està esperant que el treballador confirmi, sobre l'alternança dels dissabtes.
+--
+-- Guarda el torn que ha demanat per dissabte quan trenca l'alternança, mentre
+-- s'espera el seu «sí» o «no». NULL vol dir que no s'espera res.
+--
+-- A la base de dades i no a la memòria del servidor, com sí que està la
+-- confirmació de l'encarregada: el Render del pla gratuït reinicia el servei
+-- unes quantes vegades al dia. L'encarregada contesta en segons i gairebé mai
+-- ho notaria; un treballador que contesti al cap de deu minuts trobaria un
+-- servidor que ja no recorda què li havia preguntat, i el seu «sí» cauria enmig
+-- de la conversa com un missatge que no ve de res.
+ALTER TABLE "whatsapp_conversations" ADD COLUMN "pendentAlternanca" TEXT;

@@ -1,0 +1,13 @@
+-- El dissabte que va demanar i va retirar quan li vam dir que no li tocava.
+--
+-- `pendentAlternanca` només guarda el torn MENTRE s'espera la resposta, i quan
+-- contesta es buida. Si diu que no, el rastre que ho havia demanat es perd:
+-- només queda dins del text de la conversa.
+--
+-- I això passa: a l'Antònia López el bot li va dir que no podia fer dissabte
+-- matí perquè l'anterior l'havia fet de matí — cert a les 09:04. A les 09:36
+-- aquell dissabte va passar a DIA i llavors sí que li tocava, però ningú ho
+-- podia saber sense llegir-se la conversa a mà.
+--
+-- NULL vol dir que no n'ha retirat cap.
+ALTER TABLE "whatsapp_conversations" ADD COLUMN "dissabteRetirat" TEXT;

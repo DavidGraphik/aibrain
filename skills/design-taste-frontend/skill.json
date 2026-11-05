@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "design-taste-frontend",
+  "label": "design-taste-frontend",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "Bundled from installed design-taste-frontend skill on 2026-09-10; whitespace normalized; ux-writing supporting documents relocated under resources. AiBrain routing and editorial constraints take precedence.",
+  "files": [
+    "SKILL.md"
+  ]
+}

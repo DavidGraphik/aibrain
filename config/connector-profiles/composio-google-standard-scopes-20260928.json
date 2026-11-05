@@ -1,0 +1,42 @@
+{
+  "gmail": [
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/contacts.readonly",
+    "https://www.googleapis.com/auth/contacts.other.readonly",
+    "https://www.googleapis.com/auth/profile.language.read",
+    "https://www.googleapis.com/auth/user.addresses.read",
+    "https://www.googleapis.com/auth/user.birthday.read",
+    "https://www.googleapis.com/auth/user.emails.read",
+    "https://www.googleapis.com/auth/user.phonenumbers.read",
+    "https://www.googleapis.com/auth/profile.emails.read",
+    "https://mail.google.com/"
+  ],
+  "googlecalendar": [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.events"
+  ],
+  "googledrive": [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "googlesheets": [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "googledocs": [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "youtube": [
+    "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.channel-memberships.creator",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtubepartner",
+    "https://www.googleapis.com/auth/youtubepartner-channel-audit"
+  ]
+}

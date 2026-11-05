@@ -1,0 +1,161 @@
+# Render one copy per installation with scripts/render-nginx-config.mjs. Never
+# edit or substitute this template with a general-purpose shell expansion.
+limit_req_zone $binary_remote_addr zone=aibrain___AIBRAIN_INSTANCE_TOKEN___auth:10m rate=10r/m;
+
+upstream aibrain___AIBRAIN_INSTANCE_TOKEN___backend {
+    server 127.0.0.1:__AIBRAIN_HTTP_PORT__;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __AIBRAIN_PUBLIC_HOST__;
+
+    # Keep certificate renewal available on HTTP. Every other request is
+    # redirected to the canonical HTTPS origin.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/aibrain-acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://__AIBRAIN_PUBLIC_HOST__$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __AIBRAIN_PUBLIC_HOST__;
+
+    ssl_certificate /etc/letsencrypt/live/__AIBRAIN_PUBLIC_HOST__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__AIBRAIN_PUBLIC_HOST__/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_tickets off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    add_header Permissions-Policy "camera=(), microphone=(self), geolocation=()" always;
+
+    client_max_body_size 2m;
+
+    # Operator maintenance is reachable only through the host-loopback app
+    # port. Never expose its bearer-authenticated control surface via TLS.
+    location = /api/operations/maintenance {
+        return 404;
+    }
+
+    # Employee lifecycle is also host-operator-only. The app port remains
+    # bound to loopback for the runbook and this path is never public.
+    location = /api/operations/users {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://aibrain___AIBRAIN_INSTANCE_TOKEN___backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host __AIBRAIN_PUBLIC_HOST__;
+        proxy_set_header X-Real-IP $remote_addr;
+        # Overwrite, rather than append to, any client-supplied forwarding chain.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 65s;
+        proxy_send_timeout 65s;
+    }
+
+    # The authenticated broker has its own 220-second bounded operation deadline.
+    # Preserve its structured outcome instead of an earlier generic HTML 504.
+    location = /api/server-files {
+        proxy_pass http://aibrain___AIBRAIN_INSTANCE_TOKEN___backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host __AIBRAIN_PUBLIC_HOST__;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 240s;
+        proxy_send_timeout 30s;
+    }
+
+    location = /api/chat {
+        proxy_pass http://aibrain___AIBRAIN_INSTANCE_TOKEN___backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host __AIBRAIN_PUBLIC_HOST__;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        add_header X-Accel-Buffering no always;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+
+    # Desktop Outlook sends at most 8MiB of original bytes per base64 report.
+    # Only this authenticated endpoint needs more than the default 2MiB.
+    location = /api/connectors/outlook-desktop/agent/result {
+        client_max_body_size 13m;
+        proxy_pass http://aibrain___AIBRAIN_INSTANCE_TOKEN___backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host __AIBRAIN_PUBLIC_HOST__;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+
+    location ~ "^/api/threads/[0-9a-f-]{36}/documents$" {
+        client_max_body_size 52m;
+        proxy_pass http://aibrain___AIBRAIN_INSTANCE_TOKEN___backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host __AIBRAIN_PUBLIC_HOST__;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 5m;
+        proxy_send_timeout 5m;
+    }
+
+    location ~ "^/api/projects/[0-9a-f-]{36}/sources$" {
+        client_max_body_size 22m;
+        proxy_pass http://aibrain___AIBRAIN_INSTANCE_TOKEN___backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host __AIBRAIN_PUBLIC_HOST__;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 5m;
+        proxy_send_timeout 5m;
+    }
+
+    location ~ ^/api/auth/(?:login|password/reset/request|password/recovery|password/change-initial)$ {
+        limit_req zone=aibrain___AIBRAIN_INSTANCE_TOKEN___auth burst=10 nodelay;
+        proxy_pass http://aibrain___AIBRAIN_INSTANCE_TOKEN___backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host __AIBRAIN_PUBLIC_HOST__;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+}

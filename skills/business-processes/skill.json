@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "business-processes",
+  "label": "Negocio y procesos",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "GraphikAI generic baseline for confirmed business and process work; versioned 2026-08-30.",
+  "files": ["SKILL.md"]
+}
