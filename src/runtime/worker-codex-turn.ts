@@ -106,7 +106,7 @@ import {
 import { catalogRuntimeEnforcer, synchronizeCatalogSkillsForUser } from "@/catalog/access-service";
 import { resolveAvailableConnectorsForTurn } from "@/connectors/mentions";
 import { connectorMentionDeveloperInstructions } from "@/connectors/mentions-contract";
-import { connectedAppConfig, hasAppliedConnectedAppConfig, markConnectedAppConfigApplied, SERVER_APPROVALS_REVIEWER } from "@/runtime/connected-app-config";
+import { connectedAppConfig, hasAppliedConnectedAppConfig, markConnectedAppConfigApplied, previousConnectedAppPolicies, SERVER_APPROVALS_REVIEWER } from "@/runtime/connected-app-config";
 import { nativeMcpConfigForTurn } from "@/runtime/native-mcp-config";
 import { personalNativeConnectionsEnabled } from "@/runtime/native-connection-identity";
 import { nativeAppToolsForTurn } from "@/runtime/native-app-tools";
@@ -1075,7 +1075,8 @@ async function runWorkerCodexTurnAttempt(
     ? [...new Set(availableConnectors.flatMap(({ resource }) => resource.appId ? [resource.appId] : []))] : [];
   const nativeAppTools = await nativeAppToolsForTurn(runtime.client,
     () => catalogRuntimeEnforcer(installationId, authenticatedUserId), availableAppIds,
-    `native-app-tools:${chatRequest.assistantMessageId}`, nativeWritesAllowed);
+    `native-app-tools:${chatRequest.assistantMessageId}`, nativeWritesAllowed,
+    runtimeThreadId ? previousConnectedAppPolicies(runtime.client, runtimeThreadId) : {});
   const connectorAppConfig = connectedAppConfig(availableAppIds, nativeAppTools);
   const connectorMcpConfig = await telemetry.measure("native_connection_config", async () => nativeMcpConfigForTurn(
     runtime.client, () => catalogRuntimeEnforcer(installationId, authenticatedUserId),

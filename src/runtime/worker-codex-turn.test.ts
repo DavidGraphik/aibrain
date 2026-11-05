@@ -1100,7 +1100,7 @@ describe("worker Codex turn", () => {
       for (const resource of resources) expect(params.developerInstructions).toContain(`"id":"${resource.id}"`);
       expect(events).toContainEqual({ type: "done" });
 
-      expect(mocked.nativeAppTools).toHaveBeenLastCalledWith(client, expect.any(Function), nativeAllowed ? ["qa-files"] : [], expect.any(String), nativeMode === "agent");
+      expect(mocked.nativeAppTools).toHaveBeenLastCalledWith(client, expect.any(Function), nativeAllowed ? ["qa-files"] : [], expect.any(String), nativeMode === "agent", {});
       expect(mocked.nativeMcpConfig).toHaveBeenLastCalledWith(client, expect.any(Function), new Set(), expect.any(String), nativeMode === "agent");
       mocked.availableConnectors.mockResolvedValue([]);
       mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: [], known: ["search"] } });

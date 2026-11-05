@@ -5,22 +5,41 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 /** Native metadata describes tools; workspace/catalog policy decides whether a
  * write is allowed. Unknown or disabled tools never inherit a blanket enable. */
 export async function nativeAppToolsForTurn(transport: CatalogRuntimeTransport, resolveCatalog: () => Promise<CatalogRuntimeEnforcer>,
-  appIds: readonly string[], purpose: string, allowWrites = false): Promise<NativeAppToolPolicies> {
+  appIds: readonly string[], purpose: string, allowWrites = false, previousThread: NativeAppToolPolicies = {}): Promise<NativeAppToolPolicies> {
   const ids = [...new Set(appIds)];
   // Read only names from previous config, never return provider/link metadata.
   // An explicit saved app/tool enable outranks an app default, so it must be
   // represented in the new turn's negative overrides as well.
-  const configuration = await transport.request("config/read", { includeLayers: false }, `${purpose}:config`, 10_000);
+  const denied = (): NativeAppToolPolicies => Object.fromEntries([...new Set([...ids, ...Object.keys(previousThread)])]
+    .map(id => [id, { allowed: [], known: [...(previousThread[id]?.known ?? [])] }]));
+  let configuration: unknown;
+  try { configuration = await transport.request("config/read", { includeLayers: false }, `${purpose}:config`, 10_000); }
+  catch { return denied(); }
   if (!record(configuration) || !record(configuration.config) ||
-      configuration.config.apps != null && !record(configuration.config.apps)) throw new Error("NATIVE_APP_CONFIG_UNAVAILABLE");
+      configuration.config.apps != null && !record(configuration.config.apps)) return denied();
   const previous = record(configuration.config.apps) ? configuration.config.apps : {};
-  const knownIds = [...new Set([...ids, ...Object.keys(previous).filter(id => id !== "_default")])];
+  let snapshot: unknown;
+  try { snapshot = await transport.request("app/installed", { forceRefresh: false }, `${purpose}:installed`, 10_000); }
+  catch { return denied(); }
+  // 0.162.1 installed snapshots are complete and unpaginated. Only committed
+  // runtime IDs are needed here; no remote metadata refresh or foreign app/read.
+  if (!record(snapshot) || !Array.isArray(snapshot.apps) || snapshot.apps.length > 4096 || snapshot.nextCursor) return denied();
+  const installed = new Map<string, boolean>();
+  for (const app of snapshot.apps) {
+    if (!record(app) || typeof app.id !== "string" || !app.id || app.id === "_default" || installed.has(app.id)
+      || typeof app.enabled !== "boolean" || typeof app.callable !== "boolean") return denied();
+    installed.set(app.id, app.enabled && app.callable);
+  }
+  const knownIds = [...new Set([...ids, ...Object.keys(previous).filter(id => id !== "_default"), ...Object.keys(previousThread), ...installed.keys()])];
   const result: NativeAppToolPolicies = Object.fromEntries(knownIds.map(id => {
     const entry = previous[id];
-    return [id, { allowed: [], known: record(entry) && record(entry.tools) ? Object.keys(entry.tools).sort() : [] }];
+    return [id, { allowed: [], known: [...new Set([...(previousThread[id]?.known ?? []),
+      ...(record(entry) && record(entry.tools) ? Object.keys(entry.tools) : []),
+    ])].sort() }];
   }));
-  for (let offset = 0; offset < ids.length; offset += 100) {
-    const selected = ids.slice(offset, offset + 100);
+  const accessible = ids.filter(id => installed.get(id));
+  for (let offset = 0; offset < accessible.length; offset += 100) {
+    const selected = accessible.slice(offset, offset + 100);
     let response: unknown;
     try { response = await transport.request("app/read", { appIds: selected, includeTools: true }, `${purpose}:${offset}`, 10_000); }
     catch { continue; } // Disable this batch; unrelated ordinary chat can proceed.

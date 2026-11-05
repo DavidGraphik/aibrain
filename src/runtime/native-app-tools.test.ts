@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { nativeAppToolsForTurn } from "./native-app-tools";
-import { connectedAppConfig } from "./connected-app-config";
+import { connectedAppConfig, markConnectedAppConfigApplied, previousConnectedAppPolicies } from "./connected-app-config";
 import { CatalogRuntimeEnforcer } from "@/catalog/runtime-enforcement";
 import type { CatalogState, CatalogPrincipal } from "@/catalog/contracts";
 const state: CatalogState = { schemaVersion: 1, installationId: "company", revision: 1,
@@ -14,7 +14,8 @@ const tools = [{ name: "messages/read", isEnabled: true, isReadOnly: true }, { n
 const known = tools.map(tool => tool.name).sort();
 const writable: CatalogState = { ...state, rules: [{ ...state.rules[0], operations: ["read", "write"] }] };
 function fixture(metadata: unknown = { apps: [{ id: "native_mail", toolSummaries: tools }] }, apps: unknown = {}) {
-  return { request: vi.fn(async (method: string) => method === "config/read" ? { config: { apps } } : metadata) };
+  return { request: vi.fn(async (method: string, _params?: unknown) => method === "config/read" ? { config: { apps } }
+    : method === "app/installed" ? { apps: [{ id: "native_mail", enabled: true, callable: true }] } : metadata) };
 }
 
 it("accepts native slash tool names while requiring current grants and explicit turn write permission", async () => {
@@ -54,6 +55,7 @@ it("does not enable ambiguous apps, duplicate tools or incomplete descriptors", 
   expect(await nativeAppToolsForTurn(transport, resolve, ["native_mail"], "tools"))
     .toEqual({ native_mail: { allowed: [], known: ["messages/read", "unknown"] } });
   transport.request.mockImplementation(async method => method === "config/read" ? { config: { apps: {} } }
+    : method === "app/installed" ? { apps: [{ id: "native_mail", enabled: true, callable: true }] }
     : { apps: [{ id: "native_mail", toolSummaries: tools }, { id: "native_mail", toolSummaries: tools }] });
   expect(await nativeAppToolsForTurn(transport, resolve, ["native_mail"], "tools")).toEqual({ native_mail: { allowed: [], known: [] } });
 });
@@ -70,11 +72,38 @@ it("isolates metadata failure with safe negatives while ordinary chat can contin
   expect(connectedAppConfig(["native_mail"], policies).apps).toMatchObject({ native_mail: { enabled: false, tools: { "messages/send": { enabled: false } } } });
 });
 
-it("reads previous config with no allowed apps and fails closed if the snapshot is unavailable", async () => {
+it("reads complete committed runtime IDs with no permitted apps and disables the feature if inventory is unavailable", async () => {
   const transport = fixture(undefined, { foreign: { enabled: true, tools: { "files/read": { enabled: true } } } });
   expect(await nativeAppToolsForTurn(transport, async () => new CatalogRuntimeEnforcer(state, principal), [], "tools"))
-    .toEqual({ foreign: { allowed: [], known: ["files/read"] } });
-  expect(transport.request).toHaveBeenCalledExactlyOnceWith("config/read", { includeLayers: false }, "tools:config", 10_000);
+    .toEqual({ native_mail: { allowed: [], known: [] }, foreign: { allowed: [], known: ["files/read"] } });
+  expect(transport.request).toHaveBeenCalledWith("app/installed", { forceRefresh: false }, "tools:installed", 10_000);
+  expect(transport.request.mock.calls.some(([method]) => method === "app/read")).toBe(false);
   transport.request.mockResolvedValue({});
-  await expect(nativeAppToolsForTurn(transport, async () => new CatalogRuntimeEnforcer(state, principal), [], "tools")).rejects.toThrow("NATIVE_APP_CONFIG_UNAVAILABLE");
+  const unknown = await nativeAppToolsForTurn(transport, async () => new CatalogRuntimeEnforcer(state, principal), [], "tools");
+  expect(connectedAppConfig([], unknown)).toMatchObject({ "features.apps": false });
+});
+
+it("clears a thread-only app even after it disappears from both base configuration and runtime inventory", async () => {
+  const client = {};
+  markConnectedAppConfigApplied(client, "thread", ["qa-files"], {}, { "qa-files": { allowed: ["files/read"], known: ["files/read"] } });
+  const transport = fixture();
+  transport.request.mockImplementation(async method => method === "config/read" ? { config: { apps: {} } } : { apps: [] });
+  const policies = await nativeAppToolsForTurn(transport, async () => new CatalogRuntimeEnforcer(state, principal), [], "tools", false,
+    previousConnectedAppPolicies(client, "thread"));
+  expect(connectedAppConfig([], policies)).toMatchObject({ "features.apps": false,
+    apps: { "qa-files": { enabled: false, tools: { "files/read": { enabled: false } } } } });
+});
+
+it("cold recovery disables revoked installed IDs without reading their provider metadata", async () => {
+  const transport = fixture();
+  transport.request.mockImplementation(async method => method === "config/read" ? { config: { apps: {} } }
+    : method === "app/installed" ? { apps: [{ id: "native_mail", enabled: true, callable: true }, { id: "revoked-app", enabled: true, callable: true }] }
+      : { apps: [{ id: "native_mail", toolSummaries: tools }] });
+  const policies = await nativeAppToolsForTurn(transport, async () => new CatalogRuntimeEnforcer(state, principal), ["native_mail"], "tools");
+  expect(connectedAppConfig(["native_mail"], policies).apps).toMatchObject({
+    "revoked-app": { enabled: false }, native_mail: { enabled: true },
+  });
+  const metadata = transport.request.mock.calls.filter(([method]) => method === "app/read");
+  expect(metadata).toHaveLength(1);
+  expect(metadata[0][1]).toEqual({ appIds: ["native_mail"], includeTools: true });
 });

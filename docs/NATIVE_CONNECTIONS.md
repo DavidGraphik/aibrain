@@ -29,6 +29,11 @@ an executable foreground agent turn. A denied execution grant disables all
 native tools; read-only and background turns cannot inherit native write grants.
 Previously enabled apps/tools receive explicit negative overrides when removed;
 defaults alone cannot replace an existing per-tool grant in Codex configuration.
+The complete committed installed-app snapshot supplies negative overrides for
+unassigned apps after a restart. Loaded conversations also retain prior tool
+names only to disable them, never to carry permissions forward. An unavailable
+inventory disables native Apps for that turn while ordinary chat can continue.
+This check does not force a remote provider refresh on every turn.
 Unknown, ambiguous or disabled resources do not receive blanket tool access.
 Provider output cannot authorize a mutation. Explicit account-holder review
 requirements, including exact email review, still apply.

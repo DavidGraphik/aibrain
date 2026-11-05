@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { connectedAppConfig, hasAppliedConnectedAppConfig, markConnectedAppConfigApplied } from "./connected-app-config";
+import { connectedAppConfig, hasAppliedConnectedAppConfig, markConnectedAppConfigApplied, previousConnectedAppPolicies } from "./connected-app-config";
 
 it("refreshes loaded threads when connections change, disappear or the worker restarts", () => {
   const client = {};
@@ -12,7 +12,7 @@ it("refreshes loaded threads when connections change, disappear or the worker re
   expect(hasAppliedConnectedAppConfig(client, "thread", [])).toBe(false);
   expect(hasAppliedConnectedAppConfig({}, "thread", ["mail", "files"])).toBe(false);
   expect(hasAppliedConnectedAppConfig(client, "other-thread", ["mail", "files"])).toBe(false);
-  expect(connectedAppConfig([])).toEqual({ apps: { _default: expect.objectContaining({ enabled: false }) } });
+  expect(connectedAppConfig([])).toMatchObject({ "features.apps": false, apps: { _default: expect.objectContaining({ enabled: false }) } });
   expect(connectedAppConfig(["mail"]).apps).toEqual({
     _default: expect.objectContaining({ enabled: false }),
     mail: expect.objectContaining({ enabled: false, approvals_reviewer: "auto_review" }),
@@ -36,6 +36,9 @@ it("uses a supported reviewer even for disabled defaults without enabling destru
 it("bounds native app tools and refreshes loaded threads after tool or write policy changes", () => {
   const tools = { mail: { allowed: ["search"], known: ["search", "send"] } };
   const config = connectedAppConfig(["mail"], tools);
+  expect(config["features.apps"]).toBe(true);
+  expect(connectedAppConfig([], { mail: { allowed: [], known: ["search"] } })["features.apps"]).toBe(false);
+  expect(connectedAppConfig(["mail"], tools)["features.apps"]).toBe(true);
   expect((config.apps as Record<string, unknown>).mail).toMatchObject({ default_tools_enabled: false, tools: { search: { enabled: true } } });
   const client = {};
   markConnectedAppConfigApplied(client, "thread", ["mail"], {}, tools);
@@ -64,7 +67,22 @@ it("overrides saved app and per-tool enables explicitly, including names with sl
 });
 
 it("metadata loss or a revoked app never inherits a previous blanket tool enable", () => {
+  expect(connectedAppConfig(["mail"])).toMatchObject({ "features.apps": false });
   expect(connectedAppConfig(["mail"]).apps).toMatchObject({ mail: { enabled: false, default_tools_enabled: false, tools: {} } });
   expect(connectedAppConfig([], { mail: { allowed: ["search"], known: ["search"] } }).apps)
     .toMatchObject({ mail: { enabled: false, tools: { search: { enabled: false } } } });
+});
+
+it("remembers thread-only negative knowledge without carrying grants to another thread or worker", () => {
+  const client = {};
+  markConnectedAppConfigApplied(client, "thread", ["qa-files"], {}, { "qa-files": { allowed: ["files/read"], known: ["files/read"] } });
+  expect(previousConnectedAppPolicies(client, "thread")).toEqual({ "qa-files": { allowed: [], known: ["files/read"] } });
+  markConnectedAppConfigApplied(client, "thread", [], {}, {});
+  expect(previousConnectedAppPolicies(client, "thread")).toEqual({ "qa-files": { allowed: [], known: ["files/read"] } });
+  expect(previousConnectedAppPolicies(client, "foreign-thread")).toEqual({});
+  expect(previousConnectedAppPolicies({}, "thread")).toEqual({});
+  expect(previousConnectedAppPolicies(client, null)).toEqual({});
+  const copy = previousConnectedAppPolicies(client, "thread");
+  copy["qa-files"].known = [];
+  expect(previousConnectedAppPolicies(client, "thread")["qa-files"].known).toEqual(["files/read"]);
 });
