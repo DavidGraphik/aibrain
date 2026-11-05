@@ -137,6 +137,9 @@ export class ServerDocumentFiles {
   /** An optional source capability. A legacy descriptor causes no new RPC. */
   private async searchSourceNames(roots: readonly EnterpriseDocumentRoot[], query: string, limit: number): Promise<ServerResult | null> {
     if (this.options.signal?.aborted) return { available: false, error: "SEARCH_CANCELLED" };
+    // A continuation must resume the backend that created it, even if a new
+    // source capability became available after its first page.
+    if (query.startsWith("name-cursor:")) return null;
     const continuation = /^filename-cursor:([a-z0-9][a-z0-9-]{0,62}):([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/u.exec(query);
     if (query.startsWith("filename-cursor:") && !continuation) throw Error("Invalid filename cursor");
     if (!this.options.userId) return continuation ? { available: false, error: "SEARCH_CURSOR_EXPIRED_OR_DENIED" } : null;
@@ -149,7 +152,9 @@ export class ServerDocumentFiles {
     if (!continuation && parsed && parsed[1].trim().length > 128) return null;
     if (!continuation && parsed?.[2]) {
       const location = canonicalDirectoryQuery(parsed[2]);
-      if (location.includes("?")) throw Error("A filename search requires a folder, not a browse offset");
+      // A browse offset belongs to the legacy paged reader. It cannot be
+      // converted into a fresh source search without dropping prior coverage.
+      if (location.includes("?")) return null;
       seeds = [...new Set(seeds.map(root => `${root.split("/")[0]}/${location.slice(8)}`))]
         .filter(root => serverPathAllowed(root, grants));
     }

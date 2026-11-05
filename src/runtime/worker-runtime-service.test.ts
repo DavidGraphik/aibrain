@@ -1,7 +1,6 @@
 import { withColdThreadRecoveryDeadline } from "@/runtime/cold-thread-recovery";
 import { validateAppServerRequest } from "@/runtime/transport/wire-protocol";
 import { describe, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
 import { loadInstallationConfig } from "@/config/installation";
 import { FileLocalUserStore } from "@/auth/local-user-store";
 
@@ -22,6 +21,7 @@ import {
   requestPendingWorkerTurnCancellation,
   WorkerAppServerClient,
   configuredWorkerTransport,
+  installationFingerprint,
   workerAppServerForUser,
   workerExistingMetadataRequest,
   stopWorkerRuntimeForUser,
@@ -314,14 +314,7 @@ describe("worker App Server client", () => {
 
   it.each([false, true])("coalesces concurrent failed initialization and cleans a failed retry (%s)", async (retryFails) => {
     const config = await loadInstallationConfig();
-    const fingerprint = createHash("sha256").update(JSON.stringify({
-      schemaVersion: config.schemaVersion,
-      installationId: config.installationId,
-      usersRoot: config.paths.usersRoot,
-      companyContextRoot: config.paths.companyContextRoot,
-      sourceReadRoot: config.paths.sourceReadRoot,
-      publishWriteRoot: config.paths.publishWriteRoot,
-    })).digest("hex");
+    const fingerprint = installationFingerprint(config);
     const globals = globalThis as typeof globalThis & { __aibrainWorkerRuntimeService?: unknown };
     const previous = globals.__aibrainWorkerRuntimeService;
     const first = handle(new FakeTransport());
@@ -372,23 +365,26 @@ describe("worker App Server client", () => {
     }
   });
 
-  it("does not publish a replacement service while its previous registry cannot clean up", async () => {
+  it("does not publish a replacement transport while its previous registry cannot clean up", async () => {
+    const config = await loadInstallationConfig();
     const globals = globalThis as typeof globalThis & { __aibrainWorkerRuntimeService?: unknown };
     const previous = globals.__aibrainWorkerRuntimeService;
     const close = vi.fn().mockRejectedValue(new Error("owned process still alive"));
-    const old = { fingerprint: "different-configuration", clients: new Map(), registry: { close } };
+    vi.stubEnv("AIBRAIN_CODEX_TRANSPORT", "gateway");
+    const old = { fingerprint: installationFingerprint(config), clients: new Map(), registry: { close } };
+    vi.stubEnv("AIBRAIN_CODEX_TRANSPORT", "stdio");
     globals.__aibrainWorkerRuntimeService = old;
     try {
       await expect(workerAppServerForUser("00000000-0000-4000-8000-000000000001")).rejects.toThrow("owned process still alive");
       expect(globals.__aibrainWorkerRuntimeService).toBe(old);
       await expect(workerAppServerForUser("00000000-0000-4000-8000-000000000001")).rejects.toThrow("owned process still alive");
       expect(close).toHaveBeenCalledTimes(2);
-    } finally { globals.__aibrainWorkerRuntimeService = previous; }
+    } finally { globals.__aibrainWorkerRuntimeService = previous; vi.unstubAllEnvs(); }
   });
 
   it.each([false, true])("does not recover an admission invalidated by stopping its user (initialize fails: %s)", async (initializeFails) => {
     const config = await loadInstallationConfig();
-    const fingerprint = createHash("sha256").update(JSON.stringify({ schemaVersion: config.schemaVersion, installationId: config.installationId, usersRoot: config.paths.usersRoot, companyContextRoot: config.paths.companyContextRoot, sourceReadRoot: config.paths.sourceReadRoot, publishWriteRoot: config.paths.publishWriteRoot })).digest("hex");
+    const fingerprint = installationFingerprint(config);
     const globals = globalThis as typeof globalThis & { __aibrainWorkerRuntimeService?: unknown };
     const previous = globals.__aibrainWorkerRuntimeService;
     const first = handle(new FakeTransport());
@@ -842,7 +838,7 @@ it("invalidates loaded-thread reuse when unsubscribe is sent, including an uncer
 
 it("awaits the exact turn preparation before any worker startup and stops on a failed proof",async()=>{
  const config=await loadInstallationConfig();
- const fingerprint=createHash("sha256").update(JSON.stringify({schemaVersion:config.schemaVersion,installationId:config.installationId,usersRoot:config.paths.usersRoot,companyContextRoot:config.paths.companyContextRoot,sourceReadRoot:config.paths.sourceReadRoot,publishWriteRoot:config.paths.publishWriteRoot})).digest("hex");
+ const fingerprint=installationFingerprint(config);
  const globals=globalThis as typeof globalThis & {__aibrainWorkerRuntimeService?:unknown};const previous=globals.__aibrainWorkerRuntimeService;
  const first=handle(new FakeTransport());const registry={get:vi.fn(()=>null),start:vi.fn().mockResolvedValue(first),stop:vi.fn()};
  globals.__aibrainWorkerRuntimeService={fingerprint,config,registry,clients:new Map(),clientAdmissions:new Map(),maintenance:new MaintenanceCoordinator(),activeTurnCancellations:new Map()};

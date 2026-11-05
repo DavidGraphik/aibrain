@@ -57,7 +57,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function installationFingerprint(config: Readonly<InstallationConfig>) {
+/** Shared with service-state fixtures so identity changes cannot silently
+ * construct an unrelated cached runtime in admission/recovery tests. */
+export function installationFingerprint(config: Readonly<InstallationConfig>) {
   return createHash("sha256").update(JSON.stringify({
     schemaVersion: config.schemaVersion,
     installationId: config.installationId,

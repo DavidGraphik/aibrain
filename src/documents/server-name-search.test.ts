@@ -13,9 +13,17 @@ function fixture(reply: (query: string) => object, userId = 'qa-user-1') {
   const network = { validateSyncRoots: vi.fn(async () => {}), search: vi.fn(async () => { throw Error('Scoped server paths must not reach local text search'); }), config: { installationId: 'g03-production', paths: { dataRoot: scratch } } };
   const files = new ServerDocumentFiles(network as never, { userId });
   vi.spyOn(files, 'navigation').mockResolvedValue({ available: true, results: [entry('server-g03/M/Allowed', 'directory')] });
-  // The bounded child shares the normal permission-gated transport method.
-  const transport = vi.spyOn(ServerDocumentFiles.prototype as unknown as { call(roots: unknown, operation: string, input: { query: string }): Promise<object | null> }, 'call').mockImplementation(async (_roots: unknown, _operation: unknown, input: { query: string }) => reply(input.query));
-  return { files, transport, network };
+  // Model a legacy descriptor's capability result separately from a source
+  // request. The real descriptor/Unix-socket gate is covered by source-filename-search.
+  const sourceCapability = vi.fn(async () => ({ available: false, error: 'FILENAME_SEARCH_UNSUPPORTED' }));
+  const transport = vi.fn(async (_roots: unknown, operation: string, input: { query: string }) => {
+    expect(['browse', 'inventory']).toContain(operation);
+    return reply(input.query);
+  });
+  vi.spyOn(ServerDocumentFiles.prototype as unknown as { call(roots: unknown, operation: string, input: { query: string }): Promise<object | null> }, 'call')
+    .mockImplementation(async (roots: unknown, operation: string, input: { query: string }) => operation === 'filename_search'
+      ? sourceCapability() : transport(roots, operation, input));
+  return { files, transport, sourceCapability, network };
 }
 afterEach(() => { for (const root of scratchRoots.splice(0)) rmSync(root, {recursive:true,force:true}); vi.restoreAllMocks(); policy.roots = ['server-g03/M/Allowed']; });
 describe('G03 bounded live filename search', () => {
@@ -27,6 +35,13 @@ describe('G03 bounded live filename search', () => {
         : { available: true, sourceChecked: true, results: [entry('server-g03/M/Allowed/Sub', 'directory'), entry('server-g03/M/Private/417.txt')], limited: true, nextQuery: 'server:/M/Allowed?offset=50' });
     expect(await f.files.search([], '417')).toMatchObject({ available: true, limited: false, results: [expect.objectContaining({ path: 'server-g03/M/Allowed/PROGRAMA%20417.xls' }), expect.objectContaining({ path: 'server-g03/M/Allowed/Sub/417.pdf' })], coverage: { pages: 3, complete: true } });
     expect(f.transport.mock.calls.every(args => (args[2] as {query: string}).query.startsWith('server:/M/Allowed'))).toBe(true);
+    expect(f.sourceCapability).toHaveBeenCalledTimes(1);
+  });
+  it('keeps an advertised source failure without silently browsing the old tree', async () => {
+    const f = fixture(() => { throw Error('Source failure must not fall back'); });
+    f.sourceCapability.mockResolvedValue({ available: false, error: 'SEARCH_SOURCE_BUSY' });
+    expect(await f.files.search([], 'name:417 in:server:/M/Allowed')).toMatchObject({ available: false, error: 'SEARCH_SOURCE_BUSY' });
+    expect(f.transport).not.toHaveBeenCalled();
   });
   it('accepts a relay-encoded continuation for a scoped path containing spaces and accents', async () => {
     const base = 'server:/M/Allowed/PROGRAMAS%20CNC/M%C3%A0quina';
@@ -69,13 +84,16 @@ describe('G03 bounded live filename search', () => {
   });
   it('retains a timed-out page as an explicit bounded continuation', async () => {
     const f = fixture(() => ({ available: false }));
-    expect(await f.files.search([], 'name:417 in:server:/M/Allowed')).toMatchObject({ available: false, limited: true, nextQuery: expect.stringMatching(/^name-cursor:/), coverage: { pages: 1, pendingQueries: [], complete: false } });
+    expect(await f.files.search([], 'name:417 in:server:/M/Allowed')).toMatchObject({ available: false, sourceChecked: false,
+      error: 'SEARCH_SOURCE_OFFLINE', limited: true, nextQuery: expect.stringMatching(/^name-cursor:/),
+      coverage: { pages: 0, pendingCount: 1, pendingQueries: [], complete: false } });
     expect(f.transport).toHaveBeenCalledTimes(1);
   });
   it('resumes only the validated pending page and discloses excluded earlier pages', async () => {
     const f = fixture(() => ({ available: true, sourceChecked: true, results: [entry('server-g03/M/Allowed/417')] }));
     expect(await f.files.search([], 'name:417 in:server:/M/Allowed?offset=400')).toMatchObject({ available: true, limited: true, nextQuery: null, coverage: { pages: 1, priorPagesExcluded: true, remainingInScopeComplete: true, complete: false } });
     expect((f.transport.mock.calls[0][2] as {query: string}).query).toBe('server:/M/Allowed?offset=400');
+    expect(f.sourceCapability).not.toHaveBeenCalled();
   });
   it('caps traversal and gives explicit partial coverage instead of false absence', async () => {
     const f = fixture(query => ({ available: true, sourceChecked: true, results: [entry(query.split('?')[0].replace('server:/', 'server-g03/') + '/Sub', 'directory')], limited: true, nextQuery: query.split('?')[0] + '?offset=' + (Number(query.split('offset=')[1] ?? 0) + 50) }));
@@ -143,6 +161,7 @@ describe('G03 bounded live filename search', () => {
     expect(second).toMatchObject({ results: [expect.objectContaining({ path: 'server-g03/M/Allowed/417-B' })], limited: true });
     expect(await f.files.search([], cursor, 1)).toMatchObject({ results: second?.results, nextQuery: second?.nextQuery });
     expect(f.transport).toHaveBeenCalledTimes(3);
+    expect(f.sourceCapability).toHaveBeenCalledTimes(1);
     const other = new ServerDocumentFiles(f.network as never, { userId: 'qa-user-2' });
     vi.spyOn(other, 'navigation').mockResolvedValue({ available: true, results: [entry('server-g03/M/Allowed', 'directory')] });
     expect(await other.search([], String(second?.nextQuery), 1)).toMatchObject({ available: false, error: 'SEARCH_CURSOR_EXPIRED_OR_DENIED' });
@@ -159,6 +178,17 @@ describe('G03 bounded live filename search', () => {
     const next=await f.files.search([],String(first?.nextQuery),1);
     expect(JSON.stringify(next)).not.toContain('PRIVATE-REVOKED');
     expect(next).toMatchObject({available:false,limited:true,error:'SEARCH_SOURCE_RECHECK'});
+  });
+  it('resumes an issued legacy cursor without renegotiating a newly available source capability', async () => {
+    const f = fixture(() => ({ available: true, sourceChecked: true, results: [
+      entry('server-g03/M/Allowed/417-A'), entry('server-g03/M/Allowed/417-B'),
+    ] }));
+    const first = await f.files.search([], 'name:417 in:server:/M/Allowed', 1);
+    f.sourceCapability.mockImplementation(async () => { throw Error('An issued cursor must keep its original backend'); });
+    const resumed = await f.files.search([], String(first?.nextQuery), 1);
+    expect(resumed).toMatchObject({ results: [expect.objectContaining({ path: 'server-g03/M/Allowed/417-B' })],
+      limited: false, coverage: { complete: true } });
+    expect(f.sourceCapability).toHaveBeenCalledTimes(1);
   });
   it('withholds replayed filenames after Windows access is revoked', async () => {
     let access=true;
