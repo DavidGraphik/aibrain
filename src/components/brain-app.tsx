@@ -1,9 +1,6 @@
 "use client";
 import { MAX_FILES_PER_MESSAGE } from "@/lib/chat-attachment-limits";
 import { continuingDocumentUploads } from "@/lib/continuing-document-uploads";
-import { ReceptionWorkspace } from "@/g03-products/reception-workspace";
-import { ProductionWorkspace } from "@/g03-products/production-workspace";
-import { AppsWorkspace } from "@/g03-products/apps-workspace";
 import { g03ProductInstallation } from "@/g03-products/contracts";
 import { useUiText } from "@/i18n/provider";
 
@@ -13,8 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { AuthSession } from "@/auth/types";
 import { ChatWorkspace } from "@/components/chat-workspace";
-import { OutreachWorkspacePanel } from "@/components/outreach-workspace-panel";
-import outreachLayout from "@/components/outreach-layout.module.css";
+import { WorkbenchContent } from "@/components/workbench-content";
 import { withOutreachPaneContext, type OutreachPaneContext } from "@/ui/outreach-context";
 import { MAX_COMPOSER_TEXT_CHARS as MAX_COMPOSER_DRAFT_CHARS } from "@/lib/chat-input-limits";
 import { LiveAnswerStore } from '@/ui/live-answer-store';
@@ -23,9 +19,6 @@ import { CustomizationPanel } from "@/components/customization-panel";
 import { DetailsPanel } from "@/components/details-panel";
 import { DocumentPreviewPanel } from "@/components/document-preview-panel";
 import { ProjectPanel } from "@/components/project-panel";
-import { InsiJetsCMSPanel } from "@/components/insijets-cms-panel";
-import { InsiJetsDirectoryPanel } from "@/components/insijets-directory-panel";
-import { AutomationsPanel } from "@/components/automations-panel";
 import { TaskCenterPanel } from "@/components/task-center-panel";
 import { isEditableShortcutTarget, isTaskCenterShortcut } from "@/components/use-task-center-shortcut";
 import {
@@ -2602,22 +2595,48 @@ export function BrainApp({
         }}
       />
 
-      <div className={outreachLayout.workspace}>
-      {outreachOpen && insijetsOutreachAccess ? <nav className={outreachLayout.switch} aria-label="Outreach workspace view">
-        <button type="button" aria-pressed={outreachCompactView === 'chat'} onClick={() => setOutreachCompactView('chat')}>Chat</button>
-        <button type="button" aria-pressed={outreachCompactView === 'outreach'} onClick={() => setOutreachCompactView('outreach')}>Outreach</button>
-      </nav> : null}
-      <div className={outreachLayout.split}>
-      <div className={`${outreachLayout.chat} [&>main]:min-h-0 ${outreachOpen && outreachCompactView === 'outreach' ? outreachLayout.hiddenCompact : ''}`}>
-      {productView && g03ProductInstallation(branding.installationId) && <button className="md:hidden self-start m-2 rounded-lg border px-3 py-2" onClick={(event) => toggleSidebar(event.currentTarget)}>Navegació</button>}
-      {productView === "reception" && g03ProductInstallation(branding.installationId) ? <ReceptionWorkspace /> : productView === "production" && g03ProductInstallation(branding.installationId) ? <ProductionWorkspace onChat={(message) => { setProductView(null); startNewThread(); setPrompt(message); }} /> : productView === "apps" && g03ProductInstallation(branding.installationId) ? <AppsWorkspace actor={session.user.id} onChat={(message) => { setProductView(null); startNewThread(); setPrompt(message); }} /> : insijetsWorkspaceAccess && (insijetsPanel === "cms" || insijetsPanel === "pricing") ? <InsiJetsCMSPanel key={insijetsPanel} mode={insijetsPanel === "pricing" ? "pricing" : "content"} onToggleSidebar={toggleSidebar} onDirtyChange={setInsiJetsCMSDirty} onRequestChat={(message) => { const draft = promptRef.current.trimEnd(); updateComposerPrompt(draft.trim() ? `${draft}\n\n${message}` : message); setInsiJetsPanel(null); setOutreachCompactView("chat"); }}/> : insijetsWorkspaceAccess && insijetsPanel === "directory" ? <InsiJetsDirectoryPanel onToggleSidebar={toggleSidebar}/> : automationsOpen ? <AutomationsPanel
-        open
-        projects={projects}
-        initialCreate={newAutomationRequested}
+      <WorkbenchContent
+        installationId={branding.installationId}
+        actorId={session.user.id}
+        productView={productView}
+        onProductChat={(message) => { setProductView(null); startNewThread(); setPrompt(message); }}
         onToggleSidebar={toggleSidebar}
-        onBlockingSurfaceChange={setAutomationsBlockingSurfaceOpen}
-        onOpenThread={(threadId) => { setAutomationsOpen(false); selectThread(threadId); }}
-      /> : <ChatWorkspace
+        insijets={{
+          allowed: insijetsWorkspaceAccess,
+          panel: insijetsPanel,
+          onDirtyChange: setInsiJetsCMSDirty,
+          onRequestChat: (message) => {
+            const draft = promptRef.current.trimEnd();
+            updateComposerPrompt(draft.trim() ? `${draft}\n\n${message}` : message);
+            setInsiJetsPanel(null);
+            setOutreachCompactView("chat");
+          },
+        }}
+        automations={{
+          open: automationsOpen,
+          projects,
+          initialCreate: newAutomationRequested,
+          onBlockingSurfaceChange: setAutomationsBlockingSurfaceOpen,
+          onOpenThread: (threadId) => { setAutomationsOpen(false); selectThread(threadId); },
+        }}
+        outreach={{
+          allowed: insijetsOutreachAccess,
+          open: outreachOpen,
+          compactView: outreachCompactView,
+          onCompactViewChange: setOutreachCompactView,
+          panel: {
+            onClose: () => setOutreachOpen(false),
+            onContextChange: setOutreachPaneContext,
+            onAsk: (message) => {
+              const draft = promptRef.current.trimEnd(), request = message.trim();
+              const alreadyPrepared = draft.trim() === request || draft.endsWith(`\n\n${request}`);
+              updateComposerPrompt(draft.trim() ? alreadyPrepared ? draft : `${draft}\n\n${request}` : request);
+              setOutreachCompactView("chat");
+            },
+          },
+        }}
+      >
+        <ChatWorkspace
         onCreateAutomation={() => { setProductView(null); setNewAutomationRequested(true); setAutomationsOpen(true); }}
         liveAnswers={liveAnswers}
         manifest={manifest}
@@ -2691,14 +2710,8 @@ export function BrainApp({
           setActiveSideWindow("inspector");
         }}
         readOnly={!workbenchThreadAccess(activeThread, activeProject).canEdit}
-      />}
-      </div>
-      {outreachOpen && insijetsOutreachAccess ? <aside className={`${outreachLayout.panel} ${outreachCompactView === 'chat' ? outreachLayout.hiddenCompact : ''}`} aria-label="Outreach workspace">
-        <OutreachWorkspacePanel onClose={() => setOutreachOpen(false)} onContextChange={setOutreachPaneContext}
-          onAsk={(message) => { const draft = promptRef.current.trimEnd(), request = message.trim(); const alreadyPrepared = draft.trim() === request || draft.endsWith(`\n\n${request}`); updateComposerPrompt(draft.trim() ? alreadyPrepared ? draft : `${draft}\n\n${request}` : request); setOutreachCompactView('chat'); }}/>
-      </aside> : null}
-      </div>
-      </div>
+      />
+      </WorkbenchContent>
 
       {previewDocument ? (
         <DocumentPreviewPanel key={previewDocument.id} artifact={previewDocument} onClose={() => setPreviewDocument(null)} />

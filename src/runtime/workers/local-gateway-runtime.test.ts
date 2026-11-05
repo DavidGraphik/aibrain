@@ -258,6 +258,23 @@ describe("private per-user worker gateway", () => {
     expect(await readFile(receipt,"utf8")).toBe(saved);
   });
 
+  it("journals preceding valid text before failing closed on malformed stdout", async () => {
+    await writeFile(fakeServer, [
+      'const delta={method:"item/agentMessage/delta",params:{threadId:"synthetic-thread",turnId:"synthetic-turn",itemId:"synthetic-item",delta:"synthetic text"}};',
+      'setTimeout(()=>process.stdout.write(JSON.stringify(delta)+"\\n{invalid\\n"),100);process.stdin.resume();',
+    ].join("\n"));
+    const worker=gateway();await worker.start();
+    try {
+      await vi.waitFor(async()=>expect((await worker.health()).state).toBe("failed"),{timeout:5000});
+    } finally { await worker.stop(); }
+    const entries=(await readFile(path.join(context.transportAudit,"gateway-events.jsonl"),"utf8")).trim().split("\n")
+      .map(line=>JSON.parse(line) as {payload:{message:{rpc:{method?:string;params?:{delta?:string}}}}});
+    expect(entries.some(entry=>entry.payload.message.rpc.method==="item/agentMessage/delta" &&
+      entry.payload.message.rpc.params?.delta==="synthetic text")).toBe(true);
+    const failure=JSON.parse(await readFile(path.join(context.transportAudit,"gateway-last-failure.json"),"utf8"));
+    expect(failure).toMatchObject({stage:"stdout-processing",errorType:"SyntaxError"});
+  });
+
   it("ACKs a late cold metadata reply without poisoning the shared WebSocket when its caller generation expires",async()=>{
     await writeFile(fakeServer,[
       'import {createInterface} from "node:readline";',

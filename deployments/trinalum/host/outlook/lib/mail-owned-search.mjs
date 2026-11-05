@@ -67,20 +67,32 @@ export function orderingMailSearchFolders(criteria,folders){
  return rankMailSearchFolders(criteria,folders).filter(folder=>{const words=new Set(norm(folder).match(/[\p{L}\p{N}]+/gu)??[]);return terms.some(term=>words.has(term));});
 }
 
+// New searches may compare a company token with a folder segment after
+// punctuation folding. This only orders the authenticated LIST catalog.
+function specificWords(value){
+ const text=norm(value),words=text.match(/[\p{L}\p{N}]{4,64}/gu)??[],compounds=(text.match(/[\p{L}]{2,}(?:[-._][\p{L}]{2,})+/gu)??[]).map(value=>value.replace(/[-._]/g,'')).filter(value=>value.length<=64);
+ return [...words,...compounds];
+}
+function folderHasSpecificTerm(path,term){return specificWords(path).includes(term);}
+export function orderingMailSearchFoldersV2(criteria,folders){
+ const terms=[...new Set([...requiredSearchClauses(criteria)].map(x=>JSON.parse(x)).filter(([key])=>['text','subject','body','from','to','cc','bcc'].includes(key)).flatMap(([,value])=>specificWords(value)).filter(term=>/\p{L}/u.test(term)&&!orderingGenericWords.has(term)))];
+ return folders.filter(folder=>terms.some(term=>folderHasSpecificTerm(folder,term)));
+}
+
 // A server-supplied human request is an ordering hint, never provider criteria
 // or authority. Persist only a small data-only plan in the signed search cursor.
 export function humanMailSearchPlan(context,criteria,folders){
  if(context==null)return null;
  if(!context||typeof context!=='object'||Array.isArray(context)||Object.keys(context).sort().join(',')!=='humanMessage,sourceMessageId'||typeof context.humanMessage!=='string'||!context.humanMessage.trim()||context.humanMessage.length>8000||context.humanMessage.includes('\0')||typeof context.sourceMessageId!=='string'||!/^[A-Za-z0-9_-]{1,160}$/.test(context.sourceMessageId))throw Object.assign(Error('Invalid internal search context'),{code:'MAIL_API_INVALID'});
  const human=norm(context.humanMessage),paths=folders.map(norm),commandWords=new Set(['busca','buscar','encuentra','muestra','enseñame','original','originales','documento','documentos','necesito','quiero','search','find','show','please','email','mail']);
- const terms=[...new Set(human.match(/[\p{L}\p{N}]{4,64}/gu)??[])].filter(term=>!/^[\p{N}]+$/u.test(term)&&!genericFolderWords.has(term)&&!commandWords.has(term)&&paths.some(path=>path.includes(term))).slice(0,16);
+ const terms=[...new Set(specificWords(human))].filter(term=>!/^[\p{N}]+$/u.test(term)&&!orderingGenericWords.has(term)&&!commandWords.has(term)&&paths.some(path=>folderHasSpecificTerm(path,term))).slice(0,16);
  const references=(human.match(/[\p{L}\p{N}]+(?:[._:/-][\p{L}\p{N}]+)*/gu)??[]).filter(value=>value.length>=5&&/\p{L}/u.test(value)&&(value.match(/\p{N}/gu)??[]).length>=3);
  const queryValues=positiveSearchValues(criteria).filter(([key])=>['text','subject','body','from','to','cc','bcc'].includes(key)).map(([,value])=>norm(value));
  const latestReceived=/\b(?:ultim[oa]s?|latest|newest|most recent|mas reciente)\b/u.test(human)&&!/\b(?:enviad[oa]s?|sent|borrador(?:es)?|drafts?)\b/u.test(human);
- return {folderOrdering:'specific-token-v1',contextHash:createHash('sha256').update(JSON.stringify(context)).digest('hex'),hintTerms:terms,referenceOmitted:references.length>0&&!references.some(value=>queryValues.some(query=>query.includes(value))),...(latestReceived?{latestReceived:true}:{})};
+ return {folderOrdering:'specific-token-v2',contextHash:createHash('sha256').update(JSON.stringify(context)).digest('hex'),hintTerms:terms,referenceOmitted:references.length>0&&!references.some(value=>queryValues.some(query=>query.includes(value))),...(latestReceived?{latestReceived:true}:{})};
 }
 export function validHumanMailSearchPlan(plan){
- return plan===null||Boolean(plan&&typeof plan==='object'&&!Array.isArray(plan)&&['contextHash,hintTerms,referenceOmitted','contextHash,hintTerms,latestReceived,referenceOmitted','contextHash,folderOrdering,hintTerms,referenceOmitted','contextHash,folderOrdering,hintTerms,latestReceived,referenceOmitted'].includes(Object.keys(plan).sort().join(','))&&(!Object.hasOwn(plan,'folderOrdering')||plan.folderOrdering==='specific-token-v1')&&(!Object.hasOwn(plan,'latestReceived')||plan.latestReceived===true)&&/^[a-f0-9]{64}$/.test(plan.contextHash??'')&&Array.isArray(plan.hintTerms)&&plan.hintTerms.length<=16&&plan.hintTerms.every(term=>typeof term==='string'&&/^[\p{L}\p{N}]{4,64}$/u.test(term))&&typeof plan.referenceOmitted==='boolean');
+ return plan===null||Boolean(plan&&typeof plan==='object'&&!Array.isArray(plan)&&['contextHash,hintTerms,referenceOmitted','contextHash,hintTerms,latestReceived,referenceOmitted','contextHash,folderOrdering,hintTerms,referenceOmitted','contextHash,folderOrdering,hintTerms,latestReceived,referenceOmitted'].includes(Object.keys(plan).sort().join(','))&&(!Object.hasOwn(plan,'folderOrdering')||['specific-token-v1','specific-token-v2'].includes(plan.folderOrdering))&&(!Object.hasOwn(plan,'latestReceived')||plan.latestReceived===true)&&/^[a-f0-9]{64}$/.test(plan.contextHash??'')&&Array.isArray(plan.hintTerms)&&plan.hintTerms.length<=16&&plan.hintTerms.every(term=>typeof term==='string'&&/^[\p{L}\p{N}]{4,64}$/u.test(term))&&typeof plan.referenceOmitted==='boolean');
 }
 export function mailSearchCandidateCriteria(criteria){
  const parts=[...requiredSearchClauses(criteria)].map(x=>JSON.parse(x)).filter(([key])=>['since','before','on','seen','flagged','draft','answered'].includes(key)).map(([key,value])=>({[key]:value}));

@@ -27,12 +27,13 @@ describe("durable stdout batching", () => {
     expect(queue).toHaveLength(1);
     expect(() => takeAppServerOutput(["invalid"])).toThrow();
   });
-  it("classifies malformed lookahead without dropping the protocol failure", () => {
-    const queue = [fragment("valid"), " \t"];
+  it("emits valid text before rejecting malformed lookahead without losing either", () => {
+    const queue = [fragment("valid"), fragment(" text"), " \t"];
+    expect(JSON.parse(takeAppServerOutput(queue)!).params.delta).toBe("valid text");
+    expect(queue).toEqual([" \t"]);
     let error: unknown;
     try { takeAppServerOutput(queue); } catch (failure) { error = failure; }
     expect(error).toBeInstanceOf(SyntaxError);
     expect(appServerStdoutJsonDiagnostic(error)).toEqual({byteCount:2,prefixClass:"empty",parsePosition:null});
-    expect(queue).toEqual([" \t"]);
   });
 });

@@ -23,7 +23,14 @@ export function takeAppServerOutput(lines: string[]) {
   let text = initial.text;
   let merged = false;
   while (lines.length && Buffer.byteLength(text, "utf8") < 64 * 1024) {
-    const next = delta(lines[0]);
+    let next: ReturnType<typeof delta>;
+    try { next = delta(lines[0]); }
+    catch (error) {
+      // Keep the invalid record queued so it still fails closed on the next
+      // iteration, after the preceding valid output has been persisted.
+      if (error instanceof SyntaxError) break;
+      throw error;
+    }
     if (!next || next.scope !== initial.scope ||
         Buffer.byteLength(text + next.text, "utf8") > 64 * 1024) break;
     lines.shift(); text += next.text; merged = true;

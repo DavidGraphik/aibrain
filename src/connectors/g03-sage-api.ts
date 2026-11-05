@@ -194,14 +194,24 @@ export class SageReader {
     // Never repeat a write after401/timeout: the receiving outbox reconciles it.
     return this.post("PutData/InsertData",payload,session.token);
   }
-  async importTables(){
-    const session=await this.authenticated();
-    return sageAllowedImportTables(await this.post("PutData/allowedTables",{},session.token));
+  /** Metadata reads may refresh a rejected cached token once. Never use for writes. */
+  private async readImportMetadata(route: "PutData/allowedTables" | "DataQuery/GetTableFields", body: unknown) {
+    let session = await this.authenticated();
+    try {
+      return await this.post(route, body, session.token);
+    } catch (error) {
+      if (!(error instanceof SageError) || error.code !== "SAGE_AUTH_REQUIRED") throw error;
+      if (this.session === session) this.session = null;
+      session = await this.authenticated();
+      return this.post(route, body, session.token);
+    }
   }
-  async importSchema(table: SageImportTable | "TmpIME_LineasDocumento"){
-    if(table!=="TmpIME_LineasDocumento")sageImportTable(table);
-    const session=await this.authenticated();
-    return sageTableFields(await this.post("DataQuery/GetTableFields",table,session.token));
+  async importTables() {
+    return sageAllowedImportTables(await this.readImportMetadata("PutData/allowedTables", {}));
+  }
+  async importSchema(table: SageImportTable | "TmpIME_LineasDocumento") {
+    if (table !== "TmpIME_LineasDocumento") sageImportTable(table);
+    return sageTableFields(await this.readImportMetadata("DataQuery/GetTableFields", table));
   }
   /** Only the actor-bound operation service calls this after live schema and permission checks. Never retries. */
   async insertValidatedImport(payload:{tables:{tableName:SageImportTable;values:Record<string,string>;lines?:{line:Record<string,string>}[]}[]}){

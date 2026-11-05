@@ -38,5 +38,11 @@
   "tests/integration/host-preflight.integration.test.ts",
   "src/operations/soak.test.ts",
   "tests/integration/multi-user-worker-acceptance.integration.test.ts",
-  "tests/integration/worker-crash-recovery.integration.test.ts"
+  "tests/integration/worker-crash-recovery.integration.test.ts",
+  "src/connectors/g03-sage-operation-api.test.ts",
+  "src/runtime/workers/app-server-output-buffer.test.ts",
+  "src/runtime/workers/app-server-output-json.test.ts",
+  "src/runtime/workers/local-gateway-runtime.test.ts",
+  "tests/component/workbench-content.test.tsx",
+  "tests/unit/mail-folder-ordering.test.ts"
 ]
