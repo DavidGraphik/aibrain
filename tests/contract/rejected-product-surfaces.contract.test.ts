@@ -34,7 +34,9 @@ describe("rejected product surfaces", () => {
     const authTypes = await readFile(path.join(root, "src/auth/types.ts"), "utf8");
     const session = await readFile(path.join(root, "src/auth/session.ts"), "utf8");
     const contract = await readFile(path.join(root, "docs/UI_BACKEND_CONTRACT.md"), "utf8");
-    expect(authTypes).not.toMatch(/UserRole|owner|member/u);
+    // The isolated login mode names its credential source; it adds no user role.
+    expect(authTypes).toContain('"private-owner"');
+    expect(authTypes.replaceAll('"private-owner"', '""')).not.toMatch(/UserRole|owner|member/u);
     expect(session).not.toMatch(/user\.role|account\.role/u);
     expect(contract).not.toMatch(/\/api\/control-plane/u);
     expect(contract).toContain("AiBrain no envía invitaciones ni publica un control plane remoto.");
