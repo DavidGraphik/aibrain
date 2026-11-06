@@ -331,6 +331,14 @@ export class WorkerTurnRequestRejectedBeforeSendError extends Error {
   }
 }
 
+export class WorkerTurnPreparationFailedError extends Error {
+  readonly code = "TURN_PREPARATION_FAILED";
+  constructor() {
+    super("This request failed during preparation. No AI response was started.");
+    this.name = "WorkerTurnPreparationFailedError";
+  }
+}
+
 function readableFilesDeveloperInstructions(documentRoots: readonly EnterpriseDocumentRoot[]) {
   const scopedRoots = documentRoots.length > 0
     ? documentRoots.map((root) => `- ${root.scope}${root.scope === "department" ? " autorizado" : ""}: lectura autorizada`).join("\n")
@@ -800,6 +808,9 @@ async function runWorkerCodexTurnAttempt(
   ]);
   // A failed sibling must not let a late pre-admission callback acquire a
   // submission lease after this turn's finally has already released it.
+  if ((submission as DurableTurnSubmission | null)?.failedBeforeDispatch) {
+    throw new WorkerTurnPreparationFailedError();
+  }
   if (memoryResult.status === "rejected") throw memoryResult.reason;
   if (runtimeResult.status === "rejected") throw runtimeResult.reason;
   const preparedMemory = memoryResult.value, runtime = runtimeResult.value;
@@ -3281,7 +3292,7 @@ async function runWorkerCodexTurnAttempt(
       throw new WorkerTurnRecoveryPendingError("El servicio está recuperando el trabajo guardado. Tu petición sigue pendiente.");
     }
     if (error instanceof ModelCapacityRetryReady) throw error;
-    if (error instanceof WorkerThreadStartRejectedError || error instanceof WorkerTurnRequestRejectedBeforeSendError) { telemetry.finish("error"); throw error; }
+    if (error instanceof WorkerThreadStartRejectedError || error instanceof WorkerTurnRequestRejectedBeforeSendError || error instanceof WorkerTurnPreparationFailedError) { telemetry.finish("error"); throw error; }
     telemetry.finish("error");
     if (error instanceof AppServerRequestTimeoutError || error instanceof TurnSubmissionRecoveryRequired || submission?.needsRecovery) {
       // An admitted creation may finish after both response deadlines. Keep
@@ -3291,6 +3302,15 @@ async function runWorkerCodexTurnAttempt(
         throw new Error("The conversation could not be opened. No AI response was started. Please retry in a new conversation.", { cause: error });
       }
       throw new WorkerTurnRecoveryPendingError(error instanceof Error ? error.message : undefined);
+    }
+    // Foreground errors become terminal UI failures. Close only a proven local
+    // preparation intent too; recorded creation still needs publication/recovery.
+    // Scheduled startup retries and uncertain RPCs retain their existing fences.
+    if (!backgroundExecution && submission) {
+      try { await submission.failBeforeDispatch(); }
+      catch {
+        throw new WorkerTurnRecoveryPendingError("No se ha podido confirmar el cierre de la preparación guardada.");
+      }
     }
     throw error;
   } finally {

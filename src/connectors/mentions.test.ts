@@ -21,6 +21,23 @@ describe("connector mentions", () => {
     expect(instructions).toContain("solamente estas fuentes conectadas");
     expect(instructions).not.toContain("credentialRef");
   });
+
+  it("leaves native app operations to Codex instead of declaring an empty adapter toolset", () => {
+    const native: CatalogResource = { ...gmail, id: "native-mail", kind: "app", appId: "native_mail", connectorId: null };
+    const instructions = connectorMentionDeveloperInstructions([
+      { resource: native, mention: projectConnectorMention(native, new Map([[native.id, { status: "connected", statusCode: null }]])) },
+      { resource: gmail, mention: projectConnectorMention(gmail, new Map()) },
+    ]);
+    const inventory = JSON.parse(instructions.split("BEGIN AIBRAIN CONNECTOR MENTIONS\n")[1].split("\nEND AIBRAIN CONNECTOR MENTIONS")[0]);
+    expect(inventory[0]).toMatchObject({ id: "native-mail", kind: "app", label: "Gmail" });
+    expect(inventory[0]).not.toHaveProperty("readTools");
+    expect(inventory[0]).not.toHaveProperty("sensitiveWriteTools");
+    expect(inventory[0]).not.toHaveProperty("toolNamespace");
+    expect(inventory[1]).toMatchObject({ id: "gmail", readTools: [], sensitiveWriteTools: [] });
+    expect(instructions).toContain("catálogo de herramientas del runtime");
+    expect(instructions).toContain("servidor codex_apps con nombres que empiezan por mcp__codex_apps__");
+    expect(instructions).not.toContain("native_mail");
+  });
 });
 
 it('exposes Sage as pending without enabling execution', async () => {

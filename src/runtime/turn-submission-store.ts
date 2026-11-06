@@ -294,6 +294,10 @@ export class DurableTurnSubmission {
 
   get terminal() { return this.data.terminal; }
   get admittedWorkspace() { return this.data.workspace; }
+  get failedBeforeDispatch() {
+    return this.data.phase === "terminal" && this.data.terminal === "failed" &&
+      this.data.threadRequest === null && this.data.turnRequest === null && this.data.runtimeTurnId === null;
+  }
   get cancelledBeforeDispatch() {
     return this.data.phase === "terminal" && this.data.terminal === "interrupted" &&
       this.data.threadRequest === null && this.data.turnRequest === null && this.data.runtimeTurnId === null;
@@ -311,6 +315,23 @@ export class DurableTurnSubmission {
         throw new TurnSubmissionRecoveryRequired();
       }
       return { ...data, phase: "terminal", terminal: "interrupted" };
+    }, true);
+    return true;
+  }
+
+  /** Close only a local preparation that has recorded no creation/model RPC.
+   * Even a confirmed creation may still need token publication/recovery; its
+   * exact intent must remain available. Never close or invent a native turn. */
+  async failBeforeDispatch() {
+    await this.lease.assertHeld();
+    if (this.failedBeforeDispatch) return true;
+    if (!this.modelTurnNotDispatched || this.data.threadRequest !== null) return false;
+    await this.update((data) => {
+      if (!["preparing", "ready"].includes(data.phase) || data.threadRequest !== null ||
+          data.turnRequest !== null || data.runtimeTurnId !== null) {
+        throw new TurnSubmissionRecoveryRequired();
+      }
+      return { ...data, phase: "terminal", terminal: "failed", inputs: null };
     }, true);
     return true;
   }

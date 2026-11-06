@@ -48,6 +48,67 @@ afterEach(async () => {
 });
 
 describe("durable turn submission", () => {
+  it("closes a never-dispatched preparation failure durably without native identities or replay", async () => {
+    const f = await fixture();
+    const receipt = await f.open();
+    expect(await receipt.failBeforeDispatch()).toBe(true);
+    await receipt.close();
+    const restarted = await f.open();
+    expect(restarted.failedBeforeDispatch).toBe(true);
+    expect(await restarted.failBeforeDispatch()).toBe(true);
+    expect(JSON.parse(await readFile(receipt.filePath, "utf8"))).toMatchObject({
+      phase: "terminal", terminal: "failed", runtimeThreadId: null, runtimeTurnId: null,
+      threadRequest: null, turnRequest: null, inputs: null, inputDirectory: null,
+    });
+    await expect(restarted.prepareInputs(f.prepare)).rejects.toBeInstanceOf(TurnSubmissionRecoveryRequired);
+    await expect(restarted.startThreadOnce({ cwd: f.options.workspace }, "new-thread-request")).rejects.toBeInstanceOf(TurnSubmissionRecoveryRequired);
+    await expect(restarted.dispatchOnce(rpc, requestId)).rejects.toBeInstanceOf(TurnSubmissionRecoveryRequired);
+    expect(f.prepare).not.toHaveBeenCalled();
+  });
+
+  it("closes a preparation failure on an existing thread without a creation RPC and cleans only its inputs", async () => {
+    const f = await fixture();
+    const receipt = await f.open();
+    const inputs = await receipt.prepareInputs(f.prepare);
+    await receipt.bindThread("existing-thread");
+    expect(await receipt.failBeforeDispatch()).toBe(true);
+    await receipt.close();
+    expect(JSON.parse(await readFile(receipt.filePath, "utf8"))).toMatchObject({
+      phase: "terminal", terminal: "failed", runtimeThreadId: "existing-thread",
+      runtimeTurnId: null, threadRequest: null, turnRequest: null, inputs: null, inputDirectory: null,
+    });
+    await expect(readFile(path.join(inputs.directory!, "input-1.xlsx"))).rejects.toMatchObject({ code: "ENOENT" });
+    const restarted = await f.open();
+    expect(restarted.failedBeforeDispatch).toBe(true);
+  });
+
+  it.each([false, true])("does not close a preparation failure with recorded thread creation (confirmed: %s)", async confirmed => {
+    const f = await fixture();
+    const receipt = await f.open();
+    await receipt.prepareInputs(f.prepare);
+    await receipt.startThreadOnce({ cwd: f.options.workspace }, "uncertain-creation");
+    if (confirmed) await receipt.bindThread("confirmed-replacement-thread");
+    const before = await readFile(receipt.filePath, "utf8");
+    expect(await receipt.failBeforeDispatch()).toBe(false);
+    expect(await readFile(receipt.filePath, "utf8")).toBe(before);
+    expect(receipt.terminal).toBeNull();
+    expect(receipt.failedBeforeDispatch).toBe(false);
+  });
+
+  it.each([false, true])("does not close a possible dispatched model turn (native ID bound: %s)", async bound => {
+    const f = await fixture();
+    const receipt = await f.open();
+    await receipt.prepareInputs(f.prepare);
+    await receipt.bindThread("remote-thread");
+    await receipt.dispatchOnce(rpc, requestId);
+    if (bound) await receipt.bindTurn("pending-native-turn");
+    const before = await readFile(receipt.filePath, "utf8");
+    expect(await receipt.failBeforeDispatch()).toBe(false);
+    expect(await readFile(receipt.filePath, "utf8")).toBe(before);
+    expect(receipt.hasPendingModelTurn).toBe(true);
+    expect(receipt.failedBeforeDispatch).toBe(false);
+  });
+
   it("persists the exact execution generation before dispatch in a rollback-compatible private sidecar", async () => {
     const f=await fixture();const receipt=await f.open();
     const origin={generation:id(20),instanceId:"automation-worker",dev:1,ino:2};

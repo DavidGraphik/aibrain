@@ -112,6 +112,7 @@ import {
   WorkerTurnRecoveryPendingError,
   WorkerThreadStartRejectedError,
   WorkerTurnRequestRejectedBeforeSendError,
+  WorkerTurnPreparationFailedError,
   type WorkerCodexTurnEvent,
 } from "@/runtime/worker-codex-turn";
 
@@ -3021,7 +3022,12 @@ describe("worker Codex turn", () => {
           expect(events).toContainEqual({type:"done"});
         } else if (["missing", "replacement-lost-ack", "replacement-before-token"].includes(fault)) {
           if (fault === "replacement-lost-ack") await expect(run()).rejects.toBeInstanceOf(WorkerTurnRecoveryPendingError);
-          if (fault === "replacement-before-token") await expect(run()).rejects.toThrow("before replacement token");
+          if (fault === "replacement-before-token") {
+            await expect(run()).rejects.toThrow("before replacement token");
+            const saved = JSON.parse(await readFile(path.join(root,"state","turn-submissions",threadId,`${assistantMessageId}.json`),"utf8"));
+            expect(saved).toMatchObject({phase:"preparing",terminal:null,runtimeThreadId:"replacement-thread",runtimeTurnId:null,turnRequest:null});
+            expect(JSON.parse(saved.threadRequest).method).toBe("thread/start");
+          }
           await expect(run()).resolves.toBeUndefined();
           expect(calls.map(call => call.method)).toEqual(fault === "missing"
             ? ["thread/resume", "thread/start", "turn/start"] : ["thread/resume", "thread/start", "thread/resume", "turn/start"]);
@@ -3804,11 +3810,22 @@ describe("scheduled startup no-dispatch receipt", () => {
         queueMicrotask(()=>{void handlers.onNotification({method:"turn/completed",params:{threadId:"preauth-thread",turn:terminal}},envelope());});return result;
       },
     }};
-    const run = (recover=false, policy=permissions()) => runWorkerCodexTurn(chatRequest(),installationId,userId,null,{
+    const run = (recover=false, policy=permissions(), background=true, memory=memoryDependencies()) => runWorkerCodexTurn(chatRequest(),installationId,userId,null,{
       tenantId:installationId,mode:"codex",codexBinary:"unused",codexHome:null,workspace:root,model:null,approvalPolicy:"on-request",sandbox:"workspace-write",
-    },policy,{} as never,memoryDependencies(),[],new AbortController().signal,async()=>{},undefined,undefined,null,undefined,undefined,undefined,undefined,true,null,recover);
+    },policy,{} as never,memory,[],new AbortController().signal,async()=>{},undefined,undefined,null,undefined,undefined,undefined,undefined,background,null,recover);
     return {root,calls,run,file:path.join(root,"state","turn-submissions",threadId,assistantMessageId+".json")};
   }
+  it("finalizes foreground snapshot failure after concurrent admission without dispatch or recovery replay",async()=>{
+    const f=await fixture();
+    const memory=memoryDependencies({buildPromptSnapshot:async()=>{throw new Error("synthetic unavailable memory");}});
+    try {
+      await expect(f.run(false,permissions(),false,memory)).rejects.toMatchObject({code:"MEMORY_TURN_SNAPSHOT_UNAVAILABLE"});
+      expect(f.calls).toEqual([]);
+      expect(JSON.parse(await readFile(f.file,"utf8"))).toMatchObject({phase:"terminal",terminal:"failed",runtimeThreadId:null,runtimeTurnId:null,threadRequest:null,turnRequest:null});
+      await expect(f.run(true,permissions(),false,memory)).rejects.toBeInstanceOf(WorkerTurnPreparationFailedError);
+      expect(f.calls).toEqual([]);
+    } finally {await rm(f.root,{recursive:true,force:true});}
+  });
   it("retries an authentication failure in the SAME occurrence with one thread and model submission",async()=>{
     const f=await fixture();mocked.startupFailures=1;
     try {
