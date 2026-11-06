@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { CatalogResource } from "@/catalog/contracts";
 import type { CatalogRuntimeTransport } from "@/catalog/runtime-enforcement";
 import type { ConnectorHealthStatus } from "@/connectors/contracts";
+import { nativeInstalledApps } from "@/runtime/native-app-inventory";
 
 type NativeConnectionHealth = { status: ConnectorHealthStatus; statusCode: string | null };
 type InventoryEntry = Record<string, unknown>;
@@ -26,11 +27,12 @@ async function inventory(
     // durable transport deliberately deduplicates a reused request ID; using
     // one global ID can time out or retain old connection state. Keep every
     // observation/provider/page distinct without weakening write idempotency.
-    const response = await transport.request(method, {
-      ...(method === "app/installed" ? { forceRefresh: true } : { detail: "toolsAndAuthOnly" }),
+    const response = method === "app/installed" ? { apps: await nativeInstalledApps(transport, [...wanted],
+      `connector-native-connection-health:${observationId}:apps:${page++}`) } : await transport.request(method, {
+      detail: "toolsAndAuthOnly",
       threadId: null,
       ...(cursor ? { cursor } : {}),
-    }, `connector-native-connection-health:${observationId}:${method === "app/installed" ? "apps" : "mcp"}:${page++}`, 10_000);
+    }, `connector-native-connection-health:${observationId}:mcp:${page++}`, 10_000);
     const rows = record(response) ? response[method === "app/installed" ? "apps" : "data"] : null;
     if (!Array.isArray(rows)) throw new Error("Invalid native connection inventory.");
     for (const entry of rows) {
@@ -88,7 +90,8 @@ export async function nativeConnectionHealthForIdentity(
   const native = [...apps, ...mcps];
   if (!native.length) return health;
   const observationId = randomUUID();
-  for (const resource of native) health.set(resource.id, unavailable());
+  for (const resource of native) health.set(resource.id, resource.kind === "app"
+    ? { status: "degraded", statusCode: "NATIVE_APP_READINESS_UNAVAILABLE" } : unavailable());
   try {
     const { catalogTransportForUser } = await import("@/catalog/server-service");
     const transport = await catalogTransportForUser(installationId, userId);

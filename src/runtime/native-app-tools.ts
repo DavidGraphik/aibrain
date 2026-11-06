@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { CatalogRuntimeEnforcer, CatalogRuntimeTransport } from "@/catalog/runtime-enforcement";
 import type { NativeAppToolPolicies } from "./connected-app-config";
+import { nativeInstalledApps } from "./native-app-inventory";
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
 /** Native metadata describes tools; workspace/catalog policy decides whether a
@@ -20,16 +21,13 @@ export async function nativeAppToolsForTurn(transport: CatalogRuntimeTransport, 
   if (!record(configuration) || !record(configuration.config) ||
       configuration.config.apps != null && !record(configuration.config.apps)) return denied();
   const previous = record(configuration.config.apps) ? configuration.config.apps : {};
-  let snapshot: unknown;
-  try { snapshot = await transport.request("app/installed", { forceRefresh: false }, `${observation}:installed`, 10_000); }
+  let snapshot: Awaited<ReturnType<typeof nativeInstalledApps>>;
+  try { snapshot = await nativeInstalledApps(transport, ids, `${observation}:installed`); }
   catch { return denied(); }
-  // 0.162.1 installed snapshots are complete and unpaginated. Only committed
-  // runtime IDs are needed here; no remote metadata refresh or foreign app/read.
-  if (!record(snapshot) || !Array.isArray(snapshot.apps) || snapshot.apps.length > 4096 || snapshot.nextCursor) return denied();
+  // The validated SDK snapshot is complete and unpaginated. Unassigned runtime
+  // IDs supply negative overrides only; never read their provider metadata.
   const installed = new Map<string, boolean>();
-  for (const app of snapshot.apps) {
-    if (!record(app) || typeof app.id !== "string" || !app.id || app.id === "_default" || installed.has(app.id)
-      || typeof app.enabled !== "boolean" || typeof app.callable !== "boolean") return denied();
+  for (const app of snapshot) {
     installed.set(app.id, app.enabled && app.callable);
   }
   const knownIds = [...new Set([...ids, ...Object.keys(previous).filter(id => id !== "_default"), ...Object.keys(previousThread), ...installed.keys()])];

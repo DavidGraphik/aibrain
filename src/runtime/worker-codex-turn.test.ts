@@ -1024,7 +1024,7 @@ describe("worker Codex turn", () => {
     vi.unstubAllEnvs();
   });
 
-  it.each(["agent", "ask", "denied"] as const)("makes verified connections available with %s turn permissions and refreshes after reconnect", async (nativeMode) => {
+  it.each(["agent", "ask", "denied", "preparing", "raced", "unknown"] as const)("makes verified connections available with %s turn permissions and refreshes after reconnect", async (nativeMode) => {
     const userRoot = await mkdtemp(path.join(tmpdir(), "aibrain-automatic-connectors-"));
     const { mkdir, rm } = await import("node:fs/promises");
     const workspace = path.join(userRoot, "workspace"), staging = path.join(userRoot, "staging");
@@ -1040,6 +1040,12 @@ describe("worker Codex turn", () => {
     }));
     mocked.availableConnectors.mockResolvedValue(available);
     mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: ["search"], known: ["search"] } });
+    let ready: (() => void) | undefined;
+    if (nativeMode === "preparing") mocked.nativeAppTools.mockImplementationOnce(() => new Promise(resolve => {
+      ready = () => resolve({ "qa-files": { allowed: ["search"], known: ["search"] } });
+    }));
+    if (nativeMode === "raced") mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: [], known: ["search"] } });
+    if (nativeMode === "unknown") mocked.availableConnectors.mockRejectedValue(Object.assign(new Error("Connections preparing"), { code: "NATIVE_APP_READINESS_UNAVAILABLE" }));
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
     let handlers: { onNotification(value: unknown, envelope: unknown): Promise<void> };
     let sequence = 0;
@@ -1081,7 +1087,18 @@ describe("worker Codex turn", () => {
       tenantId: installationId, mode: "codex", codexBinary: "unused", codexHome: null, workspace, model: null, approvalPolicy: "on-request", sandbox: "workspace-write",
     }, { ...permissions([nativeRule]), turnId: value.assistantMessageId }, {} as never, memoryDependencies(), [], new AbortController().signal, async event => { events.push(event); }, undefined, "Assistant", null, undefined, undefined, undefined, session);
     try {
-      await run(request, null);
+      const first = run(request, null);
+      if (nativeMode === "unknown" || nativeMode === "raced") {
+        await expect(first).rejects.toMatchObject({ code: "NATIVE_APP_READINESS_UNAVAILABLE" });
+        expect(calls).toEqual([]); // Neither thread/start nor turn/start can admit a missing toolset.
+        return;
+      }
+      if (nativeMode === "preparing") {
+        await vi.waitFor(() => expect(ready).toBeTypeOf("function"));
+        expect(calls).toEqual([]);
+        ready!();
+      }
+      await first;
       expect(mocked.availableConnectors).toHaveBeenCalledExactlyOnceWith(installationId, userId, [], session);
       expect(calls.map(({ method }) => method)).toEqual(["thread/start", "turn/start"]);
       const params = calls[0].params;
@@ -1100,8 +1117,8 @@ describe("worker Codex turn", () => {
       for (const resource of resources) expect(params.developerInstructions).toContain(`"id":"${resource.id}"`);
       expect(events).toContainEqual({ type: "done" });
 
-      expect(mocked.nativeAppTools).toHaveBeenLastCalledWith(client, expect.any(Function), nativeAllowed ? ["qa-files"] : [], expect.any(String), nativeMode === "agent", {});
-      expect(mocked.nativeMcpConfig).toHaveBeenLastCalledWith(client, expect.any(Function), new Set(), expect.any(String), nativeMode === "agent");
+      expect(mocked.nativeAppTools).toHaveBeenLastCalledWith(client, expect.any(Function), nativeAllowed ? ["qa-files"] : [], expect.any(String), nativeAllowed && nativeMode !== "ask", {});
+      expect(mocked.nativeMcpConfig).toHaveBeenLastCalledWith(client, expect.any(Function), new Set(), expect.any(String), nativeAllowed && nativeMode !== "ask");
       mocked.availableConnectors.mockResolvedValue([]);
       mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: [], known: ["search"] } });
       await run({ ...request, userMessageId: "00000000-0000-4000-8000-000000000032", assistantMessageId: "00000000-0000-4000-8000-000000000042" }, "automatic-thread");

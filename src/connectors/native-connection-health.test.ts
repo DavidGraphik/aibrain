@@ -39,27 +39,31 @@ describe("native connection health for an authenticated catalog identity", () =>
     mocks.request.mockResolvedValue({ apps: [{ id: "files", enabled: true, callable: true }] });
     expect((await check([app("files")])).get("resource-files")).toEqual(connected);
     expect(mocks.transportForUser).toHaveBeenCalledExactlyOnceWith("tenant-a", "user-a");
-    expect(mocks.request).toHaveBeenCalledExactlyOnceWith("app/installed", { forceRefresh: true, threadId: null }, expect.stringMatching(/^connector-native-connection-health:[a-f0-9-]{36}:apps:0$/), 10_000);
+    expect(mocks.request).toHaveBeenCalledExactlyOnceWith("app/installed", { forceRefresh: false, threadId: null }, expect.stringMatching(/^connector-native-connection-health:[a-f0-9-]{36}:apps:0:committed$/), 10_000);
     mocks.request.mockClear().mockResolvedValue({ data: [{ name: "files", runtimeStatus: "connected", authStatus: "oAuth", toolsError: null, tools: callableTools }], nextCursor: null });
     expect((await check([mcp("files")], "user-b")).get("resource-files")).toEqual(connected);
     expect(mocks.transportForUser).toHaveBeenLastCalledWith("tenant-a", "user-b");
     expect(mocks.request).toHaveBeenCalledExactlyOnceWith("mcpServerStatus/list", { detail: "toolsAndAuthOnly", threadId: null }, expect.stringMatching(/^connector-native-connection-health:[a-f0-9-]{36}:mcp:0$/), 10_000);
   });
 
-  it("requires enabled, callable installed apps and maps missing or malformed apps without affecting healthy ones", async () => {
+  it("requires enabled, callable installed apps and keeps an incomplete snapshot closed", async () => {
     mocks.request.mockResolvedValue({ apps: [
       { id: "ready", enabled: true, callable: true, providerRef: "private-reference" },
       { id: "login", enabled: true, callable: false },
       { id: "disabled", enabled: false, callable: true },
-      { id: "malformed", enabled: true },
     ], nextCursor: null });
-    const result = await check(["ready", "login", "disabled", "malformed", "absent"].map(app));
+    const result = await check(["ready", "login", "disabled", "absent"].map(app));
     expect(result.get("resource-ready")).toEqual(connected);
     expect(result.get("resource-login")).toMatchObject({ status: "degraded", statusCode: "NATIVE_APP_NOT_CALLABLE" });
     expect(result.get("resource-disabled")).toMatchObject({ status: "not_configured" });
-    expect(result.get("resource-malformed")).toMatchObject({ status: "degraded" });
     expect(result.get("resource-absent")).toMatchObject({ status: "not_configured" });
     expect(JSON.stringify([...result])).not.toContain("private-reference");
+    mocks.request.mockResolvedValue({ apps: [{ id: "ready", enabled: true, callable: true }, { id: "malformed", enabled: true }] });
+    const incomplete = await check(["ready", "malformed"].map(app));
+    expect([...incomplete.values()]).toEqual([
+      { status: "degraded", statusCode: "NATIVE_APP_READINESS_UNAVAILABLE" },
+      { status: "degraded", statusCode: "NATIVE_APP_READINESS_UNAVAILABLE" },
+    ]);
   });
 
   it("requires a connected MCP runtime and handles login and unavailable states independently", async () => {
@@ -157,7 +161,7 @@ describe("native connection health for an authenticated catalog identity", () =>
     expect((await check(resources)).get("resource-files")).toMatchObject({ status: "not_configured", statusCode: "NATIVE_APP_DISABLED" });
     expect(observed.size).toBe(9);
     expect(mocks.request.mock.calls.map(call => call[2])).toEqual(expect.arrayContaining([
-      expect.stringMatching(/:apps:0$/), expect.stringMatching(/:mcp:0$/), expect.stringMatching(/:mcp:1$/),
+      expect.stringMatching(/:apps:0:committed$/), expect.stringMatching(/:mcp:0$/), expect.stringMatching(/:mcp:1$/),
     ]));
   });
 
@@ -198,7 +202,7 @@ describe("native connection health for an authenticated catalog identity", () =>
     mocks.transportForUser.mockRejectedValueOnce(new Error("private auth failure"));
     const failed = await check([app("files"), mcp("search")]);
     expect([...failed.values()]).toEqual([
-      { status: "degraded", statusCode: "NATIVE_CONNECTION_UNAVAILABLE" },
+      { status: "degraded", statusCode: "NATIVE_APP_READINESS_UNAVAILABLE" },
       { status: "degraded", statusCode: "NATIVE_CONNECTION_UNAVAILABLE" },
     ]);
     expect(mocks.request).not.toHaveBeenCalled();

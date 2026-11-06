@@ -164,6 +164,9 @@ export async function resolveAvailableConnectorsForTurn(
   }
   const { resources, mentions } = await resolvedMentions(installationId, userId, session);
   const projected = new Map(mentions.map((mention) => [mention.id, mention]));
+  if (mentions.some(mention => mention.kind === "app" && mention.statusCode === "NATIVE_APP_READINESS_UNAVAILABLE")) {
+    throw new ConnectorMentionError("NATIVE_APP_READINESS_UNAVAILABLE", "No se han podido preparar las conexiones personales. Inténtalo de nuevo en unos segundos.");
+  }
   // Validate client hints against current server data, even though no hint is
   // required. A forged or revoked hint must not enable a foreign resource.
   for (const id of resourceIds) {

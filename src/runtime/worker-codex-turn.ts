@@ -112,6 +112,7 @@ import { connectedAppConfig, hasAppliedConnectedAppConfig, markConnectedAppConfi
 import { nativeMcpConfigForTurn } from "@/runtime/native-mcp-config";
 import { personalNativeConnectionsEnabled } from "@/runtime/native-connection-identity";
 import { nativeAppToolsForTurn } from "@/runtime/native-app-tools";
+import { assertNativeAppToolsReady } from "@/runtime/native-app-inventory";
 import {
   approvalLocatorFromItem,
   type FileApprovalStore,
@@ -1117,6 +1118,7 @@ async function runWorkerCodexTurnAttempt(
     () => catalogRuntimeEnforcer(installationId, authenticatedUserId), availableAppIds,
     `native-app-tools:${chatRequest.assistantMessageId}`, nativeWritesAllowed,
     runtimeThreadId ? previousConnectedAppPolicies(runtime.client, runtimeThreadId) : {});
+  assertNativeAppToolsReady(availableAppIds, nativeAppTools);
   const connectorAppConfig = connectedAppConfig(availableAppIds, nativeAppTools);
   const connectorMcpConfig = await telemetry.measure("native_connection_config", async () => nativeMcpConfigForTurn(
     runtime.client, () => catalogRuntimeEnforcer(installationId, authenticatedUserId),

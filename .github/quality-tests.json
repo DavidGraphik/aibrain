@@ -50,6 +50,7 @@
   "src/runtime/composio-dynamic-tools.test.ts",
   "src/catalog/native-connection-transport.test.ts",
   "src/runtime/native-app-tools.test.ts",
+  "src/runtime/native-app-inventory.test.ts",
   "src/runtime/native-mcp-config.test.ts",
   "src/runtime/connected-app-config.test.ts",
   "src/connectors/native-connection-health.test.ts",

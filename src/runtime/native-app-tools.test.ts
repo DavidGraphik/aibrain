@@ -76,7 +76,7 @@ it("reads complete committed runtime IDs with no permitted apps and disables the
   const transport = fixture(undefined, { foreign: { enabled: true, tools: { "files/read": { enabled: true } } } });
   expect(await nativeAppToolsForTurn(transport, async () => new CatalogRuntimeEnforcer(state, principal), [], "tools"))
     .toEqual({ native_mail: { allowed: [], known: [] }, foreign: { allowed: [], known: ["files/read"] } });
-  expect(transport.request).toHaveBeenCalledWith("app/installed", { forceRefresh: false }, expect.stringMatching(/^tools:[a-f0-9-]{36}:installed$/), 10_000);
+  expect(transport.request).toHaveBeenCalledWith("app/installed", { threadId: null, forceRefresh: false }, expect.stringMatching(/^tools:[a-f0-9-]{36}:installed:committed$/), 10_000);
   expect(transport.request.mock.calls.some(([method]) => method === "app/read")).toBe(false);
   transport.request.mockResolvedValue({});
   const unknown = await nativeAppToolsForTurn(transport, async () => new CatalogRuntimeEnforcer(state, principal), [], "tools");

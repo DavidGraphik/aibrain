@@ -3,6 +3,7 @@ import type { CatalogResource } from "@/catalog/contracts";
 import type { CatalogRuntimeTransport } from "@/catalog/runtime-enforcement";
 import type { McpServerOauthLoginCompletedNotification } from "../../contracts/codex/0.162.1/types/v2/McpServerOauthLoginCompletedNotification";
 import type { WorkerExecutionOrigin } from "@/runtime/workers/kernel-ownership";
+import { nativeInstalledApps } from "@/runtime/native-app-inventory";
 
 export class NativeConnectionError extends Error {
   constructor(readonly code: string, readonly status = 409) {
@@ -171,9 +172,11 @@ async function snapshotForOperation(context: NativeConnectionContext, now: numbe
     tools: [],
   };
   if (resource.kind === "app") {
-    const response = await rpc(context, execution, "app/installed", { threadId: null, forceRefresh: true });
-    if (!record(response) || !Array.isArray(response.apps)) throw new NativeConnectionError("NATIVE_CONNECTION_INVENTORY_INVALID", 503);
-    const matches = response.apps.filter(app => record(app) && app.id === resource.appId);
+    let apps: Awaited<ReturnType<typeof nativeInstalledApps>>;
+    try { apps = await nativeInstalledApps(context.transport, resource.appId ? [resource.appId] : [],
+      `connector-native-lifecycle:${execution.id}:${execution.next++}:apps`); }
+    catch { throw new NativeConnectionError("NATIVE_APP_READINESS_UNAVAILABLE", 503); }
+    const matches = apps.filter(app => app.id === resource.appId);
     if (!matches.length) return { ...base, status: "not_configured", code: "NATIVE_APP_NOT_INSTALLED" };
     const app = matches[0];
     if (matches.length !== 1 || !record(app) || typeof app.enabled !== "boolean" || typeof app.callable !== "boolean") {

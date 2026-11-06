@@ -9,6 +9,7 @@ const mocked = vi.hoisted(() => ({
   roleId: "workspace-member",
   health: [] as Array<{ connectorId: string; status: string; statusCode: string | null }>,
   loadConfig: vi.fn(), workspace: vi.fn(), capabilities: vi.fn(),
+  nativeHealth: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/config/installation", () => ({ loadInstallationConfig: mocked.loadConfig }));
@@ -16,6 +17,7 @@ vi.mock("@/admin/policy-service", () => ({ workspacePolicyForIdentity: mocked.wo
 vi.mock("@/catalog/store", () => ({ FileCatalogStore: class {} }));
 vi.mock("@/catalog/baseline", () => ({ ensureInstallationCatalog: vi.fn(async () => mocked.catalog) }));
 vi.mock("@/connectors/server-service", () => ({ codexManagedAppCapabilities: vi.fn(async () => []) }));
+vi.mock("@/connectors/native-connection-health", () => ({ nativeConnectionHealthForIdentity: mocked.nativeHealth }));
 vi.mock("@/connectors/modtime-reporting", () => ({ MODTIME_REPORTING_RESOURCES: [], modtimeReportingCapabilities: vi.fn(async () => []) }));
 vi.mock("@/connectors/composio-service", () => ({
   composioCapabilitiesForSession: mocked.capabilities,
@@ -65,7 +67,20 @@ beforeEach(() => {
   mocked.loadConfig.mockImplementation(async () => mocked.config);
   mocked.workspace.mockImplementation(async () => ({ roleId: mocked.roleId, groups: [], policy: { capabilities: { execute: true } } }));
   mocked.capabilities.mockImplementation(async () => mocked.health.filter(row => row.connectorId.startsWith("composio-")));
+  mocked.nativeHealth.mockResolvedValue(new Map());
   setResources([resource("gmail"), resource("outlook")]);
+});
+
+it("blocks unknown native readiness but allows ordinary tasks with authoritative disabled or absent apps", async () => {
+  const native = { ...resource("native-mail"), kind: "app" as const, connectorId: null, appId: "connector_own" };
+  setResources([native]);
+  mocked.nativeHealth.mockResolvedValue(new Map([[native.id, { status: "degraded", statusCode: "NATIVE_APP_READINESS_UNAVAILABLE" }]]));
+  await expect(resolveAvailableConnectorsForTurn(INSTALLATION, USER, [], session)).rejects.toMatchObject({ code: "NATIVE_APP_READINESS_UNAVAILABLE" });
+  for (const statusCode of ["NATIVE_APP_DISABLED", "NATIVE_APP_NOT_LISTED"]) {
+    mocked.nativeHealth.mockResolvedValue(new Map([[native.id, { status: "not_configured", statusCode }]]));
+    expect(await resolveAvailableConnectorsForTurn(INSTALLATION, USER, [], session)).toEqual([]);
+  }
+  expect(mocked.nativeHealth).toHaveBeenCalledWith(INSTALLATION, USER, [native], new Set());
 });
 
 it("makes connected personal resources available with no composer hints", async () => {
