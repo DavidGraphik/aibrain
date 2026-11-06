@@ -26,6 +26,7 @@ jobs:
           node-version: '24.18.1'
           cache: npm
       - run: node .github/scripts/check-public-source.mjs
+      - run: node --test .github/scripts/run-quality-tests.test.mjs
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck -- --incremental false
       - run: node .github/scripts/run-quality-tests.mjs
