@@ -212,3 +212,19 @@ describe("native connection health for an authenticated catalog identity", () =>
     }
   });
 });
+
+describe("pinned SDK global inventory has no thread runtime status", () => {
+  beforeEach(() => { mocks.request.mockReset(); mocks.transportForUser.mockReset().mockResolvedValue({ request: mocks.request }); });
+  it.each([
+    [null, "oAuth", null, callableTools, "connected"],
+    [undefined, "oAuth", null, callableTools, "degraded"],
+    ["disabled", "oAuth", null, callableTools, "degraded"],
+    ["authenticationRequired", "oAuth", null, callableTools, "reauth_required"],
+    [null, "notLoggedIn", null, callableTools, "reauth_required"],
+    [null, "oAuth", "failed", callableTools, "degraded"],
+    [null, "oAuth", null, {}, "degraded"],
+  ])("keeps auth/catalog/error checks for global status %s/%s", async (runtimeStatus, authStatus, toolsError, tools, status) => {
+    mocks.request.mockResolvedValue({ data: [{ name: "fixture", runtimeStatus, authStatus, toolsError, tools }], nextCursor: null });
+    expect((await check([mcp("fixture")])).get("resource-fixture")?.status).toBe(status);
+  });
+});

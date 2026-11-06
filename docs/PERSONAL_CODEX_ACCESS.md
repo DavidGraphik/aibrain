@@ -1,7 +1,12 @@
-# Backend personal access-token provider
+# Personal development access-token boundary
+
+This is not the hosted deployment path. Production uses
+[server model authentication](HOSTED_CODEX.md) and rejects personal/shared
+ChatGPT authentication. The remaining description documents the development
+compatibility boundary and its historical QA contract.
 
 `AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT` optionally enables a server-side provider
-for one installation and employee. Leave it unset for existing authentication.
+for one development installation and employee.
 Use `AIBRAIN_CODEX_AUTH_SCOPE=per-user` or omit the scope. Shared-QA sources,
 installation-owner sockets and owner acknowledgements are incompatible.
 

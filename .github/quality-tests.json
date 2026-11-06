@@ -83,5 +83,13 @@
   "src/runtime/worker-runtime-service.test.ts",
   "src/runtime/workers/direct-stdio-runtime.test.ts",
   "src/runtime/source-projection.test.ts",
-  "src/runtime/transport/app-server-rpc-router.test.ts"
+  "src/runtime/transport/app-server-rpc-router.test.ts",
+  "src/runtime/server-model-auth.test.ts",
+  "src/runtime/workers/private-stdio-auth.test.ts",
+  "src/runtime/quota-tool-permissions.test.ts",
+  "src/connectors/native-oauth-callback.test.ts",
+  "src/app/api/connectors/native/callback/[[...nativePath]]/route.test.ts",
+  "src/app/api/connectors/native/[resourceId]/disconnect/route.test.ts",
+  "src/settings/connector-settings.test.ts",
+  "src/connectors/native-oauth-orchestration.test.ts"
 ]

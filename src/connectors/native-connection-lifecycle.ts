@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { CatalogResource } from "@/catalog/contracts";
 import type { CatalogRuntimeTransport } from "@/catalog/runtime-enforcement";
 import type { McpServerOauthLoginCompletedNotification } from "../../contracts/codex/0.162.1/types/v2/McpServerOauthLoginCompletedNotification";
+import type { WorkerExecutionOrigin } from "@/runtime/workers/kernel-ownership";
 
 export class NativeConnectionError extends Error {
   constructor(readonly code: string, readonly status = 409) {
@@ -16,6 +17,14 @@ export type NativeConnectionContext = {
   resource: CatalogResource;
   /** Must revalidate this identity and the resource's current catalogue policy per RPC. */
   transport: CatalogRuntimeTransport;
+  /** Available only from the authenticated server factory; never request input. */
+  callback?: {
+    dataRoot: string;
+    publicUrl: string;
+    generation(): Promise<WorkerExecutionOrigin>;
+    configure(url: string, port: number): Promise<{ staticClientConfigured: boolean }>;
+  };
+  oauthClientRegistration?: "dcr";
 };
 
 type Login = {
@@ -206,7 +215,7 @@ async function snapshotForOperation(context: NativeConnectionContext, now: numbe
   });
   const status = item.runtimeStatus === "disabled" ? "disabled"
     : item.runtimeStatus === "authenticationRequired" || item.authStatus === "notLoggedIn" ? "reauth_required"
-      : item.runtimeStatus === "connected" && ["unknown", "unsupported", "bearerToken", "oAuth"].includes(item.authStatus) && item.toolsError === null && tools.length ? "connected" : "unavailable";
+      : (item.runtimeStatus === "connected" || item.runtimeStatus === null) && ["unknown", "unsupported", "bearerToken", "oAuth"].includes(item.authStatus) && item.toolsError === null && tools.length ? "connected" : "unavailable";
   return { ...base, capabilities, tools, status,
     code: status === "connected" ? null : status === "disabled" ? "NATIVE_MCP_DISABLED" : status === "reauth_required" ? "NATIVE_MCP_LOGIN_REQUIRED" : "NATIVE_MCP_NOT_CALLABLE" };
 }
@@ -233,7 +242,9 @@ export async function startNativeConnectionOAuth(context: NativeConnectionContex
     if (before.status === "disabled") throw new NativeConnectionError("NATIVE_MCP_DISABLED");
     const callback = await configuredCallback(context, execution);
     uncertainOAuth.add(key);
-    const response = await rpc(context, execution, "mcpServer/oauth/login", { name: server, threadId: null });
+    const response = await rpc(context, execution, "mcpServer/oauth/login", { name: server, threadId: null,
+      ...(context.oauthClientRegistration ? { clientRegistration: context.oauthClientRegistration, timeoutSecs: 600 } : {}),
+    });
     if (!record(response) || typeof response.authorizationUrl !== "string") throw new NativeConnectionError("NATIVE_OAUTH_RESPONSE_INVALID", 503);
     let url: URL;
     try { url = new URL(response.authorizationUrl); } catch { throw new NativeConnectionError("NATIVE_OAUTH_RESPONSE_INVALID", 503); }

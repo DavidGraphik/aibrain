@@ -98,3 +98,46 @@ describe("native connection management boundary", () => {
     }
   });
 });
+
+describe("server-only callback provisioning bound to a persisted lease", () => {
+  const url = "https://brain.example/api/connectors/native/callback";
+  it("writes only this server's leased callback scalars, reloads and verifies effective config", async () => {
+    const oauth: Record<string, unknown> = {};
+    const inner = { request: vi.fn(async (method: string, params: unknown) => {
+      if (method === "config/value/write") { const p = params as { keyPath: string; value: unknown }; oauth[p.keyPath.split(".").at(-1)!] = p.value; return {}; }
+      return method === "config/read" ? { config: { mcp_servers: { crm: { enabled: true, oauth } } } } : {};
+    }) };
+    const lease = vi.fn().mockResolvedValue(undefined), transport = new NativeConnectionTransport(inner, resource, async () => resource, lease);
+    await transport.configureCallback(url, 43100, "https://brain.example");
+    expect(lease).toHaveBeenCalledTimes(2);
+    expect(inner.request.mock.calls.map(call => call[0])).toEqual(["config/value/write", "config/value/write", "config/mcpServer/reload", "config/read"]);
+    expect(inner.request.mock.calls[0][1]).toEqual({ keyPath: "mcp_servers.crm.oauth.callback_url", value: url, mergeStrategy: "upsert" });
+    expect(inner.request.mock.calls[1][1]).toEqual({ keyPath: "mcp_servers.crm.oauth.callback_port", value: 43100, mergeStrategy: "upsert" });
+    await expect(transport.request("config/value/write", { keyPath: "mcp_servers.crm.oauth.callback_port", value: 43100, mergeStrategy: "upsert" }, "untrusted")).rejects.toThrow();
+  });
+  it("rejects unleased, foreign-origin/path, zero-port and revoked settings before writes", async () => {
+    const { inner, current } = make();
+    const lease = vi.fn().mockRejectedValue(new Error("lease revoked"));
+    const transport = new NativeConnectionTransport(inner, resource, current, lease);
+    for (const [target, port] of [["https://foreign.example/api/connectors/native/callback", 43100], ["https://brain.example/foreign", 43100], [url, 0]] as const) {
+      await expect(transport.configureCallback(target, port, "https://brain.example")).rejects.toThrow();
+    }
+    await expect(transport.configureCallback(url, 43100, "https://brain.example")).rejects.toThrow("lease revoked");
+    await expect(new NativeConnectionTransport(inner, resource, current).configureCallback(url, 43100, "https://brain.example")).rejects.toThrow();
+    expect(inner.request).not.toHaveBeenCalled();
+  });
+  it("does not accept CIMD, scopes, or arbitrary timeout overrides", async () => {
+    const { inner, transport } = make();
+    for (const params of [{ name: "crm", clientRegistration: "cimd" }, { name: "crm", clientRegistration: "auto" }, { name: "crm", clientRegistration: "dcr", timeoutSecs: 900 }]) {
+      await expect(transport.request("mcpServer/oauth/login", params, "login")).rejects.toThrow();
+    }
+    expect(inner.request).not.toHaveBeenCalled();
+  });
+});
+
+ it("projects only static-client presence without exposing its ID or secret", async () => {
+  const {transport}=make({config:{mcp_servers:{crm:{enabled:true,oauth:{callback_url:"https://brain.example/api/connectors/native/callback",callback_port:43100,client_id:"private-client-id",client_secret:"private-client-secret"}}}}});
+  const response=await transport.request("config/read",{includeLayers:false},"static-shape");
+  expect(response).toMatchObject({config:{mcp_servers:{crm:{oauth:{client_id_configured:true}}}}});
+  expect(JSON.stringify(response)).not.toContain("private-client-id");expect(JSON.stringify(response)).not.toContain("private-client-secret");
+ });

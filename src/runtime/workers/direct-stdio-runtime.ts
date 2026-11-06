@@ -17,6 +17,7 @@ import { PrivateStdioAuthLane } from "./private-stdio-auth";
 import { parseAppServerOutput } from "./codex-stdio-protocol";
 import { parseAppServerStdoutJson } from "./app-server-output-json";
 import type { SharedAuthProvider } from "./shared-auth-broker";
+import { assertServerModelRpc, SERVER_MODEL_CONFIG_OVERRIDES, type ServerModelApiKeyProvider } from "../server-model-auth";
 import type { ManagedWorkerRuntime, WorkerLaunchContext, WorkerRuntimeFactory } from "./types";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
@@ -32,6 +33,7 @@ export type DirectStdioWorkerRuntimeFactoryOptions = {
   kernelLockCommand?: readonly string[];
   sharedAuth?: SharedAuthProvider;
   authForContext?: (context: WorkerLaunchContext) => SharedAuthProvider | undefined;
+  apiKeyAuth?: ServerModelApiKeyProvider;
   processFactory?: (context: WorkerLaunchContext) => ChildProcessWithoutNullStreams;
   quotaToolPrivacy?: boolean;
   now?: () => number;
@@ -86,9 +88,10 @@ export class DirectStdioTransport implements AppServerTransport {
 
   constructor(private readonly baseContext: WorkerLaunchContext, private readonly options: DirectStdioWorkerRuntimeFactoryOptions = {}) {
     this.context = { ...baseContext, transportAudit: workerTransportAuditRoot(baseContext.transportAudit, options.runtimeInstanceId) };
+    if (options.apiKeyAuth && (options.sharedAuth || options.authForContext)) throw new Error("Model authentication modes cannot be mixed.");
     const personal = options.authForContext?.(baseContext);
-    if (personal && options.sharedAuth) throw new Error("Personal authentication cannot share an installation credential.");
-    this.auth = new PrivateStdioAuthLane(personal ?? options.sharedAuth, rpc => this.writePrivate(rpc), () => this.fail());
+    if (personal && options.sharedAuth || options.apiKeyAuth && (personal || options.sharedAuth)) throw new Error("Personal authentication cannot share an installation credential.");
+    this.auth = new PrivateStdioAuthLane(personal ?? options.sharedAuth, rpc => this.writePrivate(rpc), () => this.fail(), options.apiKeyAuth);
     this.ownsProcessGroup = !options.processFactory && process.platform !== "win32";
   }
 
@@ -116,9 +119,9 @@ export class DirectStdioTransport implements AppServerTransport {
       await atomicWriteFile(path.join(owner.lockPath, "kernel.json"), JSON.stringify({ generation: owner.token,
         instanceId: path.basename(this.context.transportAudit), dev: kernel.dev, ino: kernel.ino }), { mode: 0o600 });
     }
-    const overrides = this.options.quotaToolPrivacy ? quotaToolPermissionConfigOverrides({
+    const overrides = [...((this.options.quotaToolPrivacy || this.options.apiKeyAuth) ? quotaToolPermissionConfigOverrides({
       codexHome: this.baseContext.environment.CODEX_HOME, transportAudit: this.baseContext.transportAudit,
-    }) : undefined;
+    }) : []), ...(this.options.apiKeyAuth ? SERVER_MODEL_CONFIG_OVERRIDES : [])];
     if (this.retired) throw new LiveStdioClosedError("Worker startup was cancelled.");
     this.child = this.options.processFactory?.(this.context) ?? spawnCodexWorker(this.context, this.kernel, overrides);
     this.child.once("error", () => this.fail());
@@ -193,6 +196,7 @@ export class DirectStdioTransport implements AppServerTransport {
 
   async send(message: AppServerRequest) {
     validateAppServerRequest(message);
+    if (this.options.apiKeyAuth && "method" in message.rpc) assertServerModelRpc(message.rpc.method, "params" in message.rpc ? message.rpc.params : undefined);
     const raw = JSON.stringify(message.rpc) + "\n", bytes = Buffer.byteLength(raw);
     if (bytes > MAX_INPUT_BYTES) throw new TransportRequestTooLargeError(message.clientRequestId, bytes, MAX_INPUT_BYTES);
     await this.connect();

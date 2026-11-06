@@ -13,9 +13,14 @@ export type QuotaToolPermissions = {
 
 const attestedThreads = new WeakMap<object, Map<string, string>>();
 
-/** Credential privacy is mandatory for owner-auth installations, even without a quota. */
-export function privateCodexToolPermissionsRequired(config: { installationId?: unknown; usageLimits?: unknown }) {
-  return ["modtime", "trinalum-production"].includes(String(config.installationId)) || Boolean(config.usageLimits);
+/** Production uses hosted API authentication; explicit API mode has the same
+ * privacy boundary in development. Keep legacy personal development compatible. */
+export function privateCodexToolPermissionsRequired(
+  config: { installationId?: unknown; usageLimits?: unknown },
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) {
+  return environment.NODE_ENV === "production" || environment.AIBRAIN_MODEL_AUTH?.trim() === "server-api-key"
+    || ["modtime", "trinalum-production"].includes(String(config.installationId)) || Boolean(config.usageLimits);
 }
 
 /** The model's subprocess policy; App Server itself retains its private state. */
@@ -30,13 +35,15 @@ export function createQuotaToolPermissions(roots: {
   const workspace = path.resolve(roots.workspace);
   const codexHome = path.resolve(roots.codexHome);
   const transportAudit = path.resolve(roots.transportAudit);
-  const fingerprint = createHash("sha256").update(JSON.stringify([1, codexHome, transportAudit])).digest("hex").slice(0, 24);
+  // Changing the private boundary must invalidate cached native attestations.
+  const fingerprint = createHash("sha256").update(JSON.stringify([2, codexHome, transportAudit])).digest("hex").slice(0, 24);
   // Deny the private stores individually: a denied CODEX_HOME parent breaks
   // Linux sandbox helper dispatch even when its child is allowed. Avoid broad
   // recursive metadata globs, which also collide with the denied directories.
   const privatePaths = [
     "sessions", "archived_sessions", "log", "logs", "memories",
     "history.jsonl", "session_index.jsonl", "config.toml", "auth.json*",
+    ".credentials.json*", "mcp-oauth-locks",
     ...["state_", "logs_", "goals_", "memories_", "queue_", "thread_history_"]
       .map((prefix) => `${prefix}*.sqlite*`),
   ];

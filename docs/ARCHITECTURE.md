@@ -9,10 +9,17 @@ native events into the existing UI stream; it does not run a second agent loop.
 
 ```text
 Existing UI -> authenticated API / current ACL -> isolated Codex App Server
-                                                     | native Apps / MCP
+                                                     | assigned native MCP
                                                      | provider-local operations
                                                      + owned files / artifacts
 ```
+
+Hosted production uses the official API-key authentication surface, with a
+server-owned project key and ephemeral native credentials. Model billing and
+each employee's provider authorization are separate. ChatGPT subscription auth
+and existing ChatGPT App connections are not a hosted-product deployment path.
+Native ChatGPT Apps remain a development compatibility surface; do not treat a
+personal prototype as customer acceptance. See [hosted Codex](HOSTED_CODEX.md).
 
 Codex owns the native thread, turn, item IDs, model execution and native history.
 The workbench owns project membership, preferences, artifact links and the UI
@@ -93,10 +100,12 @@ stdio bridge, but explicitly targets local/LAN use. Neither is proof of hosted
 multi-tenant security, equivalent tools or a production login lifecycle.
 No third-party product or visual assets have been imported by this decision.
 
-The documented [Sign in with ChatGPT token-sharing route](https://developers.openai.com/siwc/token-sharing-open-source)
-has separate eligibility and preview limitations for hosted products and
-connectors. Successful personal QA with an existing account does not establish
-commercial onboarding or portable desktop connections. See
+The [App Server authentication contract](https://learn.chatgpt.com/docs/app-server#auth-endpoints)
+excludes ChatGPT app-server authentication from commercial and hosted services.
+The separate [Sign in with ChatGPT route](https://developers.openai.com/siwc/token-sharing-open-source)
+has eligibility and preview limitations. It is not an implemented fallback here.
+Successful personal QA does not establish commercial onboarding or portable
+desktop connections. See
 [personal access](PERSONAL_CODEX_ACCESS.md) and
 [native connections](NATIVE_CONNECTIONS.md); keep model authorization separate
 from authorization to the company's mail, CRM, ERP and files.
@@ -121,8 +130,9 @@ than introduce another decision path in the conversation coordinator.
 
 ## Native connections and bounded work
 
-Assigned Apps and MCP tools execute through the employee's existing Codex App
-Server. Current native inventory, installation catalogue and turn permissions
+Assigned MCP tools execute through the employee's isolated Codex App Server.
+Personal development also supports compatible ChatGPT Apps. Current native
+inventory, installation catalogue and turn permissions
 determine explicit tool overrides. Previously configured apps and tool grants
 are disabled explicitly when removed; restrictive defaults alone do not erase
 an earlier per-tool grant. Read-only and background turns do not receive native

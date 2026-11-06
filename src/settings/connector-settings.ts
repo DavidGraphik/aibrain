@@ -1,4 +1,5 @@
 import type { ConnectorCapabilitySnapshot } from "@/connectors/contracts";
+import type { CatalogResource } from "@/catalog/contracts";
 
 export type PersonalConnectorSettings = {
   id: string;
@@ -14,6 +15,23 @@ export type PersonalConnectorSettings = {
   /** Password connections submit locally; they must never be opened as OAuth links. */
   connectionMethod?: "password";
 };
+
+/** Reuses existing cards; provider OAuth scopes/accounts are not inferred from
+ * catalogue tool names or the company's model credential. */
+export function projectNativeConnectorSettings(resource: CatalogResource,
+  health: Pick<ConnectorCapabilitySnapshot, "status" | "statusCode">): PersonalConnectorSettings {
+  const connected = health.status === "connected";
+  return { id: resource.id, label: resource.label,
+    status: connected ? "connected" : health.status === "reauth_required" ? "requires_login" : "unavailable",
+    statusCode: health.statusCode,
+    statusDetail: connected
+      ? "Conexión personal disponible. Desconectar retira el acceso de AiBrain; el permiso del proveedor se conserva."
+      : "Conecta tu cuenta para usarla en el chat. Si falta la configuración del servicio, debe prepararla el administrador.",
+    accountEmail: null, scopes: [], connectionVersion: null,
+    connectUrl: `/api/connectors/native/${encodeURIComponent(resource.id)}/oauth`,
+    disconnectUrl: `/api/connectors/native/${encodeURIComponent(resource.id)}/disconnect`,
+  };
+}
 
 type PersonalConnectorCapability = ConnectorCapabilitySnapshot & {
   accountEmail: string | null;

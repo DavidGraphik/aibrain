@@ -1,10 +1,17 @@
 # Native connections
 
-The workbench uses the employee's Codex App Server to execute assigned native
-Apps and MCP tools. Codex owns their provider authentication and tool protocol;
+Hosted deployments use the employee's isolated Codex App Server to execute
+assigned native MCP tools. The model uses a server-owned API key; each provider
+retains its own employee authorization. Codex owns the MCP authentication and protocol;
 the workbench supplies the authenticated employee, current catalogue policy,
 per-turn tool admission, conversation state and artifact handling. This path adds
 neither another model dispatcher nor a new OAuth token exchange service.
+
+ChatGPT Apps described below are a personal development compatibility surface.
+Hosted API-key mode disables their discovery and execution; a desktop connection
+cannot be assumed portable. The [official App Server auth contract](https://learn.chatgpt.com/docs/app-server#auth-endpoints)
+does not permit ChatGPT app-server authentication for commercial/hosted services.
+See [hosted model authentication and provider readiness](HOSTED_CODEX.md).
 
 Existing direct API and host adapters remain available where a native connection
 does not cover the provider's required capabilities. A native connection must
@@ -20,8 +27,9 @@ through `AIBRAIN_SHARED_CODEX_AUTH_SOURCE` or
 provider connection are separate: a signed-in model account does not grant mail,
 CRM or ERP access.
 
-The installation catalogue assigns each resource, its native App ID or MCP server
-name, and its allowed operations. The catalogue, workspace permissions and
+The installation catalogue assigns each resource, its MCP server name or,
+in personal development, native App ID,
+and its allowed operations. The catalogue, workspace permissions and
 current native inventory are checked together. MCP tools are limited to the
 assigned read/write names; native App tools require current enabled/read-only
 metadata, with writes additionally governed by workspace/catalogue policy and
@@ -70,24 +78,40 @@ rediscovered rather than inferred from a missing login receipt. Provider consent
 must be completed by the actual account holder. A configured login is not proof
 that OAuth or a provider operation has succeeded.
 
-The employee's browser cannot redirect to a server worker's default loopback
-listener. Before starting remote-server OAuth, the operator must provision:
+Remote OAuth uses one stable installation callback at
+`GET /api/connectors/native/callback` (and a native callback suffix only when
+verified in the SDK authorization redirect). Register that HTTPS callback with
+the provider where required. The workbench automatically leases a positive
+private loopback port for the login and writes only the assigned MCP server's
+`oauth.callback_url` and `oauth.callback_port`; it reloads and reads them back
+before asking Codex to start OAuth. Operators do not assign one public port or
+proxy route per employee.
 
-1. A stable HTTPS callback URL reachable by the employee's browser, registered
-   where the provider requires it.
-2. A fixed Codex callback listener port for that employee runtime.
-3. Ingress that forwards only that employee's callback path to the correct
-   private worker listener, preserving callback paths, query and state. Shared
-   host ports or namespaces must not route one employee's callback to another.
-4. The native `mcp_oauth_callback_url` and `mcp_oauth_callback_port`, or the
-   selected server's `oauth.callback_url` and `oauth.callback_port`, in protected
-   runtime configuration.
+A private bounded receipt binds the native state digest to the authenticated
+employee, installation resource, worker generation, login ID and port. The
+callback takes its public origin from protected installation configuration,
+including behind a reverse proxy; incoming Host/forwarded headers cannot select
+it. It rechecks current authorization and that generation, then consumes the
+receipt before forwarding the unchanged query to the exact private loopback
+listener. It sends no browser cookies or authorization headers and never follows
+provider redirects. Codex validates state/PKCE and performs the token exchange.
+An interrupted or uncertain callback is not replayed. Expired, cross-user,
+revoked and restarted-worker attempts require a new login.
 
-The callback URL's public port does not set Codex's listener port. Configuration
-checks do not install an ingress or demonstrate that a browser/provider can
-reach it. The returned authorization redirect must match the configured callback
-origin/path. Authorization links are transient login material; do not persist
-them in source, ordinary logs or documentation.
+The verified registration path uses native DCR with an explicit callback.
+The pinned SDK honors a configured OAuth client before DCR, but its ordinary
+static-client flow adds a random per-login callback suffix. A provider requiring
+one exact registered redirect cannot accept that address. That incompatible
+static callback is rejected before exposing the consent link, with
+`NATIVE_OAUTH_STATIC_CALLBACK_UNSUPPORTED`. Do not bypass the SDK's issuer/auth
+restrictions or advertise Google login from this fixture.
+
+CIMD's restricted redirect rules and PAR links without an exposed state/redirect
+also remain unsupported here. Google Workspace preview eligibility and an
+actually compatible OAuth registration remain separate prerequisites. Keep the
+necessary direct provider adapter until equivalent native access is verified.
+A configured route or connected status is not proof of a real provider operation.
+Authorization links and callback codes must not enter ordinary logs or source.
 
 The pinned runtime can inspect native Apps that are already installed and
 callable. If that surface does not expose the App's authentication/install

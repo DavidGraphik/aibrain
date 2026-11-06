@@ -67,7 +67,10 @@ function mcpHealth(entry: InventoryEntry | null | undefined, resource: CatalogRe
     ...(writesAllowed ? resource.mcp?.sensitiveWriteTools ?? [] : [])];
   const tools = entry.tools;
   const callable = record(tools) && allowedTools.some(name => record(tools[name]) && tools[name].name === name && record(tools[name].inputSchema));
-  return entry.runtimeStatus === "connected" && entry.toolsError === null && callable && typeof entry.authStatus === "string" && ["unknown", "unsupported", "bearerToken", "oAuth"].includes(entry.authStatus)
+  // The pinned SDK returns null for thread-less global inventory. It does not
+  // provide a thread connection state there; current auth/tool metadata is still
+  // required. Missing/disabled/authenticationRequired states remain unavailable.
+  return (entry.runtimeStatus === "connected" || entry.runtimeStatus === null) && entry.toolsError === null && callable && typeof entry.authStatus === "string" && ["unknown", "unsupported", "bearerToken", "oAuth"].includes(entry.authStatus)
     ? { status: "connected", statusCode: null } : unavailable();
 }
 

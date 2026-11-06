@@ -167,11 +167,12 @@ async function stopRuntime(runtime: ManagedWorkerRuntime) {
 }
 
 /** Real kernel-backed denial probes; fixtures contain no credentials or tenant data. */
-async function acceptPrivateToolFilesystem(context: WorkerLaunchContext) {
+export async function acceptPrivateToolFilesystem(context: WorkerLaunchContext) {
   const codexHome = context.environment.CODEX_HOME;
   const roots = { codexHome, workspace: context.workspace, transportAudit: context.transportAudit };
   const policy = createQuotaToolPermissions(roots);
-  const denied = ["auth.json", "auth.json.backup", "config.toml", "sessions/probe.jsonl", "history.jsonl", "state_1.sqlite"]
+  const denied = ["auth.json", "auth.json.backup", ".credentials.json", ".credentials.json.backup", "mcp-oauth-locks/probe",
+    "config.toml", "sessions/probe.jsonl", "history.jsonl", "state_1.sqlite"]
     .map((name) => path.join(codexHome, name));
   denied.push(path.join(context.transportAudit, "probe.jsonl"));
   const allowed = ["skills/probe.txt", "plugins/probe.txt", "tmp/arg0/probe.txt"].map((name) => path.join(codexHome, name));

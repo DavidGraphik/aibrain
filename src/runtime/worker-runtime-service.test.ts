@@ -170,6 +170,33 @@ function handle(transport: AppServerTransport): WorkerRuntimeHandle {
 }
 
 describe("worker App Server client", () => {
+  it("admits API account readiness without personal OAuth and rejects ordinary managed-auth/app RPCs before dispatch", async () => {
+    vi.stubEnv("AIBRAIN_MODEL_AUTH", "server-api-key");
+    const transport = new FakeTransport(false, [{ account: { type: "apiKey" }, requiresOpenaiAuth: true }]);
+    const client = new WorkerAppServerClient(handle(transport));
+    try {
+      for (const [method,params] of [["account/login/start",{type:"chatgpt"}],["account/logout",undefined],["app/installed",{}],
+        ["account/gatewayOAuth/login",undefined],["account/gatewayOAuth/cancel",undefined],
+        ["account/bedrock/setup",{type:"environment",region:"us-east-1"}],
+        ["account/sendAddCreditsNudgeEmail",{creditType:"credits"}],
+        ["account/rateLimitResetCredit/consume",{idempotencyKey:"synthetic-no-consumption"}]] as const)
+        await expect(client.request(method, params, "forbidden")).rejects.toThrow("Server model authentication is unavailable.");
+      expect(transport.sent).toHaveLength(0);
+      await expect(client.connectionSummary()).resolves.toMatchObject({ connected: true, authMode: "apiKey" });
+      await expect(client.request("mcpServerStatus/list", {}, "own-mcp")).resolves.toEqual({});
+      await expect(client.request("mcpServer/oauth/login", {name:"own"}, "own-mcp-oauth")).resolves.toEqual({});
+      await expect(client.request("account/rateLimits/read", undefined, "metadata-rate-limits")).resolves.toHaveProperty("rateLimits");
+      await expect(client.request("account/usage/read", undefined, "metadata-usage")).resolves.toHaveProperty("summary");
+      expect(transport.sent.some(r => r.kind === "rpc-request" && r.rpc.method === "mcpServerStatus/list")).toBe(true);
+    } finally { await client.close();vi.unstubAllEnvs(); }
+  });
+  it("binds cached runtime fingerprints to the model auth mode", async () => {
+    const config = await loadInstallationConfig();
+    try {
+      vi.stubEnv("AIBRAIN_MODEL_AUTH", "personal-codex");const personal = installationFingerprint(config);
+      vi.stubEnv("AIBRAIN_MODEL_AUTH", "server-api-key");expect(installationFingerprint(config)).not.toBe(personal);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it("keeps the initialized client draining across projection deferrals without model dispatch or restart", async () => {
     const transport = Object.assign(new FakeTransport(), {
       deliverySequenceStart: () => 1, projectionSequenceTarget: () => 1,

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "./route";
 
 const mocks = vi.hoisted(() => ({ session: vi.fn(), sameOrigin: vi.fn(), start: vi.fn(), failure: vi.fn() }));
+vi.mock("server-only", () => ({}));
 vi.mock("@/auth/session", () => ({ getSession: mocks.session }));
 vi.mock("@/auth/request-security", () => ({ isSameOriginMutation: mocks.sameOrigin }));
 vi.mock("@/connectors/native-connection-server-service", () => ({
@@ -49,10 +50,32 @@ describe("native OAuth browser and API initiation", () => {
     }
     expect(mocks.start).not.toHaveBeenCalled();
   });
-  it("returns controlled policy codes without reflecting provider errors", async () => {
+  it("renders a readable browser failure with a fixed return and no provider details or technical code", async () => {
     mocks.start.mockRejectedValue(new Error("private provider token"));
     const response = await GET(request("GET"), context);
     expect(response.status).toBe(403);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    const html = await response.text();
+    expect(html).toContain("Revisa tus permisos");
+    expect(html).toContain('href="/?settings=connectors"');
+    expect(html).not.toMatch(/private provider|NATIVE_|<script|connection=/);
+  });
+  it("retains controlled policy codes for API callers", async () => {
+    mocks.start.mockRejectedValue(new Error("private provider token"));
+    const response = await POST(request("POST", "{}"), context);
+    expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ code: "NATIVE_CONNECTION_SCOPE_DENIED" });
+  });
+  it.each([
+    ["NATIVE_OAUTH_STATIC_CALLBACK_UNSUPPORTED", "revisar la compatibilidad"],
+    ["NATIVE_CONNECTION_UNAVAILABLE", "configuración del servicio"],
+  ])("explains %s without displaying a technical code", async (code, explanation) => {
+    mocks.start.mockRejectedValue(new Error("secret-query"));
+    mocks.failure.mockReturnValue({ code, status: 503 });
+    const response = await GET(request("GET"), context), html = await response.text();
+    expect(html).toContain(explanation);
+    expect(html).not.toContain(code);
+    expect(html).not.toContain("secret-query");
   });
 });

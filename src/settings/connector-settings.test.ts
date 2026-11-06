@@ -45,3 +45,14 @@ describe("personal connector settings", () => {
     expect(JSON.stringify(projected)).not.toMatch(/token|secret|credentialRef/i);
   });
 });
+
+it("projects assigned native MCP into existing Connect/Disconnect card data without provider identity/scope guesses", async () => {
+  const { projectNativeConnectorSettings } = await import("./connector-settings");
+  const resource = { id: "personal-crm", label: "CRM", kind: "mcp" as const, credentialMode: "personal-oauth" as const,
+    managedBy: "company" as const, sharedResource: false, appId: null, connectorId: null,
+    mcp: { server: "crm", readTools: ["read_private"], sensitiveWriteTools: [] } };
+  const row = projectNativeConnectorSettings(resource, { status: "connected", statusCode: null });
+  expect(row).toMatchObject({ status: "connected", accountEmail: null, scopes: [],
+    connectUrl: "/api/connectors/native/personal-crm/oauth", disconnectUrl: "/api/connectors/native/personal-crm/disconnect" });
+  expect(row.statusDetail).toContain("el permiso del proveedor se conserva");
+});

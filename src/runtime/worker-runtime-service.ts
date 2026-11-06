@@ -39,6 +39,7 @@ import { operationalLogger } from "@/operations/server-logger";
 import { installationOwnerAuthSocket, readInstallationOwnerAccess } from "@/runtime/installation-owner-auth";
 import { createWeeklyTokenBudgetRuntime, type WeeklyTokenBudgetRuntime } from "@/usage/weekly-token-budget-runtime";
 import { completeNativeConnectionOAuth } from "@/connectors/native-connection-lifecycle";
+import { assertServerModelRpc, configuredModelAuth, SERVER_MODEL_KEY_PATH, serverModelApiKeyProvider } from "@/runtime/server-model-auth";
 
 const CATALOG_FRESH_TTL_MS = 5 * 60_000;
 const CATALOG_STALE_TTL_MS = 30 * 60_000;
@@ -69,6 +70,8 @@ export function installationFingerprint(config: Readonly<InstallationConfig>) {
     publishWriteRoot: config.paths.publishWriteRoot,
     usageLimits: config.usageLimits,
     transport: configuredWorkerTransport(),
+    modelAuth: configuredModelAuth(),
+    modelAuthSource: configuredModelAuth() === "server-api-key" ? SERVER_MODEL_KEY_PATH : null,
   })).digest("hex");
 }
 
@@ -104,6 +107,7 @@ export class WorkerAppServerClient {
   private catalogRefresh: Promise<CodexConnection> | null = null;
   private catalogRefreshCwd: string | null = null;
   private readonly weeklyBudget: WeeklyTokenBudgetRuntime | null;
+  private readonly modelAuth = configuredModelAuth();
 
   constructor(
     readonly handle: WorkerRuntimeHandle,
@@ -195,6 +199,7 @@ export class WorkerAppServerClient {
       { refreshToken: false },
       "account-read",
     ), 10_000));
+    if (this.modelAuth === "server-api-key" && this.account.authMode !== "apiKey") throw new Error("Server model authentication is unavailable.");
   }
 
   /** No initialize, login, catalog, restart or model dispatch is permitted here.
@@ -213,6 +218,7 @@ export class WorkerAppServerClient {
     beforeResolve?: (value: JsonValue, event: AppServerEvent) => void | Promise<void>,
     activityLease?: MaintenanceActivityLease,
   ) {
+    if (this.modelAuth === "server-api-key") assertServerModelRpc(method, params);
     if (method === "turn/start") this.maintenance?.assertActiveLease(activityLease);
     await this.initialize();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(purpose)) {
@@ -475,16 +481,21 @@ async function serviceState(): Promise<RuntimeServiceState> {
       if (failure) throw failure.reason;
     }
     const maintenance = new MaintenanceCoordinator();
+    const modelAuth = configuredModelAuth();
+    const privateOptions = { quotaToolPrivacy: privateCodexToolPermissionsRequired(config) };
+    const factory = modelAuth === "server-api-key"
+      ? new DirectStdioWorkerRuntimeFactory({ ...privateOptions, apiKeyAuth: serverModelApiKeyProvider(config.installationId) })
+      : new (configuredWorkerTransport() === "stdio" ? DirectStdioWorkerRuntimeFactory : LocalGatewayWorkerRuntimeFactory)({
+        ...privateOptions,
+        sharedAuth: sharedAuthProvider(config, process.env.AIBRAIN_CODEX_AUTH_SCOPE === "shared-qa" ? workerEgressEnvironment() : {}),
+        authForContext: userAccessAuthProvider,
+      });
     const state: RuntimeServiceState = {
       fingerprint,
       config,
       registry: new WorkerRuntimeRegistry({
         config,
-        factory: new (configuredWorkerTransport() === "stdio" ? DirectStdioWorkerRuntimeFactory : LocalGatewayWorkerRuntimeFactory)({
-          quotaToolPrivacy: privateCodexToolPermissionsRequired(config),
-          sharedAuth: sharedAuthProvider(config, process.env.AIBRAIN_CODEX_AUTH_SCOPE === "shared-qa" ? workerEgressEnvironment() : {}),
-          authForContext: userAccessAuthProvider,
-        }),
+        factory,
         maintenance,
         onLifecycleMetric: (metric) => operationalLogger.info("codex.worker_lifecycle", {
           metricSchemaVersion: 1,

@@ -31,7 +31,9 @@ import { outlookCapabilityForSession } from "@/connectors/outlook-server-service
 import { mailCapabilityForSession } from "@/connectors/mail-server-service";
 import { OUTLOOK_API_SCOPES, OUTLOOK_CONNECTOR_ID } from "@/connectors/outlook-contracts";
 import { catalogRuntimeEnforcer } from "@/catalog/access-service";
-import { projectPersonalConnectorSettings, type PersonalConnectorSettings } from "@/settings/connector-settings";
+import { projectPersonalConnectorSettings, projectNativeConnectorSettings, type PersonalConnectorSettings } from "@/settings/connector-settings";
+import { nativeConnectionResourcesForSession } from "@/catalog/native-connection-transport";
+import { nativeConnectionHealthForIdentity } from "@/connectors/native-connection-health";
 
 const ACTIONS: PermissionAction[] = ["consult", "respond", "execute", "publish"];
 
@@ -391,6 +393,14 @@ export async function settingsSnapshot(session: AuthSession): Promise<SettingsSn
       adminSetupRequired: "El administrador debe configurar el proveedor de conexiones.",
       unavailable: "No se puede verificar la conexión. Puedes reconectar o reintentar la revocación.",
     }));
+  }
+  // One policy-bound native inventory for all assigned personal MCP cards.
+  // Legacy/shared identities cannot gain native resources through settings.
+  const native = await nativeConnectionResourcesForSession(session).catch(() => []);
+  if (native.length) {
+    const health = await nativeConnectionHealthForIdentity(installation.installationId, session.user.id, native);
+    for (const resource of native) connectors.push(projectNativeConnectorSettings(resource,
+      health.get(resource.id) ?? { status: "degraded", statusCode: "NATIVE_CONNECTION_UNAVAILABLE" }));
   }
   return {
     schemaVersion: 1,

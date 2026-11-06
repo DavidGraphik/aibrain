@@ -7,6 +7,7 @@ import type { AppServerEvent, AppServerRequest } from "../transport/contracts";
 import { currentWorkerExecutionOrigin } from "./kernel-ownership";
 import { DirectStdioTransport, DirectStdioWorkerRuntimeFactory, LiveStdioDuplicateSubmissionError } from "./direct-stdio-runtime";
 import type { WorkerLaunchContext } from "./types";
+import { SERVER_MODEL_PROVIDER } from "../server-model-auth";
 
 vi.mock("server-only", () => ({}));
 const roots: string[] = [], transports: DirectStdioTransport[] = [];
@@ -82,6 +83,49 @@ it("uses real child pipes with fragmented UTF-8 and native IDs, without a durabl
   expect(await t.health()).toMatchObject({lastEventId:null,lastEventSequence:null,reconnectAttempt:0});
   expect(await allFiles(f.ctx.transportAudit)).not.toEqual(expect.arrayContaining([expect.stringMatching(/\.jsonl$/u)]));
   expect("recoverResponse" in t).toBe(false); expect("acknowledge" in t).toBe(false);
+});
+it("keeps API bootstrap private on real child pipes, blocks auth/app swaps, preserves MCP, and rejects a secret echo", async () => {
+  const f = await context();const key = "sk-synthetic-pipe-only-123456789";
+  const config = { cli_auth_credentials_store: "ephemeral", forced_login_method: "api", model_provider: SERVER_MODEL_PROVIDER,
+    model_providers: { [SERVER_MODEL_PROVIDER]: { name: "OpenAI", base_url: "https://api.openai.com/v1", wire_api: "responses", requires_openai_auth: true } } };
+  await writeFile(f.child, `import {createInterface} from 'node:readline';let token=null;const methods=[];const send=r=>process.stdout.write(JSON.stringify(r)+'\\n');
+    createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);methods.push(r.method);
+      if(r.method==='initialized')return;
+      if(r.method==='config/read')send({id:r.id,result:{config:${JSON.stringify(config)}}});
+      else if(r.method==='account/login/start'){token=r.params.apiKey;send({method:'account/login/completed',params:{success:true,echo:token}});send({id:r.id,result:{type:'apiKey',echo:token}});}
+      else if(r.method==='account/read')send({id:r.id,result:{account:{type:'apiKey'},echo:token}});
+      else if(r.method==='thread/read'&&r.params.threadId==='echo')send({method:'thread/name/updated',params:{threadId:'thread-1',threadName:token}});
+      else if(r.method==='thread/read')send({id:r.id,result:{methods,hasKeyArg:process.argv.some(v=>v===token),hasKeyEnv:Object.values(process.env).some(v=>v===token)}});
+      else send({id:r.id,result:{}});
+    });`);
+  const provider=vi.fn(async()=>key),t=transport(f,{apiKeyAuth:provider});expect(provider).not.toHaveBeenCalled();
+  await t.connect();await t.send(request("inspect-api"));
+  const event=(await next(t)).value!;
+  expect(event.message.rpc).toMatchObject({result:{hasKeyArg:false,hasKeyEnv:false,methods:["initialize","initialized","config/read","account/login/start","account/read","thread/read"]}});
+  expect(JSON.stringify(event)).not.toContain(key);expect(JSON.stringify(event)).not.toContain("private-auth:");
+  const blocked = [["account/login/start",{type:"chatgpt"}],["account/logout",undefined],["app/installed",{}],
+    ["account/gatewayOAuth/login",undefined],["account/gatewayOAuth/cancel",undefined],
+    ["account/bedrock/setup",{type:"environment",region:"us-east-1"}],
+    ["account/sendAddCreditsNudgeEmail",{creditType:"credits"}],
+    ["account/rateLimitResetCredit/consume",{idempotencyKey:"synthetic-no-consumption"}]] as const;
+  for(const [method,params] of blocked)
+    await expect(t.send({clientRequestId:method,kind:"rpc-request",rpc:{id:method,method,...(params===undefined?{}:{params})}} as AppServerRequest)).rejects.toThrow("Server model authentication is unavailable.");
+  await t.send(request("after-account-denials"));
+  const observed=(await next(t)).value!.message.rpc as {result:{methods:string[]}};
+  expect(observed.result.methods.filter(method=>blocked.some(([name])=>name===method))).toEqual(["account/login/start"]); // The private bootstrap only.
+  for(const method of ["account/rateLimits/read","account/usage/read"] as const) {
+    await t.send({clientRequestId:method,kind:"rpc-request",rpc:{id:method,method}});await next(t);
+  }
+  await t.send({clientRequestId:"own-mcp-oauth",kind:"rpc-request",rpc:{id:"own-mcp-oauth",method:"mcpServer/oauth/login",params:{name:"own"}}});await next(t);
+  for (const [keyPath,value] of [["mcp_servers.own.oauth.callback_url","https://brain.example.test/api/connectors/native/callback"],
+    ["mcp_servers.own.oauth.callback_port",43100]] as const) {
+    await t.send({clientRequestId:keyPath,kind:"rpc-request",rpc:{id:keyPath,method:"config/value/write",params:{keyPath,value,mergeStrategy:"upsert"}}});await next(t);
+  }
+  await expect(t.send({clientRequestId:"global-callback",kind:"rpc-request",rpc:{id:"global-callback",method:"config/value/write",params:{keyPath:"mcp_oauth_callback_port",value:43100,mergeStrategy:"upsert"}}})).rejects.toThrow("Server model authentication is unavailable.");
+  await t.send({clientRequestId:"own-mcp",kind:"rpc-request",rpc:{id:"own-mcp",method:"mcpServerStatus/list",params:{}}});await next(t);
+  await t.send(request("secret-echo","echo"));await expect(next(t)).rejects.toThrow(/Live stdio/);
+  for(const file of await allFiles(f.root))expect(await readFile(file,"utf8")).not.toContain(key);
+  expect(provider).toHaveBeenCalledOnce();
 });
 it("does not dispatch a repeated or uncertain submission twice", async () => {
   const f=await context(), t=transport(f); await t.connect(); await next(t);
@@ -176,6 +220,25 @@ it("retains the real protected launcher, filesystem privacy overrides, minimal e
   await t.connect();
   await expect.poll(async()=>JSON.parse(await readFile(observation,"utf8"))).toMatchObject({home:f.ctx.environment.HOME,extra:false,args:expect.arrayContaining(["app-server","--stdio","-c"])});
   expect(await currentWorkerExecutionOrigin(f.ctx.transportAudit)).toMatchObject({instanceId:"app",generation:expect.any(String),ino:expect.any(Number)});
+});
+it("pins native credential privacy when API auth is selected without the optional privacy flag", async () => {
+  const f = await context(), observation = path.join(f.root, "api-launch.json"), executable = path.join(f.root, "fake-api-codex.mjs");
+  const config = { cli_auth_credentials_store: "ephemeral", forced_login_method: "api", model_provider: SERVER_MODEL_PROVIDER,
+    model_providers: { [SERVER_MODEL_PROVIDER]: { name: "OpenAI", base_url: "https://api.openai.com/v1", wire_api: "responses", requires_openai_auth: true } } };
+  await writeFile(executable, `#!${process.execPath}\nimport{writeFileSync}from'node:fs';import{createInterface}from'node:readline';
+    writeFileSync(${JSON.stringify(observation)},JSON.stringify(process.argv.slice(2)));
+    createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);if(r.method==='initialized')return;
+      const result=r.method==='config/read'?{config:${JSON.stringify(config)}}:r.method==='account/login/start'?{type:'apiKey'}:r.method==='account/read'?{account:{type:'apiKey'}}:{};
+      process.stdout.write(JSON.stringify({id:r.id,result})+'\\n');});`, { mode: 0o700 });
+  vi.stubEnv("CODEX_BIN", executable);
+  const t = new DirectStdioTransport(f.ctx, { apiKeyAuth: async () => "synthetic-project-key-not-real",
+    kernelLockCommand: ["python3", "-c", "import fcntl;fcntl.flock(3,fcntl.LOCK_SH|fcntl.LOCK_NB)"] });
+  transports.push(t); await t.connect();
+  const args: string[] = JSON.parse(await readFile(observation, "utf8"));
+  expect(args).toContain('forced_login_method="api"');
+  expect(args.some(arg => arg.startsWith("permissions=") && arg.includes(".credentials.json*") && arg.includes("mcp-oauth-locks"))).toBe(true);
+  expect(args.some(arg => arg.startsWith("default_permissions="))).toBe(true);
+  expect(args.join(" ")).not.toContain("synthetic-project-key-not-real");
 });
 it("can close before startup without spawning a child", async () => {
   const f=await context(),factory=vi.fn(f.processFactory),t=transport(f,{processFactory:factory});

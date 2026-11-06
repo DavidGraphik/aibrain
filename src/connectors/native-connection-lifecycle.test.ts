@@ -186,3 +186,17 @@ describe("native personal connection lifecycle", () => {
     await expect(startNativeConnectionOAuth(context)).rejects.toMatchObject({ code: "NATIVE_CONNECTION_SCOPE_DENIED" });
   });
 });
+
+describe("pinned thread-less OAuth inventory", () => {
+  it.each([
+    [null, null, "connected"], [undefined, null, "unavailable"], ["disabled", null, "disabled"], [null, "failure", "unavailable"],
+  ])("does not require a thread connection state but retains failure checks %s/%s", async (runtimeStatus, toolsError, status) => {
+    const { context } = fixture({ runtimeStatus, toolsError });
+    expect((await nativeConnectionSnapshot(context)).status).toBe(status);
+  });
+  it("uses only the verified DCR strategy with a bounded native listener timeout", async () => {
+    const { context, request } = fixture({ authStatus: "notLoggedIn", runtimeStatus: "authenticationRequired" });
+    await startNativeConnectionOAuth({ ...context, oauthClientRegistration: "dcr" });
+    expect(request).toHaveBeenCalledWith("mcpServer/oauth/login", { name: "mail", threadId: null, clientRegistration: "dcr", timeoutSecs: 600 }, expect.any(String), 15_000);
+  });
+});

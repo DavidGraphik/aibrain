@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   attestQuotaToolPermissions,
@@ -15,12 +16,21 @@ const roots = {
 };
 
 describe("quota tool permissions", () => {
-  it("requires credential privacy for MODTIME independently of quotas without changing other installations", () => {
-    expect(privateCodexToolPermissionsRequired({ installationId: "modtime" })).toBe(true);
-    expect(privateCodexToolPermissionsRequired({ installationId: "modtime", usageLimits: null })).toBe(true);
-    expect(privateCodexToolPermissionsRequired({ installationId: "trinalum" })).toBe(false);
-    expect(privateCodexToolPermissionsRequired({ installationId: "trinalum-production" })).toBe(true);
-    expect(privateCodexToolPermissionsRequired({ installationId: "other", usageLimits: {} })).toBe(true);
+  it("keeps legacy personal development compatibility and existing owner/quota privacy", () => {
+    const development = { NODE_ENV: "development", AIBRAIN_MODEL_AUTH: "personal-codex" };
+    expect(privateCodexToolPermissionsRequired({ installationId: "modtime" }, development)).toBe(true);
+    expect(privateCodexToolPermissionsRequired({ installationId: "modtime", usageLimits: null }, development)).toBe(true);
+    expect(privateCodexToolPermissionsRequired({ installationId: "trinalum" }, development)).toBe(false);
+    expect(privateCodexToolPermissionsRequired({ installationId: "trinalum-production" }, development)).toBe(true);
+    expect(privateCodexToolPermissionsRequired({ installationId: "other", usageLimits: {} }, development)).toBe(true);
+  });
+  it("requires privacy for every hosted API installation before startup or native turn attestation", () => {
+    for (const environment of [{ NODE_ENV: "production" }, { NODE_ENV: "production", AIBRAIN_MODEL_AUTH: "personal-codex" },
+      { NODE_ENV: "test", AIBRAIN_MODEL_AUTH: "server-api-key" }, { NODE_ENV: "development", AIBRAIN_MODEL_AUTH: " server-api-key " }]) {
+      expect(privateCodexToolPermissionsRequired({ installationId: "g03-production", usageLimits: null }, environment)).toBe(true);
+      expect(privateCodexToolPermissionsRequired({}, environment)).toBe(true);
+    }
+    expect(privateCodexToolPermissionsRequired({ installationId: "other" }, { NODE_ENV: "test" })).toBe(false);
   });
   it("keeps read-only mode and exact project/temp writes while hiding private runtime state", () => {
     const policy = createQuotaToolPermissions(roots);
@@ -31,6 +41,7 @@ describe("quota tool permissions", () => {
       ...Object.fromEntries([
         "sessions", "archived_sessions", "log", "logs", "memories",
         "history.jsonl", "session_index.jsonl", "config.toml", "auth.json*",
+        ".credentials.json*", "mcp-oauth-locks",
         "state_*.sqlite*", "logs_*.sqlite*", "goals_*.sqlite*", "memories_*.sqlite*", "queue_*.sqlite*", "thread_history_*.sqlite*",
       ].map((entry) => [`${roots.codexHome}/${entry}`, "deny"])),
       [roots.transportAudit]: "deny",
@@ -53,6 +64,9 @@ describe("quota tool permissions", () => {
     const overrides = quotaToolPermissionConfigOverrides(roots);
     expect(overrides[0]).toBe(`default_permissions=${JSON.stringify(createQuotaToolPermissions(roots).readOnlyId)}`);
     expect(overrides[1]).toContain(`"${roots.codexHome}/sessions"="deny"`);
+    expect(overrides[1]).toContain(`"${roots.codexHome}/.credentials.json*"="deny"`);
+    expect(overrides[1]).toContain(`"${roots.codexHome}/mcp-oauth-locks"="deny"`);
+    expect(overrides[1]).toContain(`"${roots.codexHome}/tmp/arg0"="read"`);
     expect(overrides[1]).toContain('":workspace_roots"="write"');
     expect(overrides.join("\n")).not.toContain(roots.workspace);
     expect(quotaToolPermissionConfigOverrides({ ...roots, codexHome: '/data/users/quoted "name"/codex' })[1])
@@ -82,6 +96,14 @@ describe("quota tool permissions", () => {
     expect(hasAttestedQuotaToolPermissions(client, "thread", createQuotaToolPermissions({
       ...roots, workspace: "/data/users/user/workspace/projects/different",
     }))).toBe(false);
+  });
+
+  it("rejects a native attestation from before MCP credential privacy was added", () => {
+    const client = {}, policy = createQuotaToolPermissions(roots);
+    const previous = createHash("sha256").update(JSON.stringify([1, roots.codexHome, roots.transportAudit])).digest("hex").slice(0, 24);
+    expect(() => attestQuotaToolPermissions(client, { thread: { id: "thread" }, cwd: roots.workspace,
+      activePermissionProfile: { id: `aibrain-quota-read-${previous}` }, approvalPolicy: "never" }, policy)).toThrow("permisos privados");
+    expect(hasAttestedQuotaToolPermissions(client, "thread", policy)).toBe(false);
   });
 
   it.each([
