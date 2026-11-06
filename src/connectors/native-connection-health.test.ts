@@ -178,6 +178,10 @@ describe("native connection health for an authenticated catalog identity", () =>
     const inner = { request: vi.fn(async (method: string) => {
       if (method === "config/read") return { config: { apps: null } };
       if (method === "app/installed") return { apps: [{ id: appId, enabled: true, callable: true }, { id: "connector_foreign", enabled: true, callable: true }] };
+      if (method === "mcpServerStatus/list") return { data: [{ name: "codex_apps", runtimeStatus: null,
+        authStatus: "unknown", toolsError: null, tools: Object.fromEntries(([
+          ["get_profile", true], ["send_email", false],
+        ] as const).map(([name, readOnlyHint]) => [name, { name, inputSchema: {}, annotations: { readOnlyHint }, _meta: { connector_id: appId } }])) }], nextCursor: null };
       return { apps: [{ id: appId, toolSummaries: [
         { name: "get_profile", title: "Profile", description: "Read own profile", isEnabled: true, disabledReason: null, isReadOnly: true },
         { name: "send_email", title: "Send", description: "Send mail", isEnabled: true, disabledReason: null, isReadOnly: false },
