@@ -26,7 +26,7 @@ describe("quota tool permissions", () => {
   });
   it("requires privacy for every hosted API installation before startup or native turn attestation", () => {
     for (const environment of [{ NODE_ENV: "production" }, { NODE_ENV: "production", AIBRAIN_MODEL_AUTH: "personal-codex" },
-      { NODE_ENV: "test", AIBRAIN_MODEL_AUTH: "server-api-key" }, { NODE_ENV: "development", AIBRAIN_MODEL_AUTH: " server-api-key " }]) {
+      { NODE_ENV: "test", AIBRAIN_MODEL_AUTH: "server-api-key" }, { NODE_ENV: "test", AIBRAIN_MODEL_AUTH: "personal-test" }, { NODE_ENV: "development", AIBRAIN_MODEL_AUTH: " server-api-key " }]) {
       expect(privateCodexToolPermissionsRequired({ installationId: "g03-production", usageLimits: null }, environment)).toBe(true);
       expect(privateCodexToolPermissionsRequired({}, environment)).toBe(true);
     }

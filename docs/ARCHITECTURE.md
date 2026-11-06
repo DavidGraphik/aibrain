@@ -18,8 +18,9 @@ Hosted production uses the official API-key authentication surface, with a
 server-owned project key and ephemeral native credentials. Model billing and
 each employee's provider authorization are separate. ChatGPT subscription auth
 and existing ChatGPT App connections are not a hosted-product deployment path.
-Native ChatGPT Apps remain a development compatibility surface; do not treat a
-personal prototype as customer acceptance. See [hosted Codex](HOSTED_CODEX.md).
+Native ChatGPT Apps remain a personal development/private-test surface. A
+root-owned, one-owner expiring test profile can use that owner's subscription;
+this is separate from customer acceptance. See [hosted Codex](HOSTED_CODEX.md).
 
 Codex owns the native thread, turn, item IDs, model execution and native history.
 The workbench owns project membership, preferences, artifact links and the UI

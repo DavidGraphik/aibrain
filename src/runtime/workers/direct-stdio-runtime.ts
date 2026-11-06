@@ -17,7 +17,8 @@ import { PrivateStdioAuthLane } from "./private-stdio-auth";
 import { parseAppServerOutput } from "./codex-stdio-protocol";
 import { parseAppServerStdoutJson } from "./app-server-output-json";
 import type { SharedAuthProvider } from "./shared-auth-broker";
-import { assertServerModelRpc, SERVER_MODEL_CONFIG_OVERRIDES, type ServerModelApiKeyProvider } from "../server-model-auth";
+import { assertPersonalModelTest, assertPersonalTestModelRpc, assertServerModelRpc, ModelAuthUnavailableError,
+  PERSONAL_TEST_CONFIG_OVERRIDES, SERVER_MODEL_CONFIG_OVERRIDES, type ServerModelApiKeyProvider } from "../server-model-auth";
 import type { ManagedWorkerRuntime, WorkerLaunchContext, WorkerRuntimeFactory } from "./types";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
@@ -34,6 +35,7 @@ export type DirectStdioWorkerRuntimeFactoryOptions = {
   sharedAuth?: SharedAuthProvider;
   authForContext?: (context: WorkerLaunchContext) => SharedAuthProvider | undefined;
   apiKeyAuth?: ServerModelApiKeyProvider;
+  personalTestAuth?: boolean;
   processFactory?: (context: WorkerLaunchContext) => ChildProcessWithoutNullStreams;
   quotaToolPrivacy?: boolean;
   now?: () => number;
@@ -90,6 +92,7 @@ export class DirectStdioTransport implements AppServerTransport {
     this.context = { ...baseContext, transportAudit: workerTransportAuditRoot(baseContext.transportAudit, options.runtimeInstanceId) };
     if (options.apiKeyAuth && (options.sharedAuth || options.authForContext)) throw new Error("Model authentication modes cannot be mixed.");
     const personal = options.authForContext?.(baseContext);
+    if (options.personalTestAuth && (!personal || options.sharedAuth || options.apiKeyAuth)) throw new ModelAuthUnavailableError();
     if (personal && options.sharedAuth || options.apiKeyAuth && (personal || options.sharedAuth)) throw new Error("Personal authentication cannot share an installation credential.");
     this.auth = new PrivateStdioAuthLane(personal ?? options.sharedAuth, rpc => this.writePrivate(rpc), () => this.fail(), options.apiKeyAuth);
     this.ownsProcessGroup = !options.processFactory && process.platform !== "win32";
@@ -106,6 +109,7 @@ export class DirectStdioTransport implements AppServerTransport {
     return this.startPromise;
   }
   private async start() {
+    if (this.options.personalTestAuth) await assertPersonalModelTest(this.baseContext);
     const locks = new ResourceLockManager({ rootDirectory: path.join(this.context.transportAudit, "gateway-locks") });
     // Retain the existing ownership path, not a journal. This prevents overlap
     // with a legacy worker and preserves currentWorkerExecutionOrigin fences.
@@ -119,9 +123,10 @@ export class DirectStdioTransport implements AppServerTransport {
       await atomicWriteFile(path.join(owner.lockPath, "kernel.json"), JSON.stringify({ generation: owner.token,
         instanceId: path.basename(this.context.transportAudit), dev: kernel.dev, ino: kernel.ino }), { mode: 0o600 });
     }
-    const overrides = [...((this.options.quotaToolPrivacy || this.options.apiKeyAuth) ? quotaToolPermissionConfigOverrides({
+    const overrides = [...((this.options.quotaToolPrivacy || this.options.apiKeyAuth || this.options.personalTestAuth) ? quotaToolPermissionConfigOverrides({
       codexHome: this.baseContext.environment.CODEX_HOME, transportAudit: this.baseContext.transportAudit,
-    }) : []), ...(this.options.apiKeyAuth ? SERVER_MODEL_CONFIG_OVERRIDES : [])];
+    }) : []), ...(this.options.apiKeyAuth ? SERVER_MODEL_CONFIG_OVERRIDES
+      : this.options.personalTestAuth ? PERSONAL_TEST_CONFIG_OVERRIDES : [])];
     if (this.retired) throw new LiveStdioClosedError("Worker startup was cancelled.");
     this.child = this.options.processFactory?.(this.context) ?? spawnCodexWorker(this.context, this.kernel, overrides);
     this.child.once("error", () => this.fail());
@@ -197,6 +202,10 @@ export class DirectStdioTransport implements AppServerTransport {
   async send(message: AppServerRequest) {
     validateAppServerRequest(message);
     if (this.options.apiKeyAuth && "method" in message.rpc) assertServerModelRpc(message.rpc.method, "params" in message.rpc ? message.rpc.params : undefined);
+    if (this.options.personalTestAuth) {
+      if ("method" in message.rpc) assertPersonalTestModelRpc(message.rpc.method, "params" in message.rpc ? message.rpc.params : undefined);
+      await assertPersonalModelTest(this.baseContext);
+    }
     const raw = JSON.stringify(message.rpc) + "\n", bytes = Buffer.byteLength(raw);
     if (bytes > MAX_INPUT_BYTES) throw new TransportRequestTooLargeError(message.clientRequestId, bytes, MAX_INPUT_BYTES);
     await this.connect();
@@ -211,6 +220,7 @@ export class DirectStdioTransport implements AppServerTransport {
     if (requestKey !== null) this.pendingRequests.add(requestKey);
     this.pendingInputBytes += bytes;
     const write = this.inputChain.then(async () => {
+      if (this.options.personalTestAuth) await assertPersonalModelTest(this.baseContext);
       if (this.retired || this.failure || !this.child?.stdin.writable) throw new LiveStdioClosedError("Live write outcome is unknown; recover native thread state.");
       await new Promise<void>((resolve, reject) => this.child!.stdin.write(raw, error => error ? reject(new LiveStdioClosedError("Live write outcome is unknown; recover native thread state.")) : resolve()));
     });

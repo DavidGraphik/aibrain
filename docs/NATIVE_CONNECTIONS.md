@@ -7,7 +7,7 @@ the workbench supplies the authenticated employee, current catalogue policy,
 per-turn tool admission, conversation state and artifact handling. This path adds
 neither another model dispatcher nor a new OAuth token exchange service.
 
-ChatGPT Apps described below are a personal development compatibility surface.
+ChatGPT Apps described below are a personal development/private-test compatibility surface.
 Hosted API-key mode disables their discovery and execution; a desktop connection
 cannot be assumed portable. The [official App Server auth contract](https://learn.chatgpt.com/docs/app-server#auth-endpoints)
 does not permit ChatGPT app-server authentication for commercial/hosted services.

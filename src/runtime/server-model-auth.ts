@@ -3,20 +3,63 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 
 export const SERVER_MODEL_KEY_PATH = "/etc/aibrain/model-api-key";
+export const PERSONAL_MODEL_TEST_PATH = "/etc/aibrain/personal-test.json";
 export const SERVER_MODEL_PROVIDER = "aibrain_openai_api";
-export type ModelAuthMode = "server-api-key" | "personal-codex";
+export type ModelAuthMode = "server-api-key" | "personal-codex" | "personal-test";
 export type ServerModelApiKeyProvider = () => Promise<string>;
 type Environment = Readonly<Record<string, string | undefined>>;
-const unavailable = () => new Error("Server model authentication is unavailable.");
+export class ModelAuthUnavailableError extends Error {
+  readonly code = "MODEL_AUTH_UNAVAILABLE";
+  constructor() { super("Server model authentication is unavailable."); }
+}
+const unavailable = () => new ModelAuthUnavailableError();
 
 export function configuredModelAuth(environment: Environment = process.env): ModelAuthMode {
   const mode = environment.AIBRAIN_MODEL_AUTH?.trim() || (environment.NODE_ENV === "production" ? "server-api-key" : "personal-codex");
-  if (mode !== "server-api-key" && mode !== "personal-codex" || mode === "personal-codex" && environment.NODE_ENV === "production") throw unavailable();
-  if (mode === "server-api-key" && ((environment.AIBRAIN_CODEX_TRANSPORT?.trim() || "stdio") !== "stdio"
+  if (!["server-api-key", "personal-codex", "personal-test"].includes(mode) || mode === "personal-codex" && environment.NODE_ENV === "production") throw unavailable();
+  if ((mode === "server-api-key" || mode === "personal-test") && ((environment.AIBRAIN_CODEX_TRANSPORT?.trim() || "stdio") !== "stdio"
     || (environment.AIBRAIN_CODEX_AUTH_SCOPE?.trim() || "per-user") !== "per-user"
     || ["AIBRAIN_SHARED_CODEX_AUTH_SOURCE", "AIBRAIN_CODEX_OWNER_AUTH_SOCKET", "AIBRAIN_INSTALLATION_OWNER_AUTH_ACK",
-      "AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT", "OPENAI_API_KEY", "CODEX_API_KEY"].some(name => environment[name]?.trim()))) throw unavailable();
-  return mode;
+      "OPENAI_API_KEY", "CODEX_API_KEY"].some(name => environment[name]?.trim())
+    || (mode === "server-api-key" ? Boolean(environment.AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT?.trim())
+      : !environment.AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT?.trim()))) throw unavailable();
+  return mode as ModelAuthMode;
+}
+
+/** This is a short-lived operator-owned personal QA profile, never hosted
+ * customer onboarding. Re-read for every admission/dispatch and token snapshot. */
+export async function assertPersonalModelTest(identity: { installationId: string; userId: string }) {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(identity.installationId)
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(identity.userId)
+      || await realpath(PERSONAL_MODEL_TEST_PATH) !== PERSONAL_MODEL_TEST_PATH) throw unavailable();
+    const initial = await lstat(PERSONAL_MODEL_TEST_PATH);
+    if (!initial.isFile() || initial.isSymbolicLink()) throw unavailable();
+    handle = await open(PERSONAL_MODEL_TEST_PATH, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = await handle.stat({ bigint: true }), mode = before.mode & 0o7777n;
+    if (!before.isFile() || before.uid !== 0n || before.nlink !== 1n || before.size < 2n || before.size > 4096n
+      || mode !== 0o644n && (mode !== 0o640n || before.gid !== BigInt(process.getegid?.() ?? -1))) throw unavailable();
+    const buffer = Buffer.alloc(4097); let bytes = 0;
+    while (bytes < buffer.length) {
+      const read = await handle.read(buffer, bytes, buffer.length - bytes, bytes);
+      if (!read.bytesRead) break;
+      bytes += read.bytesRead;
+    }
+    const after = await handle.stat({ bigint: true }), current = await lstat(PERSONAL_MODEL_TEST_PATH, { bigint: true });
+    const same = (s: typeof before) => ["dev", "ino", "uid", "gid", "mode", "nlink", "size", "mtimeNs", "ctimeNs"]
+      .every(key => s[key as keyof typeof s] === before[key as keyof typeof before]);
+    if (bytes !== Number(before.size) || !same(after) || !same(current)
+      || await realpath(PERSONAL_MODEL_TEST_PATH) !== PERSONAL_MODEL_TEST_PATH) throw unavailable();
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytes)));
+    const now = Date.now();
+    if (!record(value) || Object.keys(value).sort().join(",") !== "canonicalUserId,createdAt,expiresAt,installationId,schemaVersion"
+      || value.schemaVersion !== 1 || value.installationId !== identity.installationId || value.canonicalUserId !== identity.userId
+      || typeof value.createdAt !== "number" || !Number.isSafeInteger(value.createdAt) || value.createdAt <= 0 || value.createdAt > now
+      || typeof value.expiresAt !== "number" || !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= now
+      || value.expiresAt - value.createdAt > 2 * 60 * 60_000) throw unavailable();
+  } catch { throw unavailable(); }
+  finally { await handle?.close().catch(() => undefined); }
 }
 
 /** These values are public policy, never credentials. Pin before initialize. */
@@ -24,6 +67,9 @@ export const SERVER_MODEL_CONFIG_OVERRIDES = Object.freeze([
   'cli_auth_credentials_store="ephemeral"', 'forced_login_method="api"',
   `model_provider="${SERVER_MODEL_PROVIDER}"`,
   `model_providers.${SERVER_MODEL_PROVIDER}={name="OpenAI",base_url="https://api.openai.com/v1",wire_api="responses",requires_openai_auth=true}`,
+]);
+export const PERSONAL_TEST_CONFIG_OVERRIDES = Object.freeze([
+  'cli_auth_credentials_store="ephemeral"', 'forced_login_method="chatgpt"', 'model_provider="openai"',
 ]);
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -59,7 +105,13 @@ export function assertServerModelConfiguration(value: unknown) {
 /** Ordinary RPCs cannot replace hosted model authentication. MCP has its own
  * per-user credentials and retains its existing catalog authorization. */
 export function assertServerModelRpc(method: string, params: unknown) {
-  if (method.startsWith("app/") || method.startsWith("account/")
+  assertManagedModelRpc(method, params, false);
+}
+export function assertPersonalTestModelRpc(method: string, params: unknown) {
+  assertManagedModelRpc(method, params, true);
+}
+function assertManagedModelRpc(method: string, params: unknown, personalTest: boolean) {
+  if (!personalTest && method.startsWith("app/") || method.startsWith("account/")
     && !["account/read", "account/rateLimits/read", "account/usage/read"].includes(method)) throw unavailable();
   if (method.startsWith("config/") && !["config/read", "config/mcpServer/reload"].includes(method)) {
     if (method !== "config/value/write" || !record(params) || typeof params.keyPath !== "string"
@@ -80,7 +132,7 @@ export function assertServerModelRpc(method: string, params: unknown) {
     // exact persisted user/resource/server/generation lease and URL/port.
   }
   if (!record(params)) return;
-  if (params.modelProvider != null && params.modelProvider !== SERVER_MODEL_PROVIDER) throw unavailable();
+  if (params.modelProvider != null && params.modelProvider !== (personalTest ? "openai" : SERVER_MODEL_PROVIDER)) throw unavailable();
   if (record(params.config) && Object.keys(params.config).some(key =>
     /^(?:model_provider|model_providers|cli_auth_credentials_store|forced_login_method|chatgpt_base_url)(?:\.|$)/.test(key))) throw unavailable();
 }

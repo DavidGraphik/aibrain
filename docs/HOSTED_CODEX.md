@@ -13,8 +13,10 @@ states that ChatGPT app-server authentication is not permitted for commercial
 or hosted services. The subscription tokens used by a personal Codex installation
 are not the model credential for this hosted product.
 
-Production defaults to `AIBRAIN_MODEL_AUTH=server-api-key`. Personal Codex mode
-is available only outside production. The server uses the native
+Hosted production defaults to `AIBRAIN_MODEL_AUTH=server-api-key`. The separate
+[personal test profile](PERSONAL_CODEX_ACCESS.md#private-personal-testing) allows
+a compiled, private, one-owner QA copy to use its owner's subscription without
+changing that hosted default or sharing access with customers. The server uses the native
 `account/login/start` API-key method through the private stdio lane, with
 `cli_auth_credentials_store="ephemeral"` and `forced_login_method="api"`.
 Credentials do not belong in worker arguments, command environments, UI

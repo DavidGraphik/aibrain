@@ -1,7 +1,8 @@
 import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import { lstat, open, realpath } from "node:fs/promises";
-import { assertServerModelConfiguration, assertServerModelRpc, configuredModelAuth, SERVER_MODEL_KEY_PATH,
+import { assertPersonalModelTest, assertPersonalTestModelRpc, assertServerModelConfiguration, assertServerModelRpc,
+  configuredModelAuth, ModelAuthUnavailableError, PERSONAL_MODEL_TEST_PATH, SERVER_MODEL_KEY_PATH,
   SERVER_MODEL_PROVIDER, serverModelApiKeyProvider } from "./server-model-auth";
 
 vi.mock("node:fs/promises", () => ({ lstat: vi.fn(), open: vi.fn(), realpath: vi.fn() }));
@@ -19,6 +20,12 @@ function secret(value: unknown = { schemaVersion: 1, installationId: "company-al
   vi.mocked(open).mockResolvedValue(handle as never);return { handle, info };
 }
 beforeEach(() => { vi.resetAllMocks(); });
+const identity = { installationId: "company-alpha", userId: "00000000-0000-4000-8000-000000000001" };
+const profileValue = () => ({ schemaVersion: 1, installationId: identity.installationId, canonicalUserId: identity.userId,
+  createdAt: Date.now() - 1000, expiresAt: Date.now() + 60_000 });
+function profile(value: unknown = profileValue()) {
+  const fixture = secret(value); vi.mocked(realpath).mockResolvedValue(PERSONAL_MODEL_TEST_PATH); return fixture;
+}
 
 it("requires API auth in production and rejects personal, broker, shared, gateway and env-key fallbacks", () => {
   expect(configuredModelAuth({ NODE_ENV: "production" })).toBe("server-api-key");
@@ -28,6 +35,66 @@ it("requires API auth in production and rejects personal, broker, shared, gatewa
     { AIBRAIN_CODEX_AUTH_SCOPE: "shared-qa" }, { AIBRAIN_SHARED_CODEX_AUTH_SOURCE: "/private/auth.json" },
     { AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT: "/run/access" }, { AIBRAIN_CODEX_OWNER_AUTH_SOCKET: "/run/owner" }, { OPENAI_API_KEY: KEY }])
     expect(() => configuredModelAuth({ NODE_ENV: "production", ...extra })).toThrow("Server model authentication is unavailable.");
+});
+it("requires an explicit personal-test mode, private per-user broker and stdio without changing hosted defaults", () => {
+  const environment = { NODE_ENV: "production", AIBRAIN_MODEL_AUTH: "personal-test", AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT: "/run/own-access" };
+  expect(configuredModelAuth(environment)).toBe("personal-test");
+  expect(configuredModelAuth({ NODE_ENV: "production" })).toBe("server-api-key");
+  for (const patch of [{ AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT: "" }, { AIBRAIN_CODEX_TRANSPORT: "gateway" },
+    { AIBRAIN_CODEX_AUTH_SCOPE: "shared-qa" }, { AIBRAIN_SHARED_CODEX_AUTH_SOURCE: "/private/auth.json" },
+    { AIBRAIN_CODEX_OWNER_AUTH_SOCKET: "/run/owner" }, { AIBRAIN_INSTALLATION_OWNER_AUTH_ACK: "yes" }, { OPENAI_API_KEY: KEY }])
+    expect(() => configuredModelAuth({ ...environment, ...patch })).toThrow(ModelAuthUnavailableError);
+});
+it.each([0o100640n, 0o100644n])("accepts only the protected fixed-path profile for its own installation and actor (mode %s)", async mode => {
+  const { info, handle } = profile();info.mode = mode;
+  await expect(assertPersonalModelTest(identity)).resolves.toBeUndefined();
+  expect(open).toHaveBeenCalledWith(PERSONAL_MODEL_TEST_PATH, expect.any(Number));expect(handle.close).toHaveBeenCalledOnce();
+});
+it.each(["missing", "wrong-installation", "other-user", "expired", "future", "too-long", "schema", "extra", "bad-json", "unsafe-uid",
+  "unsafe-gid", "unsafe-mode", "hardlink", "oversized", "symlink", "changed", "replaced", "read-error"])("fails closed on an invalid personal test profile (%s)", async kind => {
+  const value = profileValue();
+  if (kind === "wrong-installation") value.installationId = "another-installation";
+  if (kind === "other-user") value.canonicalUserId = "00000000-0000-4000-8000-000000000002";
+  if (kind === "expired") value.expiresAt = value.createdAt;
+  if (kind === "future") value.createdAt = Date.now() + 60_000;
+  if (kind === "too-long") value.expiresAt = value.createdAt + 2 * 60 * 60_000 + 1;
+  if (kind === "schema") value.schemaVersion = 2;
+  const { info, handle } = profile(kind === "extra" ? { ...value, authSource: KEY } : value);
+  if (kind === "missing") vi.mocked(open).mockRejectedValueOnce(Error(KEY));
+  if (kind === "bad-json") {
+    info.size = 2n;handle.read.mockImplementation(async (target, offset, _length, position) => {
+      if (!position) target.write("{!", offset);return { bytesRead: position ? 0 : 2, buffer: target };
+    });
+  }
+  if (kind === "unsafe-uid") info.uid = 10001n;
+  if (kind === "unsafe-gid") info.gid += 1n;
+  if (kind === "unsafe-mode") info.mode = 0o100660n;
+  if (kind === "hardlink") info.nlink = 2n;
+  if (kind === "oversized") info.size = 4097n;
+  if (kind === "symlink") vi.mocked(realpath).mockResolvedValue("/other/profile.json");
+  if (kind === "changed") handle.stat.mockResolvedValueOnce(info).mockResolvedValueOnce({ ...info, ctimeNs: 2n });
+  if (kind === "replaced") vi.mocked(lstat).mockResolvedValueOnce(info as never).mockResolvedValueOnce({ ...info, ino: 3n } as never);
+  if (kind === "read-error") handle.read.mockRejectedValueOnce(Error(KEY));
+  await expect(assertPersonalModelTest(identity)).rejects.toMatchObject({ code: "MODEL_AUTH_UNAVAILABLE", message: "Server model authentication is unavailable." });
+});
+it("does not cache a valid profile beyond expiry or revocation", async () => {
+  const value = profileValue();profile(value);
+  const clock = vi.spyOn(Date, "now");
+  try {
+    clock.mockReturnValue(value.createdAt + 1);await expect(assertPersonalModelTest(identity)).resolves.toBeUndefined();
+    clock.mockReturnValue(value.expiresAt);await expect(assertPersonalModelTest(identity)).rejects.toThrow(ModelAuthUnavailableError);
+    profile({ ...value, canonicalUserId: "00000000-0000-4000-8000-000000000002" });clock.mockReturnValue(value.createdAt + 1);
+    await expect(assertPersonalModelTest(identity)).rejects.toThrow(ModelAuthUnavailableError);
+  } finally { clock.mockRestore(); }
+});
+it("keeps personal Apps and MCP independent while denying account/provider swaps in personal QA", () => {
+  for (const [method, params] of [["app/installed", {}], ["mcpServer/oauth/login", { name: "own" }],
+    ["account/read", { refreshToken: false }], ["thread/start", { modelProvider: "openai" }]] as const)
+    expect(() => assertPersonalTestModelRpc(method, params)).not.toThrow();
+  for (const [method, params] of [["account/login/start", { type: "chatgpt" }], ["account/logout", undefined],
+    ["account/gatewayOAuth/login", {}], ["account/futureMutation", {}], ["thread/start", { modelProvider: SERVER_MODEL_PROVIDER }],
+    ["config/value/write", { keyPath: "model_provider", value: "other", mergeStrategy: "upsert" }]] as const)
+    expect(() => assertPersonalTestModelRpc(method, params)).toThrow(ModelAuthUnavailableError);
 });
 it("lazily reads only the fixed root-owned, backend-readable installation key and closes the file", async () => {
   const { handle } = secret();const provider = serverModelApiKeyProvider("company-alpha");expect(open).not.toHaveBeenCalled();

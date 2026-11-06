@@ -8,6 +8,7 @@ import { currentWorkerExecutionOrigin } from "./kernel-ownership";
 import { DirectStdioTransport, DirectStdioWorkerRuntimeFactory, LiveStdioDuplicateSubmissionError } from "./direct-stdio-runtime";
 import type { WorkerLaunchContext } from "./types";
 import { SERVER_MODEL_PROVIDER } from "../server-model-auth";
+import * as modelAuth from "../server-model-auth";
 
 vi.mock("server-only", () => ({}));
 const roots: string[] = [], transports: DirectStdioTransport[] = [];
@@ -239,6 +240,46 @@ it("pins native credential privacy when API auth is selected without the optiona
   expect(args.some(arg => arg.startsWith("permissions=") && arg.includes(".credentials.json*") && arg.includes("mcp-oauth-locks"))).toBe(true);
   expect(args.some(arg => arg.startsWith("default_permissions="))).toBe(true);
   expect(args.join(" ")).not.toContain("synthetic-project-key-not-real");
+});
+it("requires the private personal provider and rejects a denied profile before spawning, then rechecks a warm transport", async () => {
+  const f = await context(), factory = vi.fn(f.processFactory);
+  expect(() => new DirectStdioTransport(f.ctx, { personalTestAuth: true, processFactory: factory })).toThrow(modelAuth.ModelAuthUnavailableError);
+  expect(factory).not.toHaveBeenCalled();
+  let active = false;
+  vi.spyOn(modelAuth, "assertPersonalModelTest").mockImplementation(async identity => {
+    if (!active || identity.userId !== f.ctx.userId || identity.installationId !== f.ctx.installationId) throw new modelAuth.ModelAuthUnavailableError();
+  });
+  const provider = vi.fn(async () => ({ accessToken: "synthetic-personal-only", chatgptAccountId: "synthetic-account", chatgptPlanType: null }));
+  const denied = transport(f, { personalTestAuth: true, processFactory: factory, authForContext: () => provider });
+  await expect(denied.connect()).rejects.toThrow();expect(factory).not.toHaveBeenCalled();expect(provider).not.toHaveBeenCalled();
+  active = true;
+  const t = transport(f, { personalTestAuth: true, authForContext: () => provider });await t.connect();await next(t);
+  await t.send({ clientRequestId: "own-apps", kind: "rpc-request", rpc: { id: "own-apps", method: "app/installed", params: {} } });
+  expect((await next(t)).value).toMatchObject({ nativeIds: { requestId: "own-apps" } });
+  for (const [method, params] of [["account/logout", undefined], ["account/gatewayOAuth/login", undefined],
+    ["account/sendAddCreditsNudgeEmail", { creditType: "credits" }]] as const)
+    await expect(t.send({ clientRequestId: method, kind: "rpc-request", rpc: { id: method, method, ...(params === undefined ? {} : { params }) } } as AppServerRequest)).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+  active = false;
+  await expect(t.send({ clientRequestId: "expired-turn", kind: "rpc-request", rpc: { id: "expired-turn", method: "turn/start", params: { threadId: "synthetic", input: [] } } })).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+  expect((await t.health()).pendingRequests).toBe(0);expect(provider).toHaveBeenCalledOnce();
+});
+it("pins ephemeral personal QA, native OpenAI and credential privacy before private bootstrap, without a secret in arguments", async () => {
+  const f = await context(), observation = path.join(f.root, "personal-launch.json"), executable = path.join(f.root, "fake-personal-codex.mjs");
+  vi.spyOn(modelAuth, "assertPersonalModelTest").mockResolvedValue(undefined);
+  await writeFile(executable, `#!${process.execPath}\nimport{writeFileSync}from'node:fs';import{createInterface}from'node:readline';
+    writeFileSync(${JSON.stringify(observation)},JSON.stringify(process.argv.slice(2)));
+    createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);if(r.method==='initialized')return;
+      const result=r.method==='account/login/start'?{type:'chatgptAuthTokens'}:{};
+      process.stdout.write(JSON.stringify({id:r.id,result})+'\\n');});`, { mode: 0o700 });
+  vi.stubEnv("CODEX_BIN", executable);
+  const t = new DirectStdioTransport(f.ctx, { personalTestAuth: true, authForContext: () => async () => ({
+    accessToken: "synthetic-personal-only-not-real", chatgptAccountId: "synthetic-account", chatgptPlanType: null,
+  }), kernelLockCommand: ["python3", "-c", "import fcntl;fcntl.flock(3,fcntl.LOCK_SH|fcntl.LOCK_NB)"] });
+  transports.push(t);await t.connect();
+  const args: string[] = JSON.parse(await readFile(observation, "utf8"));
+  for (const option of ['cli_auth_credentials_store="ephemeral"', 'forced_login_method="chatgpt"', 'model_provider="openai"']) expect(args).toContain(option);
+  expect(args.some(arg => arg.startsWith("permissions=") && arg.includes(".credentials.json*") && arg.includes("mcp-oauth-locks"))).toBe(true);
+  expect(args.some(arg => arg.startsWith("default_permissions="))).toBe(true);expect(args.join(" ")).not.toContain("synthetic-personal-only-not-real");
 });
 it("can close before startup without spawning a child", async () => {
   const f=await context(),factory=vi.fn(f.processFactory),t=transport(f,{processFactory:factory});

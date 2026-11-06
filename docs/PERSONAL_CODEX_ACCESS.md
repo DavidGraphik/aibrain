@@ -1,9 +1,42 @@
 # Personal development access-token boundary
 
-This is not the hosted deployment path. Production uses
-[server model authentication](HOSTED_CODEX.md) and rejects personal/shared
-ChatGPT authentication. The remaining description documents the development
-compatibility boundary and its historical QA contract.
+This is not the hosted deployment path. Hosted production defaults to
+[server model authentication](HOSTED_CODEX.md). Personal development and an
+explicit, private, one-owner test installation can use that person's Codex
+subscription. This is not permission to share the account with customers or
+treat personal QA as hosted-provider acceptance.
+
+## Private personal testing
+
+`AIBRAIN_MODEL_AUTH=personal-test` selects the existing per-user access provider
+for a compiled private test installation. It requires a protected, read-only
+`/etc/aibrain/personal-test.json` owned by root, with this exact non-secret shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "installationId": "example-personal-test",
+  "canonicalUserId": "11111111-1111-4111-8111-111111111111",
+  "createdAt": 1793926800000,
+  "expiresAt": 1793930400000
+}
+```
+
+Times are UTC epoch milliseconds; the window may not exceed two hours. Bind the
+private test controller, its access snapshot and its loopback-only ingress to
+the same owner and a no-longer-lived lease. The profile authorizes exactly one
+installation/user pair and is revalidated for warm clients as well as startup.
+A missing, unsafe, expired or different-owner profile fails closed. It contains
+no subscription token or task-approval phrase.
+
+The native worker uses ephemeral ChatGPT authentication through the existing
+private stdio lane. No API spending, shared/owner credential fallback, legacy
+auth-cache import or customer activation is part of this test mode. Keep native
+credential privacy profiles enabled. Label all UI receipts `personal-test`;
+model/provider behavior under this mode does not establish hosted API-key
+acceptance or portability of the person's ChatGPT App connections.
+
+## Access snapshot boundary
 
 `AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT` optionally enables a server-side provider
 for one development installation and employee.

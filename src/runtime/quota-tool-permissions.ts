@@ -19,7 +19,7 @@ export function privateCodexToolPermissionsRequired(
   config: { installationId?: unknown; usageLimits?: unknown },
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ) {
-  return environment.NODE_ENV === "production" || environment.AIBRAIN_MODEL_AUTH?.trim() === "server-api-key"
+  return environment.NODE_ENV === "production" || ["server-api-key", "personal-test"].includes(environment.AIBRAIN_MODEL_AUTH?.trim() ?? "")
     || ["modtime", "trinalum-production"].includes(String(config.installationId)) || Boolean(config.usageLimits);
 }
 

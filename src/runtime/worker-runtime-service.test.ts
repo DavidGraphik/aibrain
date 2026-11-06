@@ -2,6 +2,7 @@ import { withColdThreadRecoveryDeadline } from "@/runtime/cold-thread-recovery";
 import { validateAppServerRequest } from "@/runtime/transport/wire-protocol";
 import { describe, expect, it, vi } from "vitest";
 import { loadInstallationConfig } from "@/config/installation";
+import * as installationModule from "@/config/installation";
 import { FileLocalUserStore } from "@/auth/local-user-store";
 
 vi.mock("server-only", () => ({}));
@@ -29,6 +30,7 @@ import {
 import type { WorkerRuntimeHandle, WorkerRoots } from "@/runtime/workers/types";
 import { WeeklyTokenBudgetStore } from "@/usage/weekly-token-budget";
 import { RuntimeProjectionAdmissionDeferred } from "@/runtime/transport/projection-readiness";
+import * as modelAuth from "@/runtime/server-model-auth";
 
 it("selects direct stdio by default and requires an explicit valid compatibility mode", () => {
   expect(configuredWorkerTransport({})).toBe("stdio");
@@ -170,6 +172,60 @@ function handle(transport: AppServerTransport): WorkerRuntimeHandle {
 }
 
 describe("worker App Server client", () => {
+  it("allows only the bound personal QA actor before initialization and rechecks expiry on a warm client", async () => {
+    vi.stubEnv("NODE_ENV", "production");vi.stubEnv("AIBRAIN_MODEL_AUTH", "personal-test");
+    vi.stubEnv("AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT", "/run/own-access");
+    const ownTransport = new FakeTransport(), own = handle(ownTransport);
+    let active = true;
+    const check = vi.spyOn(modelAuth, "assertPersonalModelTest").mockImplementation(async identity => {
+      if (!active || identity.installationId !== own.installationId || identity.userId !== own.userId) throw new modelAuth.ModelAuthUnavailableError();
+    });
+    const client = new WorkerAppServerClient(own), foreignTransport = new FakeTransport();
+    const foreign = new WorkerAppServerClient({ ...handle(foreignTransport), userId: "00000000-0000-4000-8000-000000000002" });
+    try {
+      await expect(foreign.request("turn/start", { threadId: "synthetic" }, "foreign-turn")).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+      expect(foreignTransport.sent).toHaveLength(0);
+      await expect(client.connectionSummary()).resolves.toMatchObject({ connected: true, authMode: "chatgpt" });
+      await expect(client.request("app/installed", {}, "own-apps")).resolves.toEqual({});
+      await expect(client.request("mcpServer/oauth/login", { name: "own" }, "own-mcp")).resolves.toEqual({});
+      const dispatched = ownTransport.sent.length;
+      for (const method of ["account/login/start", "account/logout", "account/gatewayOAuth/login", "account/sendAddCreditsNudgeEmail"] as const)
+        await expect(client.request(method, {}, "account-swap")).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+      expect(ownTransport.sent).toHaveLength(dispatched);
+      active = false;
+      await expect(client.request("turn/start", { threadId: "synthetic" }, "expired-turn")).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+      await expect(client.requestExistingMetadata("thread/read", { threadId: "synthetic" }, "expired-metadata")).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+      expect(ownTransport.sent).toHaveLength(dispatched);
+    } finally { await client.close();await foreign.close();check.mockRestore();vi.unstubAllEnvs(); }
+  });
+  it("rejects an API or missing account instead of falling back from personal QA", async () => {
+    vi.stubEnv("AIBRAIN_MODEL_AUTH", "personal-test");vi.stubEnv("AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT", "/run/own-access");
+    const check = vi.spyOn(modelAuth, "assertPersonalModelTest").mockResolvedValue();
+    try {
+      const accounts: JsonValue[] = [{ account: { type: "apiKey" } }, { account: null, requiresOpenaiAuth: true }];
+      for (const account of accounts) {
+        const transport = new FakeTransport(false, [account]), client = new WorkerAppServerClient(handle(transport));
+        try { await expect(client.request("turn/start", { threadId: "synthetic" }, "no-fallback")).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+          expect(transport.sent.some(row => row.kind === "rpc-request" && row.rpc.method === "turn/start")).toBe(false);
+        } finally { await client.close(); }
+      }
+    } finally { check.mockRestore();vi.unstubAllEnvs(); }
+  });
+  it("denies a non-owner personal QA admission before user provisioning, worker startup or admission hooks", async () => {
+    const config = await loadInstallationConfig();
+    vi.stubEnv("NODE_ENV", "production");vi.stubEnv("AIBRAIN_MODEL_AUTH", "personal-test");
+    vi.stubEnv("AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT", "/run/own-access");
+    const globals = globalThis as typeof globalThis & { __aibrainWorkerRuntimeService?: unknown };
+    const previous = globals.__aibrainWorkerRuntimeService;
+    const load = vi.spyOn(installationModule, "loadInstallationConfig").mockResolvedValue(config);
+    const registry = { start: vi.fn(), get: vi.fn(), close: vi.fn() }, hook = vi.fn();
+    globals.__aibrainWorkerRuntimeService = { fingerprint: installationFingerprint(config), config, registry };
+    const read = vi.spyOn(FileLocalUserStore.prototype, "read"), check = vi.spyOn(modelAuth, "assertPersonalModelTest").mockRejectedValue(new modelAuth.ModelAuthUnavailableError());
+    try {
+      await expect(workerAppServerForUser("00000000-0000-4000-8000-000000000002", undefined, hook)).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+      expect(read).not.toHaveBeenCalled();expect(registry.start).not.toHaveBeenCalled();expect(hook).not.toHaveBeenCalled();
+    } finally { globals.__aibrainWorkerRuntimeService = previous;read.mockRestore();check.mockRestore();load.mockRestore();vi.unstubAllEnvs(); }
+  });
   it("admits API account readiness without personal OAuth and rejects ordinary managed-auth/app RPCs before dispatch", async () => {
     vi.stubEnv("AIBRAIN_MODEL_AUTH", "server-api-key");
     const transport = new FakeTransport(false, [{ account: { type: "apiKey" }, requiresOpenaiAuth: true }]);

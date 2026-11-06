@@ -39,7 +39,8 @@ import { operationalLogger } from "@/operations/server-logger";
 import { installationOwnerAuthSocket, readInstallationOwnerAccess } from "@/runtime/installation-owner-auth";
 import { createWeeklyTokenBudgetRuntime, type WeeklyTokenBudgetRuntime } from "@/usage/weekly-token-budget-runtime";
 import { completeNativeConnectionOAuth } from "@/connectors/native-connection-lifecycle";
-import { assertServerModelRpc, configuredModelAuth, SERVER_MODEL_KEY_PATH, serverModelApiKeyProvider } from "@/runtime/server-model-auth";
+import { assertPersonalModelTest, assertPersonalTestModelRpc, assertServerModelRpc, configuredModelAuth, ModelAuthUnavailableError,
+  PERSONAL_MODEL_TEST_PATH, SERVER_MODEL_KEY_PATH, serverModelApiKeyProvider } from "@/runtime/server-model-auth";
 
 const CATALOG_FRESH_TTL_MS = 5 * 60_000;
 const CATALOG_STALE_TTL_MS = 30 * 60_000;
@@ -71,7 +72,8 @@ export function installationFingerprint(config: Readonly<InstallationConfig>) {
     usageLimits: config.usageLimits,
     transport: configuredWorkerTransport(),
     modelAuth: configuredModelAuth(),
-    modelAuthSource: configuredModelAuth() === "server-api-key" ? SERVER_MODEL_KEY_PATH : null,
+    modelAuthSource: configuredModelAuth() === "server-api-key" ? SERVER_MODEL_KEY_PATH
+      : configuredModelAuth() === "personal-test" ? PERSONAL_MODEL_TEST_PATH : null,
   })).digest("hex");
 }
 
@@ -145,6 +147,7 @@ export class WorkerAppServerClient {
   }
 
   async initialize() {
+    if (this.modelAuth === "personal-test") await assertPersonalModelTest(this.handle);
     if (this.router.failed) throw new Error("App Server transport is unavailable.");
     if (!this.initialized) {
       this.initialized = this.initializeOnce().catch((error) => {
@@ -200,11 +203,13 @@ export class WorkerAppServerClient {
       "account-read",
     ), 10_000));
     if (this.modelAuth === "server-api-key" && this.account.authMode !== "apiKey") throw new Error("Server model authentication is unavailable.");
+    if (this.modelAuth === "personal-test" && (!this.account.connected || this.account.authMode !== "chatgpt")) throw new ModelAuthUnavailableError();
   }
 
   /** No initialize, login, catalog, restart or model dispatch is permitted here.
    * A cold/failed client is unknown, even if ordinary admission could repair it. */
   async requestExistingMetadata(method: ClientRequest["method"], params: unknown, purpose: string, timeoutMs = 5_000) {
+    if (this.modelAuth === "personal-test") await assertPersonalModelTest(this.handle);
     if (!["thread/read", "thread/turns/list"].includes(method) || this.account === null || this.router.failed ||
         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(purpose)) throw new Error("Existing metadata client is unavailable.");
     return this.router.request({ method, id: purpose, params } as ClientRequest, timeoutMs);
@@ -219,6 +224,7 @@ export class WorkerAppServerClient {
     activityLease?: MaintenanceActivityLease,
   ) {
     if (this.modelAuth === "server-api-key") assertServerModelRpc(method, params);
+    if (this.modelAuth === "personal-test") assertPersonalTestModelRpc(method, params);
     if (method === "turn/start") this.maintenance?.assertActiveLease(activityLease);
     await this.initialize();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(purpose)) {
@@ -482,9 +488,16 @@ async function serviceState(): Promise<RuntimeServiceState> {
     }
     const maintenance = new MaintenanceCoordinator();
     const modelAuth = configuredModelAuth();
-    const privateOptions = { quotaToolPrivacy: privateCodexToolPermissionsRequired(config) };
+    const privateOptions = { quotaToolPrivacy: modelAuth === "personal-test" || privateCodexToolPermissionsRequired(config) };
     const factory = modelAuth === "server-api-key"
       ? new DirectStdioWorkerRuntimeFactory({ ...privateOptions, apiKeyAuth: serverModelApiKeyProvider(config.installationId) })
+      : modelAuth === "personal-test" ? new DirectStdioWorkerRuntimeFactory({ ...privateOptions, personalTestAuth: true,
+        authForContext: context => {
+          const personal = userAccessAuthProvider(context);
+          if (!personal) throw new ModelAuthUnavailableError();
+          return async (...args) => { await assertPersonalModelTest(context); return personal(...args); };
+        },
+      })
       : new (configuredWorkerTransport() === "stdio" ? DirectStdioWorkerRuntimeFactory : LocalGatewayWorkerRuntimeFactory)({
         ...privateOptions,
         sharedAuth: sharedAuthProvider(config, process.env.AIBRAIN_CODEX_AUTH_SCOPE === "shared-qa" ? workerEgressEnvironment() : {}),
@@ -527,6 +540,7 @@ export async function workerAppServerForUser(
   beforeInitialize?: (context: { config: Readonly<InstallationConfig>; roots: WorkerRoots }) => Promise<void>,
 ) {
   const state = await serviceState();
+  if (configuredModelAuth() === "personal-test") await assertPersonalModelTest({ installationId: state.config.installationId, userId });
   const generation = state.admissionGenerations?.get(userId) ?? 0;
   const localUser = await new FileLocalUserStore(state.config.paths.usersRoot).read(userId);
   assertAdmissionGeneration(state, userId, generation);
