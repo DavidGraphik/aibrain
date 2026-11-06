@@ -21,7 +21,7 @@ import { outreachSystemInstructions, type outreachSystemToolsForTurn } from "@/i
 import { TRINALUM_DYNAMIC_TOOLS } from "@/runtime/trinalum-dynamic-tools";
 import { MODTIME_DYNAMIC_TOOLS } from "@/runtime/modtime-dynamic-tools";
 import { G03_SAGE_DYNAMIC_TOOLS } from "@/runtime/g03-sage-dynamic-tools";
-import { COMPOSIO_DYNAMIC_TOOLS } from "@/runtime/composio-dynamic-tools";
+import { composioToolsForTurn } from "@/runtime/composio-dynamic-tools";
 import { CONNECTED_ACTION_DYNAMIC_TOOLS } from "@/runtime/connected-action-dynamic-tools";
 import { AUTOMATION_DYNAMIC_TOOLS } from "@/automations/chat-tools";
 import { AUTOMATION_RUN_STATE_TOOLS, AUTOMATION_RUN_STATE_INSTRUCTIONS } from "@/automations/run-state-tools";
@@ -123,7 +123,7 @@ export function buildWorkerTurnTools({
       ...(modules.modtimeReporting ? MODTIME_DYNAMIC_TOOLS : []),
       ...(sessions.g03 ? G03_DYNAMIC_TOOLS : []),
       ...(installationId === "g03-production" && connected("g03-sage") ? G03_SAGE_DYNAMIC_TOOLS : []),
-      ...(connectors?.composio?.toolkits.length ? COMPOSIO_DYNAMIC_TOOLS : []),
+      ...composioToolsForTurn(connectors?.composio?.toolkits, availableConnectorIds),
       ...(connectors?.codexManagedAppAction ? CONNECTED_ACTION_DYNAMIC_TOOLS : []),
       ...(sessions.automation ? AUTOMATION_DYNAMIC_TOOLS : []),
       ...(runStateEnabled ? AUTOMATION_RUN_STATE_TOOLS : []),

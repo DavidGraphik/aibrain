@@ -47,6 +47,7 @@
   "tests/unit/mail-folder-ordering.test.ts",
   "tests/component/use-task-center.test.tsx",
   "src/runtime/worker-turn-tools.test.ts",
+  "src/runtime/composio-dynamic-tools.test.ts",
   "src/catalog/native-connection-transport.test.ts",
   "src/runtime/native-app-tools.test.ts",
   "src/runtime/native-mcp-config.test.ts",

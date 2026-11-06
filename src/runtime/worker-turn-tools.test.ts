@@ -15,6 +15,7 @@ import { OUTLOOK_DESKTOP_DYNAMIC_TOOLS } from "./outlook-desktop-dynamic-tools";
 import { WEBSITE_CHAT_TOOLS } from "@/insijets/website-chat-edit";
 import { OPERATOR_CHAT_TOOLS, operatorChatInstructions } from "@/insijets/operator-sourcing-chat";
 import { OUTREACH_SYSTEM_TOOLS, outreachSystemInstructions } from "@/insijets/outreach-system-chat";
+import { COMPOSIO_NAMESPACE } from "./composio-dynamic-tools";
 
 vi.mock("server-only", () => ({}));
 
@@ -37,6 +38,18 @@ const withoutSpecs = (actual: ReturnType<typeof buildWorkerTurnTools>["dynamicTo
 };
 
 describe("turn module catalogue", () => {
+  it("does not offer Composio discovery for native-only users, but keeps a verified Composio connection", () => {
+    const input = context();
+    input.connectors = { composio: { toolkits: [{ slug: "example_crm", label: "Example CRM", authConfigId: "ac_example", scopes: ["read"], readTools: [{ slug: "EXAMPLE_READ", version: "20261106_01" }] }] } };
+    input.availableConnectorIds = [];
+    expect(names(buildWorkerTurnTools(input).dynamicTools)).not.toContain(COMPOSIO_NAMESPACE);
+    input.availableConnectorIds = ["native-gmail", "native-google-drive", "native-google-calendar"];
+    expect(names(buildWorkerTurnTools(input).dynamicTools)).not.toContain(COMPOSIO_NAMESPACE);
+    input.availableConnectorIds = ["composio-example-crm"];
+    expect(names(buildWorkerTurnTools(input).dynamicTools)).toContain(COMPOSIO_NAMESPACE);
+    input.availableConnectorIds = undefined;
+    expect(names(buildWorkerTurnTools(input).dynamicTools)).not.toContain(COMPOSIO_NAMESPACE);
+  });
   it("only announces direct mail providers present in the fresh server connection snapshot", () => {
     const input = context(); input.availableConnectorIds = [];
     withoutSpecs(buildWorkerTurnTools(input).dynamicTools, [...GMAIL_DYNAMIC_TOOLS, ...OUTLOOK_DYNAMIC_TOOLS]);

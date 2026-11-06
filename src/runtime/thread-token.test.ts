@@ -259,7 +259,7 @@ it.each([
 
 it("refreshes existing support threads from the actual reference schema and guidance", () => {
   const digest = createHash("sha256").update(JSON.stringify({ tools: SUPPORT_DYNAMIC_TOOLS, instructions: SUPPORT_INSTRUCTIONS })).digest("hex").slice(0, 16);
-  expect(CURRENT_THREAD_TOOLSET_REVISION).toBe(`aibrain-tools-2026-11-05-nc-${digest}-native-v1`);
+  expect(CURRENT_THREAD_TOOLSET_REVISION).toBe(`aibrain-tools-2026-11-05-nc-${digest}-native-v2`);
   for (const installation of ["modtime", "g03-production", "trinalum-production", "insijets-demo"]) {
     const user = "00000000-0000-4000-8000-000000000001";
     const before = readThreadTokenContext(issueThreadToken(installation, user, "before-case-references", "aibrain-tools-2026-11-04-support-v12-schedule-start"), installation, user);
@@ -268,6 +268,16 @@ it("refreshes existing support threads from the actual reference schema and guid
     expect(runtimeThreadIdForChatMessage(fresh, "Sigue fallando", installation)).toBe("with-case-references");
     expect(currentThreadToolsetRevision(installation).length).toBeLessThanOrEqual(127);
   }
+});
+
+it("retires native threads that advertised installation-wide provider discovery", () => {
+  const installation = "qa-company", user = "00000000-0000-4000-8000-000000000001";
+  const previous = CURRENT_THREAD_TOOLSET_REVISION.replace(/-native-v2$/, "-native-v1");
+  const old = readThreadTokenContext(issueThreadToken(installation, user, "with-unavailable-provider", previous), installation, user);
+  expect(old).not.toBeNull();
+  expect(runtimeThreadIdForChatMessage(old, "Continúa", installation)).toBeNull();
+  const fresh = readThreadTokenContext(issueThreadToken(installation, user, "with-admitted-tools"), installation, user);
+  expect(runtimeThreadIdForChatMessage(fresh, "Continúa", installation)).toBe("with-admitted-tools");
 });
 
 it('refreshes pre-attachment Trinalum runtime schema without changing the public chat or exposing general history',()=>{
