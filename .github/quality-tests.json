@@ -93,5 +93,6 @@
   "src/app/api/connectors/native/callback/[[...nativePath]]/route.test.ts",
   "src/app/api/connectors/native/[resourceId]/disconnect/route.test.ts",
   "src/settings/connector-settings.test.ts",
-  "src/connectors/native-oauth-orchestration.test.ts"
+  "src/connectors/native-oauth-orchestration.test.ts",
+  "tests/integration/private-owner-auth.integration.test.ts"
 ]

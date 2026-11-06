@@ -107,6 +107,9 @@ export class LocalAuthService {
       const user = await this.authorizedLocalUser(identity.userId, identity.email);
       await this.users.saveAvatarUrl(user.userId, identity.avatarUrl ?? null);
       if (await this.users.hasInitialPasswordMarker(user.userId)) {
+        if (this.identityProvider.initialPasswordChangeSupported === false) {
+          throw new IdentityProviderError("provider_unavailable", "Password changes are unavailable for this identity provider.");
+        }
         const challenge = await this.challenges.create({
           installationId: this.installationId,
           userId: user.userId,

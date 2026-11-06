@@ -15,6 +15,7 @@ import { getDemoAccount, getTenantDefinition } from "@/config/tenants";
 import { readSupabasePublicConfig } from "@/lib/supabase/config";
 import { profileAvatarOverride } from "@/auth/profile-avatar";
 import { bindLocalServerSession } from "@/auth/server-session-binding";
+import { assertPrivateOwnerSession, isPrivateOwnerAuthConfigured, isPrivateOwnerAuthRequested } from "@/auth/private-owner-identity-provider";
 
 const DEMO_SESSION_COOKIE = "aibrain_demo_session";
 const DEMO_SESSION_SECONDS = 12 * 60 * 60;
@@ -44,6 +45,7 @@ export function isVercelPreviewDemoEnabled() {
 
 export function getAuthMode(): AuthMode {
   const configured = process.env.AIBRAIN_AUTH_MODE?.trim();
+  if (configured === "private-owner") return isPrivateOwnerAuthConfigured() ? "private-owner" : "unavailable";
   if (configured === "supabase") {
     return readSupabasePublicConfig() ? "supabase" : "unavailable";
   }
@@ -125,6 +127,10 @@ async function getLocalSession(sessionId: string): Promise<AuthSession | null> {
   if (!user || !user.enabled) {
     await sessions.revokeUser(installation.installationId, resolved.record.userId);
     return null;
+  }
+  if (isPrivateOwnerAuthRequested()) {
+    try { await assertPrivateOwnerSession({ installationId: installation.installationId, userId: user.userId, email: user.email }); }
+    catch { return null; }
   }
   return bindLocalServerSession({
     provider: "local",

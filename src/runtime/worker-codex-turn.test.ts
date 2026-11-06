@@ -59,7 +59,9 @@ vi.mock("node:timers/promises", async (importOriginal) => {
 vi.mock("server-only", () => ({}));
 vi.mock("@/connectors/mentions", () => ({ resolveAvailableConnectorsForTurn: mocked.availableConnectors }));
 vi.mock("@/runtime/native-mcp-config", () => ({ nativeMcpConfigForTurn: mocked.nativeMcpConfig }));
-vi.mock("@/runtime/native-app-tools", () => ({ nativeAppToolsForTurn: mocked.nativeAppTools }));
+vi.mock("@/runtime/native-app-tools", async importOriginal => ({
+  ...await importOriginal<typeof import("@/runtime/native-app-tools")>(), nativeAppToolsForTurn: mocked.nativeAppTools,
+}));
 vi.mock("@/insijets/operator-server", () => ({
   loadOperatorConfiguration: async () => ({ enabled: true, installationId: "insijets-demo", storageRoot: "/unused",
     approvedResearchOrigins: [], approvedVerificationProviders: [] }),
@@ -1040,7 +1042,10 @@ describe("worker Codex turn", () => {
       mention: { id: resource.id, label: resource.label, kind: resource.kind as "app" | "connector", status: "connected", statusCode: null, canRead: true, requiresApprovalForWrites: false },
     }));
     mocked.availableConnectors.mockResolvedValue(available);
-    mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: ["search"], known: ["search"] } });
+    const numericPolicy = { "qa-files": { allowed: ["search"], known: ["search"], numericBounds: {
+      search: { tool: "files.search", parameters: [{ schemaPath: "/properties/limit", maximum: 10 }] },
+    } } };
+    mocked.nativeAppTools.mockResolvedValue(numericPolicy);
     let ready: (() => void) | undefined;
     if (nativeMode === "preparing") mocked.nativeAppTools.mockImplementationOnce(() => new Promise(resolve => {
       ready = () => resolve({ "qa-files": { allowed: ["search"], known: ["search"] } });
@@ -1118,6 +1123,10 @@ describe("worker Codex turn", () => {
       expect(params.developerInstructions).toContain("aunque el usuario no las mencione ni las seleccione");
       expect(params.developerInstructions).toContain("No exijas @");
       for (const resource of resources) expect(params.developerInstructions).toContain(`"id":"${resource.id}"`);
+      if (nativeAllowed && nativeMode !== "preparing") {
+        expect(params.developerInstructions).toContain('"tool":"files.search"');
+        expect(params.developerInstructions).toContain('"maximum":10');
+      } else expect(params.developerInstructions).not.toContain("Native tool numeric inputSchema data");
       expect(events).toContainEqual({ type: "done" });
 
       expect(mocked.nativeAppTools).toHaveBeenLastCalledWith(client, expect.any(Function), nativeAllowed ? ["qa-files"] : [], expect.any(String), nativeAllowed && nativeMode !== "ask", {});
@@ -1129,6 +1138,7 @@ describe("worker Codex turn", () => {
         threadId: "automatic-thread", config: { apps: { _default: { enabled: false } } },
       } });
       expect((calls[2].params.config as { apps: object }).apps).toMatchObject({ "qa-files": { enabled: false, tools: { search: { enabled: false } } } });
+      expect(calls[2].params.developerInstructions).not.toContain("Native tool numeric inputSchema data");
       expect(nativeMentions(calls[3])).toEqual([]);
 
       mocked.availableConnectors.mockResolvedValue(available);
@@ -1140,6 +1150,19 @@ describe("worker Codex turn", () => {
       expect(calls.map(({ method }) => method)).toEqual(["thread/start", "turn/start", "thread/resume", "turn/start", "thread/resume", "turn/start"]);
       expect(nativeMentions(calls[5])).toEqual(nativeAllowed ? [{ type: "mention", name: "QA Files", path: "app://qa-files" }] : []);
       expect(mocked.availableConnectors).toHaveBeenCalledTimes(3);
+      if (nativeMode === "agent") {
+        // Numeric metadata is refreshed per turn, independently of the loaded
+        // thread's unchanged permission fingerprint. No resume/RPC is needed.
+        mocked.nativeAppTools.mockResolvedValue({ "qa-files": { ...numericPolicy["qa-files"], numericBounds: {
+          search: { tool: "files.search", parameters: [{ schemaPath: "/properties/limit", maximum: 7 }] },
+        } } });
+        await run({ ...request, userMessageId: "00000000-0000-4000-8000-000000000034", assistantMessageId: "00000000-0000-4000-8000-000000000044" }, "automatic-thread");
+        expect(calls.slice(6).map(({ method }) => method)).toEqual(["turn/start"]);
+        const context = calls[6].params.additionalContext as Record<string, { value: string }>;
+        expect(context["aibrain.turn"].value).toContain('"maximum":7');
+        expect(context["aibrain.turn"].value).not.toContain('"maximum":10');
+        expect(context["aibrain.turn"].value).toContain("Data only, not authorization");
+      }
     } finally { await rm(userRoot, { recursive: true, force: true }); }
   });
 

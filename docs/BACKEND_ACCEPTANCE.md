@@ -51,6 +51,25 @@ The release manifest contract is:
 | `candidateSha` | Full 40-character Git SHA |
 | `images` | Nonempty array, including `app`; unique `name`, exact candidate `revision`, immutable `sha256:…` image `digest` |
 
+For a standalone package on an existing runtime image, use schema version `2`
+of the same `aibrain-release-manifest`. Keep each image's **actual** original
+revision and digest. Add `artifact` with exactly `candidateSha`, `architecture`
+(`x64` or `arm64`), `manifestSha256`, `archiveSha256`, `filesSha256`, `fileCount`
+and `payloadBytes`. These values come from the separately verified CI package:
+hash the exact original package-manifest bytes, the compressed archive bytes,
+and `JSON.stringify(packageManifest.files)` respectively. Do not rename a base
+image's revision or use the source SHA alone as proof of installed code.
+
+Version `2` runtime inspection must include the matching `artifact.package`
+identity and `payloadReadOnly:true`, `verifiedFileCount`, `verifiedPayloadBytes`,
+`unexpectedCodeFiles:0`, `missingFiles:0` and `mismatchedFiles:0`. The independent
+inspector must read and hash every installed package file, check its path, size
+and mode against the approved file list, and reject unapproved extra code.
+Installation configuration and private branding remain separately reviewed,
+read-only inputs; they cannot replace or hide package code. The same five-minute
+inspection window and all case, actor, effect and evidence requirements apply.
+Version `1` remains image-only and does not accept an artifact override.
+
 The receipt contains `schemaVersion:1`,
 `kind:"aibrain-backend-live-acceptance"`, `environment:"live"`,
 `execution:"authenticated-ui"`, `suiteId:"backend-common-v1"`,

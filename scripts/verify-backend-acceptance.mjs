@@ -15,6 +15,13 @@ const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
 export const backendAcceptanceHash = bytes => createHash('sha256').update(bytes).digest('hex');
 const object = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const requireValue = (condition, code) => { if (!condition) throw new Error(code); };
+const PACKAGE_KEYS = ['architecture', 'archiveSha256', 'candidateSha', 'fileCount', 'filesSha256', 'manifestSha256', 'payloadBytes'];
+const packageIdentity = (value, candidateSha) => object(value)
+  && Object.keys(value).sort().join(',') === PACKAGE_KEYS.join(',')
+  && value.candidateSha === candidateSha && ['x64', 'arm64'].includes(value.architecture)
+  && ['archiveSha256', 'filesSha256', 'manifestSha256'].every(key => HASH.test(value[key]))
+  && Number.isSafeInteger(value.fileCount) && value.fileCount >= 4 && value.fileCount <= 25_000
+  && Number.isSafeInteger(value.payloadBytes) && value.payloadBytes > 0 && value.payloadBytes <= 220 * 1024 ** 2;
 const timestamp = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)
   && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const json = (bytes, code) => { try { return JSON.parse(bytes.toString('utf8')); } catch { throw new Error(code); } };
@@ -26,12 +33,17 @@ export async function verifyBackendAcceptance(input, readEvidence, now = Date.no
   requireValue(backendAcceptanceHash(input.manifestBytes) === manifestSha256, 'MANIFEST_INTEGRITY_MISMATCH');
   requireValue(backendAcceptanceHash(input.bankBytes) === bankSha256 && JSON.stringify(bank) === JSON.stringify(json(input.bankBytes, 'CASE_BANK_JSON_INVALID')), 'CASE_BANK_INTEGRITY_MISMATCH');
   requireValue(JSON.stringify(manifest) === JSON.stringify(json(input.manifestBytes, 'MANIFEST_JSON_INVALID')), 'MANIFEST_INTEGRITY_MISMATCH');
-  requireValue(object(manifest) && manifest.kind === 'aibrain-release-manifest' && manifest.schemaVersion === 1
+  requireValue(object(manifest) && manifest.kind === 'aibrain-release-manifest' && [1, 2].includes(manifest.schemaVersion)
     && manifest.candidateSha === candidateSha && Array.isArray(manifest.images) && manifest.images.length >= 1 && manifest.images.length <= 8, 'MANIFEST_IDENTITY_INVALID');
+  // Version 1 is an image release. Version 2 binds an independently packaged
+  // application to its runtime images without relabelling those base images.
+  const packaged = manifest.schemaVersion === 2;
+  requireValue(packaged ? packageIdentity(manifest.artifact, candidateSha) : manifest.artifact === undefined, 'MANIFEST_PACKAGE_INVALID');
   const images = new Map();
   for (const image of manifest.images) {
-    requireValue(object(image) && typeof image.name === 'string' && ID.test(image.name) && !images.has(image.name) && image.revision === candidateSha && OCI.test(image.digest), 'MANIFEST_IMAGE_INVALID');
-    images.set(image.name, image.digest);
+    requireValue(object(image) && typeof image.name === 'string' && ID.test(image.name) && !images.has(image.name)
+      && (packaged ? SHA.test(image.revision) : image.revision === candidateSha) && OCI.test(image.digest), 'MANIFEST_IMAGE_INVALID');
+    images.set(image.name, { digest: image.digest, revision: image.revision });
   }
   requireValue(images.has('app'), 'MANIFEST_APP_MISSING');
   requireValue(object(bank) && bank.schemaVersion === 1 && bank.suiteId === 'backend-common-v1'
@@ -84,10 +96,20 @@ export async function verifyBackendAcceptance(input, readEvidence, now = Date.no
     && identity.images.length === images.size, 'RUNTIME_IDENTITY_MISMATCH');
   const observed = new Set();
   for (const image of identity.images) {
-    requireValue(object(image) && !observed.has(image.name) && images.get(image.name) === image.digest
-      && image.revision === candidateSha, 'RUNTIME_IMAGE_MISMATCH');
+    const expected = object(image) ? images.get(image.name) : null;
+    requireValue(expected && !observed.has(image.name) && expected.digest === image.digest
+      && expected.revision === image.revision, 'RUNTIME_IMAGE_MISMATCH');
     observed.add(image.name);
   }
+  if (packaged) {
+    const artifact = identity.artifact;
+    requireValue(packageIdentity(artifact?.package, candidateSha)
+      && PACKAGE_KEYS.every(key => artifact.package[key] === manifest.artifact[key])
+      && artifact.payloadReadOnly === true && artifact.verifiedFileCount === manifest.artifact.fileCount
+      && artifact.verifiedPayloadBytes === manifest.artifact.payloadBytes
+      && artifact.unexpectedCodeFiles === 0 && artifact.missingFiles === 0 && artifact.mismatchedFiles === 0,
+    'RUNTIME_PACKAGE_MISMATCH');
+  } else requireValue(identity.artifact === undefined, 'RUNTIME_PACKAGE_UNEXPECTED');
 
   const results = new Map();
   const actorsUsed = new Set();

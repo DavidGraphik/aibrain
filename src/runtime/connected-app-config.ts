@@ -1,6 +1,11 @@
 export const SERVER_APPROVALS_REVIEWER = "auto_review";
 
-export type NativeAppToolPolicies = Record<string, { allowed: readonly string[]; known: readonly string[] }>;
+export type NativeNumericConstraint = { schemaPath: string; minimum?: number; maximum?: number;
+  exclusiveMinimum?: number; exclusiveMaximum?: number; multipleOf?: number };
+export type NativeToolNumericBounds = { tool: string; parameters: readonly NativeNumericConstraint[] };
+export type NativeAppToolPolicies = Record<string, { allowed: readonly string[]; known: readonly string[];
+  /** Current metadata only. This data neither enables tools nor survives in negative thread knowledge. */
+  numericBounds?: Readonly<Record<string, NativeToolNumericBounds>> }>;
 const applied = new WeakMap<object, Map<string, { fingerprint: string; known: NativeAppToolPolicies }>>();
 const fingerprint = (appIds: readonly string[], mcp: Record<string, boolean | string[]> = {}, tools: NativeAppToolPolicies = {}) => JSON.stringify({
   apps: [...new Set(appIds)].sort(), mcp: Object.entries(mcp).sort(([left], [right]) => left.localeCompare(right)),

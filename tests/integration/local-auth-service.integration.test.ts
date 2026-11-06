@@ -96,7 +96,7 @@ async function fixture(initialPassword = false) {
   });
   const service = new LocalAuthService("example-lab-dev", provider, users, sessions, challenges,
     new FilePasswordRecoveryStore({ rootDirectory: path.join(root, "recovery") }), "https://brain.example.test");
-  return { provider, sessions, users, service, root };
+  return { provider, sessions, users, service, root, challenges };
 }
 
 afterEach(async () => {
@@ -141,6 +141,39 @@ describe("LocalAuthService", () => {
     expect(await sessions.read(authenticated.session.sessionId, "example-lab-dev")).not.toBeNull();
     await expect(service.changeInitialPassword(challenge.challengeId, "Permanent-pass-789"))
       .rejects.toMatchObject({ code: "challenge_invalid" });
+  });
+
+  it.each(["missing", "disabled", "mismatched-email"])("blocks login for a %s local profile", async (kind) => {
+    const { root, provider, service, sessions } = await fixture();
+    Object.defineProperty(provider, "initialPasswordChangeSupported", { value: false });
+    const profile = path.join(root, "users", USER_ID, "user.json");
+    const prior = await sessions.create("example-lab-dev", USER_ID);
+    if (kind === "missing") await rm(profile);
+    else {
+      const record = JSON.parse(await readFile(profile, "utf8"));
+      if (kind === "disabled") record.enabled = false;
+      else record.email = "other@example.test";
+      await writeFile(profile, JSON.stringify(record));
+    }
+    await expect(service.login(identity.email, "Temporary-pass-123"))
+      .rejects.toMatchObject({ code: kind === "disabled" ? "profile_disabled" : "profile_unavailable" });
+    if (kind === "disabled") expect(await sessions.read(prior.sessionId, "example-lab-dev")).toBeNull();
+  });
+
+  it("does not persist private-provider placeholders when a marker appears during login", async () => {
+    const { provider, users, service, root, challenges } = await fixture();
+    const createChallenge = vi.spyOn(challenges, "create");
+    Object.defineProperty(provider, "initialPasswordChangeSupported", { value: false });
+    const verify = provider.verifyPassword.bind(provider);
+    vi.spyOn(provider, "verifyPassword").mockImplementation(async (email, password) => {
+      const result = await verify(email, password);
+      await writeFile(path.join(root, "users", USER_ID, "password-change-required"), "1\n");
+      return result;
+    });
+    await expect(service.login(identity.email, "Temporary-pass-123")).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect(await users.hasInitialPasswordMarker(USER_ID)).toBe(true);
+    expect(createChallenge).not.toHaveBeenCalled();
+    expect(provider.signOuts).toBe(1);
   });
 
   it("supports recovery without exposing provider tokens and revokes prior local sessions", async () => {

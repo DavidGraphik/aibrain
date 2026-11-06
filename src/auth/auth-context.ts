@@ -8,6 +8,7 @@ import { FileLocalAuthChallengeStore } from "@/auth/local-auth-challenge-store";
 import { FileLocalSessionStore } from "@/auth/local-session-store";
 import { FileLocalUserStore } from "@/auth/local-user-store";
 import { createSupabaseAuthIdentityProvider } from "@/auth/supabase-identity-provider";
+import { isPrivateOwnerAuthRequested, PrivateOwnerIdentityProvider } from "@/auth/private-owner-identity-provider";
 import { loadInstallationConfig } from "@/config/installation";
 
 export async function createLocalSessionContext() {
@@ -27,7 +28,7 @@ export async function createLocalAuthService() {
   const { installation, users, sessions, challenges } = await createLocalSessionContext();
   return new LocalAuthService(
     installation.installationId,
-    createSupabaseAuthIdentityProvider(),
+    isPrivateOwnerAuthRequested() ? new PrivateOwnerIdentityProvider(installation.installationId, users) : createSupabaseAuthIdentityProvider(),
     users,
     sessions,
     challenges,

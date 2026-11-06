@@ -1,5 +1,5 @@
 export type AuthProvider = "demo" | "local";
-export type AuthMode = "demo" | "supabase" | "unavailable";
+export type AuthMode = "demo" | "supabase" | "private-owner" | "unavailable";
 
 export type AuthSession = {
   provider: AuthProvider;

@@ -95,3 +95,15 @@ it("remembers thread-only negative knowledge without carrying grants to another 
   copy["qa-files"].known = [];
   expect(previousConnectedAppPolicies(client, "thread")["qa-files"].known).toEqual(["files/read"]);
 });
+
+it("keeps numeric metadata out of permission config, its fingerprint and previous thread knowledge", () => {
+  const client = {};
+  const policy = { mail: { allowed: ["search"], known: ["search"], numericBounds: {
+    search: { tool: "mail.search", parameters: [{ schemaPath: "/properties/limit", maximum: 10 }] },
+  } } };
+  const plain = { mail: { allowed: ["search"], known: ["search"] } };
+  expect(connectedAppConfig(["mail"], policy)).toEqual(connectedAppConfig(["mail"], plain));
+  markConnectedAppConfigApplied(client, "thread", ["mail"], {}, policy);
+  expect(hasAppliedConnectedAppConfig(client, "thread", ["mail"], {}, plain)).toBe(true);
+  expect(previousConnectedAppPolicies(client, "thread")).toEqual({ mail: { allowed: [], known: ["search"] } });
+});

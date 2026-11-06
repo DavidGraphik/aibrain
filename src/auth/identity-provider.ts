@@ -18,6 +18,7 @@ export type RecoveryVerificationProof =
   | { tokenHash: string; code?: never; codeVerifier?: never };
 
 export interface AuthIdentityProvider {
+  readonly initialPasswordChangeSupported?: boolean;
   verifyPassword(email: string, password: string): Promise<VerifiedIdentity>;
   updatePassword(credentials: IdentityCredentials, newPassword: string): Promise<void>;
   requestPasswordRecovery(email: string, redirectTo: string, codeVerifier: string): Promise<void>;

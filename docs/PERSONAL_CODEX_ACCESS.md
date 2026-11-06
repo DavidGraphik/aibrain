@@ -105,3 +105,32 @@ are separate from application grants. No production broker, credential or
 customer mapping is installed by enabling this code. QA can supply a separately
 owned broker and isolated installation, without mounting production data or
 altering the canonical token owner's renewal process.
+
+## Optional private owner application login
+
+An isolated private test copy may explicitly select `AIBRAIN_AUTH_MODE=private-owner`.
+It additionally requires `AIBRAIN_MODEL_AUTH=personal-test`, an explicit
+`AIBRAIN_CODEX_AUTH_SCOPE=per-user`, the configured per-user broker and the
+protected two-hour personal profile above. The default application identity
+provider remains Supabase. This option neither resets production credentials
+nor migrates a customer account.
+
+The backend reads only `/etc/aibrain/private-owner-login.json`: a regular,
+root-owned `0640` file with the backend effective group, one hard link, a
+canonical path without symlinks and at most 4096 bytes. Its exact keys are
+`schemaVersion` (1), `installationId`, `canonicalUserId`, `email` (canonical
+lowercase), `salt` (32 bytes, canonical base64) and `passwordHash` (64 bytes,
+canonical base64). Password derivation is fixed scrypt N=65536, r=8, p=1,
+maxmem=128 MiB. Neither file-supplied costs nor a caller-supplied file path are
+accepted. Provision a separate random password only in the private copy;
+never copy a production password or expose the credential file to workers.
+
+Login verifies the protected profile, file identity and metadata, password and
+owner binding, and rereads the credential fingerprint after derivation.
+Existing local sessions retain their normal TTL; each private session access
+rechecks the credential owner and current personal profile. Removing or
+expiring the profile disables access. The normal local enabled-user checks,
+opaque session cookie, CSRF and rate limits still apply. This mode provides no
+password recovery or initial-password change: a password-change marker fails
+closed and cannot persist the provider's ephemeral interface placeholders in a
+challenge. No new IdP tokens or alternate browser session mechanism are added.

@@ -64,6 +64,79 @@ test('validates a coherent candidate while explicitly refusing to infer improvem
   assert.equal(result.actorCoverage, 2);
 });
 
+function replaceInspection(f, change) {
+  const value = JSON.parse(f.files.get('runtime.json')); change(value);
+  const bytes = Buffer.from(JSON.stringify(value)); f.files.set('runtime.json', bytes);
+  f.input.receipt.releaseIdentityEvidence.sha256 = backendAcceptanceHash(bytes);
+}
+
+function packagedFixture() {
+  const f = fixture();
+  f.input.manifest.schemaVersion = 2;
+  f.input.manifest.images[0].revision = 'c'.repeat(40); // Actual older runtime image.
+  f.input.manifest.artifact = { architecture: 'x64', archiveSha256: 'd'.repeat(64), candidateSha,
+    fileCount: 4, filesSha256: 'e'.repeat(64), manifestSha256: 'f'.repeat(64), payloadBytes: 4096 };
+  f.input.manifestBytes = Buffer.from(JSON.stringify(f.input.manifest));
+  f.input.manifestSha256 = backendAcceptanceHash(f.input.manifestBytes);
+  f.input.receipt.manifestSha256 = f.input.manifestSha256;
+  replaceInspection(f, identity => {
+    identity.manifestSha256 = f.input.manifestSha256;
+    identity.images = structuredClone(f.input.manifest.images);
+    identity.artifact = { package: structuredClone(f.input.manifest.artifact), payloadReadOnly: true,
+      verifiedFileCount: 4, verifiedPayloadBytes: 4096, unexpectedCodeFiles: 0, missingFiles: 0, mismatchedFiles: 0 };
+  });
+  return f;
+}
+
+test('binds a separately packaged application and the actual unchanged base image', async () => {
+  const f = packagedFixture();
+  assert.notEqual(f.input.manifest.images[0].revision, candidateSha);
+  assert.equal((await f.run()).accepted, true);
+  assert.equal((await f.run()).improvementVerified, false);
+});
+
+test('package acceptance still requires original base image identity and a fresh inspection', async () => {
+  for (const change of [identity => { identity.images[0].revision = candidateSha; },
+    identity => { identity.images[0].digest = 'sha256:' + '0'.repeat(64); },
+    identity => { identity.checkedAt = '2026-11-05T18:54:59.000Z'; }]) {
+    const f = packagedFixture(); replaceInspection(f, change); await assert.rejects(f.run, /RUNTIME_(?:IMAGE|IDENTITY)_MISMATCH/);
+  }
+});
+
+test('rejects missing, different, partially verified or writable packaged code', async () => {
+  for (const change of [identity => { delete identity.artifact; },
+    identity => { identity.artifact.package.candidateSha = 'c'.repeat(40); },
+    identity => { identity.artifact.package.manifestSha256 = '0'.repeat(64); },
+    identity => { identity.artifact.package.archiveSha256 = '0'.repeat(64); },
+    identity => { identity.artifact.package.filesSha256 = '0'.repeat(64); },
+    identity => { identity.artifact.package.architecture = 'arm64'; },
+    identity => { identity.artifact.payloadReadOnly = false; },
+    identity => { identity.artifact.verifiedFileCount = 3; },
+    identity => { identity.artifact.verifiedPayloadBytes = 4095; },
+    identity => { identity.artifact.unexpectedCodeFiles = 1; },
+    identity => { identity.artifact.missingFiles = 1; },
+    identity => { identity.artifact.mismatchedFiles = 1; }]) {
+    const f = packagedFixture(); replaceInspection(f, change); await assert.rejects(f.run, /RUNTIME_PACKAGE_MISMATCH/);
+  }
+});
+
+test('a package cannot bypass the original image-only release contract', async () => {
+  const f = packagedFixture(); f.input.manifest.schemaVersion = 1;
+  f.input.manifestBytes = Buffer.from(JSON.stringify(f.input.manifest));
+  f.input.manifestSha256 = backendAcceptanceHash(f.input.manifestBytes);
+  await assert.rejects(f.run, /MANIFEST_PACKAGE_INVALID/);
+  const old = fixture(); replaceInspection(old, identity => { identity.artifact = {}; });
+  await assert.rejects(old.run, /RUNTIME_PACKAGE_UNEXPECTED/);
+});
+
+test('packaging cannot waive failed critical cases or missing UI/source evidence', async () => {
+  const f = packagedFixture();
+  f.input.receipt.results.find(result => result.caseId === 'mail-foreign-account').status = 'blocked';
+  assert.equal((await f.run()).accepted, false);
+  const missing = packagedFixture(); missing.files.delete(missing.input.receipt.results[0].evidence.ui.path);
+  await assert.rejects(missing.run);
+});
+
 test('missing, blocked and failed cases retain the fixed denominator', async () => {
   const f = fixture();
   const optional = f.input.receipt.results.filter(result => !bank.cases.find(entry => entry.id === result.caseId).critical);

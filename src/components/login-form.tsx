@@ -193,6 +193,7 @@ export function LoginForm({
 
   const isDemo = mode === "demo";
   const isSupabase = mode === "supabase";
+  const hasPasswordForm = isSupabase || mode === "private-owner";
 
   // The validated login owns this screen until navigation unmounts it.
   // No timer postpones access, and failed/challenge responses never enter it.
@@ -255,7 +256,7 @@ export function LoginForm({
             </div>
           ) : null}
 
-          {isSupabase && !sent && !passwordChangeRequired ? (
+          {hasPasswordForm && !sent && !passwordChangeRequired ? (
             <form className="space-y-3" onSubmit={(event) => void (recovering ? requestRecovery(event) : requestAccess(event))}>
               <label className="block">
                 <span className="mb-2 block text-[12px] font-medium text-[var(--text-muted)]">{t("Correo del equipo")}</span>
@@ -295,7 +296,7 @@ export function LoginForm({
               <Button type="submit" variant="primary" disabled={loading !== null} className="w-full">
                 {loading ? t("Validando…") : recovering ? t("Enviar recuperación") : t("Entrar")}
               </Button>
-              <Button
+              {isSupabase ? <Button
                 type="button"
                 size="sm"
                 variant="ghost"
@@ -306,7 +307,7 @@ export function LoginForm({
                 }}
               >
                 {recovering ? t("Volver al inicio de sesión") : t("He olvidado la contraseña")}
-              </Button>
+              </Button> : null}
             </form>
           ) : null}
 

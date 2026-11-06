@@ -111,7 +111,7 @@ import { connectorMentionDeveloperInstructions } from "@/connectors/mentions-con
 import { connectedAppConfig, hasAppliedConnectedAppConfig, markConnectedAppConfigApplied, previousConnectedAppPolicies, SERVER_APPROVALS_REVIEWER } from "@/runtime/connected-app-config";
 import { nativeMcpConfigForTurn } from "@/runtime/native-mcp-config";
 import { personalNativeConnectionsEnabled } from "@/runtime/native-connection-identity";
-import { nativeAppToolsForTurn } from "@/runtime/native-app-tools";
+import { nativeAppNumericBoundsContext, nativeAppToolsForTurn } from "@/runtime/native-app-tools";
 import { assertNativeAppToolsReady } from "@/runtime/native-app-inventory";
 import {
   approvalLocatorFromItem,
@@ -1197,6 +1197,7 @@ async function runWorkerCodexTurnAttempt(
     designSkillDeveloperInstructions(runtime.config, synchronizedSkills.result),
     designBrandInstructions,
     connectorMentionDeveloperInstructions(availableConnectors),
+    nativeAppNumericBoundsContext(hostAnalysisPolicy ? [] : availableAppIds, nativeAppTools),
     modtimeWebsiteInstructions(installationId, process.env.MODTIME_SHOPIFY_THEMES_ENABLED === "1", availableConnectors.some(({ resource }) => resource.connectorId === "modtime-shopify-themes"), (process.env.MODTIME_SHOPIFY_ADMIN_ENABLED === "1" || process.env.MODTIME_SHOPIFY_ADMIN_ENABLED !== "0" && process.env.MODTIME_SHOPIFY_THEMES_ENABLED === "1")),
     ...(automationSession ? [await automationChatDeveloperInstructions(automationSession, {
       projectId: chatRequest.projectId,
