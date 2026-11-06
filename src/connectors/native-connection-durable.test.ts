@@ -57,6 +57,11 @@ class NativeWireSocket implements WebSocketLike {
     ] }], missingAppIds: [] };
     if (rpc.method === "mcpServerStatus/list") result = { data: [{ name: "mail", runtimeStatus: this.enabled ? "connected" : "disabled",
       authStatus: "notLoggedIn", toolsError: null, tools: { read: { name: "read", inputSchema: { type: "object" } } } }], nextCursor: null };
+    if (rpc.method === "mcpServerStatus/list" && rpc.params?.serverName === "codex_apps") result = { data: [{
+      name: "codex_apps", runtimeStatus: null, authStatus: "unknown", toolsError: null,
+      tools: Object.fromEntries(([["get_profile", true], ["send_email", false]] as const).map(([name, readOnlyHint]) =>
+        [name, { name, inputSchema: { type: "object" }, annotations: { readOnlyHint }, _meta: { connector_id: appId } }])),
+    }], nextCursor: null };
     if (rpc.method === "config/read") result = { config: { mcp_servers: { mail: { enabled: this.enabled } },
       mcp_oauth_callback_url: "https://brain.example/callback", mcp_oauth_callback_port: 43100 } };
     if (rpc.method === "config/value/write") this.enabled = rpc.params.value === true;
