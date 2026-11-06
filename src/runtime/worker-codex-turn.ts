@@ -2945,6 +2945,13 @@ async function runWorkerCodexTurnAttempt(
           } } : {}),
         }),
         ...selectedSkills.map((skill) => ({ type: "skill" as const, name: skill.id, path: skill.path })),
+        // Native mentions let Codex resolve an admitted app's tools without
+        // requiring the user to know its slug or the model to guess a search.
+        // They carry no grant: the fresh per-tool configuration above remains
+        // authoritative, and restricted host analysis never receives them.
+        ...(!hostAnalysisPolicy ? availableConnectors.flatMap(({ resource, mention }) =>
+          resource.appId && availableAppIds.includes(resource.appId)
+            ? [{ type: "mention" as const, name: mention.label, path: `app://${resource.appId}` }] : []) : []),
         ...chatRequest.options.attachments.map((attachment) => ({
           type: "image" as const,
           url: attachment.dataUrl,

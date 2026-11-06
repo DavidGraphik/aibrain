@@ -1108,6 +1108,8 @@ describe("worker Codex turn", () => {
           default_tools_enabled: false, tools: { search: { enabled: nativeAllowed } } },
       } });
       expect(Object.keys((params.config as { apps: object }).apps).sort()).toEqual(["_default", "qa-files"]);
+      const nativeMentions = (value: typeof calls[number]) => (value.params.input as Array<{ type: string }>).filter(item => item.type === "mention");
+      expect(nativeMentions(calls[1])).toEqual(nativeAllowed ? [{ type: "mention", name: "QA Files", path: "app://qa-files" }] : []);
       expect(params.dynamicTools).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: "aibrain_gmail" }), expect.objectContaining({ name: "aibrain_outlook" }), expect.objectContaining({ name: "aibrain_mail" }),
       ]));
@@ -1126,6 +1128,7 @@ describe("worker Codex turn", () => {
         threadId: "automatic-thread", config: { apps: { _default: { enabled: false } } },
       } });
       expect((calls[2].params.config as { apps: object }).apps).toMatchObject({ "qa-files": { enabled: false, tools: { search: { enabled: false } } } });
+      expect(nativeMentions(calls[3])).toEqual([]);
 
       mocked.availableConnectors.mockResolvedValue(available);
       mocked.nativeAppTools.mockResolvedValue({ "qa-files": { allowed: ["search"], known: ["search"] } });
@@ -1134,6 +1137,7 @@ describe("worker Codex turn", () => {
         threadId: "automatic-thread", config: { apps: { _default: { enabled: false }, "qa-files": { enabled: nativeAllowed } } },
       } });
       expect(calls.map(({ method }) => method)).toEqual(["thread/start", "turn/start", "thread/resume", "turn/start", "thread/resume", "turn/start"]);
+      expect(nativeMentions(calls[5])).toEqual(nativeAllowed ? [{ type: "mention", name: "QA Files", path: "app://qa-files" }] : []);
       expect(mocked.availableConnectors).toHaveBeenCalledTimes(3);
     } finally { await rm(userRoot, { recursive: true, force: true }); }
   });

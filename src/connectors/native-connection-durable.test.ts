@@ -26,6 +26,7 @@ class NativeWireSocket implements WebSocketLike {
   enabled = true;
   installedDelayMs = 0;
   installedCommitted = true;
+  installedPresentBeforeTools = false;
   loseNext: string | null = null;
   private sequence = 0;
   private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
@@ -48,7 +49,8 @@ class NativeWireSocket implements WebSocketLike {
     const rpc = request.rpc;
     let result: unknown = {};
     if (rpc.method === "app/installed") result = { apps: this.installedCommitted || rpc.params?.forceRefresh
-      ? [{ id: appId, enabled: this.enabled, callable: this.enabled }] : [] };
+      ? [{ id: appId, enabled: this.enabled, callable: this.enabled }]
+      : this.installedPresentBeforeTools ? [{ id: appId, enabled: this.enabled, callable: false }] : [] };
     if (rpc.method === "app/read") result = { apps: [{ id: appId, toolSummaries: [
       { name: "get_profile", isEnabled: true, isReadOnly: true },
       { name: "send_email", isEnabled: true, isReadOnly: false },
@@ -87,10 +89,11 @@ function fixture(useDeclaredTimeouts = false) {
   return { socket, router, transport, context };
 }
 
-it("awaits a cold hosted snapshot beyond 10s before admitting only the assigned native read tools", async () => {
+it.each(["missing", "not-callable"])("awaits a cold %s hosted snapshot beyond 10s before admitting only assigned native read tools", async coldState => {
   vi.useFakeTimers();
   const { socket, router, transport, context } = fixture(true);
   socket.installedCommitted = false;
+  socket.installedPresentBeforeTools = coldState === "not-callable";
   socket.installedDelayMs = 18_000;
   const resource = { ...context.resource, id: "native-gmail", kind: "app" as const, appId, mcp: null };
   const state: CatalogState = { schemaVersion: 1, installationId: context.installationId, revision: 1, resources: [resource], rules: [

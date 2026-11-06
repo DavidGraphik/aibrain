@@ -17,12 +17,22 @@ it("refreshes one missing assigned ID once and trusts the new absence without a 
   expect(() => assertNativeAppToolsReady([app.id], {})).toThrow(expect.objectContaining({ code: "NATIVE_APP_READINESS_UNAVAILABLE" }));
 });
 
-it.each([false, true])("preserves authoritative disabled or revoked callability without forced refresh (enabled=%s)", async enabled => {
-  const entry = { ...app, enabled, callable: false };
+it("preserves an explicitly disabled app without refreshing or enabling it", async () => {
+  const entry = { ...app, enabled: false, callable: false };
   const transport = { request: vi.fn().mockResolvedValue({ apps: [entry] }) };
   expect(await nativeInstalledApps(transport, [app.id], "revoked")).toEqual([entry]);
   expect(transport.request).toHaveBeenCalledTimes(1);
   expect(() => assertNativeAppToolsReady([], {})).not.toThrow(); // Text/local tasks have no required native tools.
+});
+
+it("waits for enabled cold apps' tools and preserves a still-uncallable refreshed result", async () => {
+  const cold = { ...app, callable: false };
+  const transport = { request: vi.fn().mockResolvedValueOnce({ apps: [cold] }).mockResolvedValueOnce({ apps: [app] }) };
+  expect(await nativeInstalledApps(transport, [app.id], "cold-tools")).toEqual([app]);
+  expect(transport.request.mock.calls.map(([, params]) => params.forceRefresh)).toEqual([false, true]);
+  transport.request.mockReset().mockResolvedValue({ apps: [cold] });
+  expect(await nativeInstalledApps(transport, [app.id], "unavailable-tools")).toEqual([cold]);
+  expect(transport.request).toHaveBeenCalledTimes(2);
 });
 
 it.each([{ apps: null }, { apps: [app, app] }, { apps: [{ id: app.id, enabled: true }] }, { apps: [app], nextCursor: "partial" }])(

@@ -23,14 +23,16 @@ function installedApps(value: unknown): InstalledApp[] {
 }
 
 /** Read the SDK's authoritative committed snapshot, with no application cache.
- * Only a missing assigned ID needs discovery. A known disabled/non-callable app
- * must stay closed; a failed refresh must never fall back to the earlier view.
+ * Missing or enabled-but-not-callable assigned apps need discovery: a cold
+ * process can expose an app before its tools have finished loading. Explicitly
+ * disabled apps stay closed; refresh never changes their configuration.
+ * A failed refresh must never fall back to the earlier view.
  * Cold refresh publishes the complete hosted tool snapshot (17s measured on
  * the pinned SDK), so wait for that exact metadata response before admission. */
 export async function nativeInstalledApps(transport: CatalogRuntimeTransport, wanted: readonly string[], purpose: string): Promise<InstalledApp[]> {
   try {
     const committed = installedApps(await transport.request("app/installed", { threadId: null, forceRefresh: false }, `${purpose}:committed`, 10_000));
-    if (wanted.every(id => committed.some(app => app.id === id))) return committed;
+    if (wanted.every(id => committed.some(app => app.id === id && (!app.enabled || app.callable)))) return committed;
     return installedApps(await transport.request("app/installed", { threadId: null, forceRefresh: true }, `${purpose}:refresh`, 45_000));
   } catch { throw new NativeAppReadinessError(); }
 }
