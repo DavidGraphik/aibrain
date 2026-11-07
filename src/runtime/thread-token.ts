@@ -31,7 +31,7 @@ export const CURRENT_THREAD_TOOLSET_REVISION = `aibrain-tools-2026-11-05-nc-${su
 // changed guidance cannot silently retain a manually versioned older catalog.
 // The public chat/history and authenticated turn permissions remain unchanged.
 const g03ProductToolsetDigest = createHash("sha256")
-  .update(JSON.stringify({ tools: G03_PRODUCT_TOOLS, instructions: g03ProductInstructions, conversationAndSourcePdfRevision: 1, sageTools: G03_SAGE_DYNAMIC_TOOLS, documentTools: DOCUMENT_DYNAMIC_TOOLS, historicalPdfTools:G03_HISTORICAL_PDF_TOOLS }))
+  .update(JSON.stringify({ tools: G03_PRODUCT_TOOLS, instructions: g03ProductInstructions, conversationAndSourcePdfRevision: 1, connectorAdmissionRevision: 2, sageTools: G03_SAGE_DYNAMIC_TOOLS, documentTools: DOCUMENT_DYNAMIC_TOOLS, historicalPdfTools:G03_HISTORICAL_PDF_TOOLS }))
   .digest("hex").slice(0, 32);
 
 // Historical identity: accepted signed tokens remain readable, but this

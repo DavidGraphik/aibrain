@@ -102,5 +102,6 @@
   "src/auth/support-access.test.ts",
   "src/connectors/private-read-bridge.test.ts",
   "src/connectors/private-read-service-routing.test.ts",
-  "src/components/login-form.test.tsx"
+  "src/components/login-form.test.tsx",
+  "src/runtime/outlook-desktop-admission.test.ts"
 ]

@@ -12,7 +12,7 @@ vi.mock('@/admin/policy-service',()=>({workspacePolicyForIdentity:async()=>({rol
 vi.mock('@/catalog/access-service',()=>({catalogRuntimeEnforcer:m.catalog}));
 import {PrivateReadBridgeError} from './private-read-bridge';
 import {executeMailOperation,mailAccessForIdentity,mailCapabilityForSession,normalizeMailOperationArgs} from './mail-server-service';
-import {g03SageReadForIdentity,g03SageReadBatchForIdentity,g03SageHealth} from './g03-sage-service';
+import {g03SageReadForIdentity,g03SageReadBatchForIdentity,g03SageHealth,g03SageReadCapabilities,g03SageAccess,g03SageReceivingCapabilities} from './g03-sage-service';
 import {handleMailDynamicToolCall} from '@/runtime/mail-dynamic-tools';
 import {handleG03SageTool} from '@/runtime/g03-sage-dynamic-tools';
 const session={provider:'local',tenant:{id:'g03-production',name:'G03'},user:{id:user,email,name:'Employee'},expiresAt:new Date(Date.now()+600000).toISOString()} as AuthSession;
@@ -31,5 +31,27 @@ describe('existing UI tool routing to source-native connectors',()=>{
    await expect(g03SageReadForIdentity('g03-production',user,'read',{query:'Products'})).rejects.toMatchObject({code:'SAGE_ARGUMENTS_INVALID',status});
   }
  });
- it('denies writes and keeps Sage independent of missing source mail grant',async()=>{await expect(executeMailOperation({config,userId:user},'draft',{})).rejects.toMatchObject({code:'MAIL_ACCESS_DENIED'});expect(m.request).not.toHaveBeenCalled();m.request.mockResolvedValue({sage:{accessVerified:true},mail:{accessVerified:false,operations:[]}});expect(await g03SageHealth('g03-production',user)).toMatchObject({accessVerified:true});await expect(mailAccessForIdentity(config,user)).rejects.toThrow();});
+ it('uses source metadata for admission without local mail config or a Sage credential factory',async()=>{
+  const saved=config.connectors;config.connectors={};
+  try {
+   const source={mail:{accessVerified:true,operations:['folders','list','read'],connectionVersion:9},sage:{accessVerified:true,operations:['discover','read'],queries:[{name:'Products',description:'Genuine source metadata',parameters:[]}]}};
+   m.request.mockResolvedValue(source);
+   expect(await mailCapabilityForSession(session)).toMatchObject({status:'connected',connectionVersion:9,effectiveOperations:['folders','list','read']});
+   expect((await mailAccessForIdentity(config,user)).binding).toEqual({transport:'source-native',version:9});
+   expect(await g03SageReadCapabilities('g03-production',user)).toEqual({transport:'source-native',readOperations:['discover','read'],queries:source.sage.queries,providerReachability:'not-tested',writesAllowed:false});
+   expect(await g03SageHealth('g03-production',user)).toMatchObject({accessVerified:true,status:'connected',readOperations:['discover','read'],queries:source.sage.queries});
+   await expect(g03SageAccess('g03-production',user)).rejects.toMatchObject({code:'SAGE_READ_ONLY',status:403});
+   expect(await g03SageReceivingCapabilities('g03-production',user)).toEqual({providerWrites:false,productionWrites:false});
+   await expect(executeMailOperation({config,userId:user},'draft',{})).rejects.toMatchObject({code:'MAIL_ACCESS_DENIED'});
+  } finally {config.connectors=saved;}
+ });
+ it('does not fabricate source query metadata or swallow malformed/denied source capability',async()=>{
+  m.request.mockResolvedValue({sage:{accessVerified:true,operations:['discover']}});
+  expect(await g03SageReadCapabilities('g03-production',user)).toMatchObject({queries:null,readOperations:['discover']});
+  m.request.mockResolvedValue({sage:{accessVerified:false,operations:[]}});
+  await expect(g03SageReadCapabilities('g03-production',user)).rejects.toMatchObject({code:'SAGE_ACCESS_DENIED',status:403});
+  m.request.mockResolvedValue({sage:{accessVerified:true,operations:['execute']}});
+  await expect(g03SageReadCapabilities('g03-production',user)).rejects.toMatchObject({code:'PRIVATE_READ_RESPONSE_INVALID',status:502});
+ });
+ it('denies writes and keeps Sage independent of missing source mail grant',async()=>{await expect(executeMailOperation({config,userId:user},'draft',{})).rejects.toMatchObject({code:'MAIL_ACCESS_DENIED'});expect(m.request).not.toHaveBeenCalled();m.request.mockResolvedValue({sage:{accessVerified:true,operations:['discover','read','read_batch']},mail:{accessVerified:false,operations:[]}});expect(await g03SageHealth('g03-production',user)).toMatchObject({accessVerified:true});await expect(mailAccessForIdentity(config,user)).rejects.toThrow();});
 });

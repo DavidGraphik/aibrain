@@ -80,6 +80,16 @@ export async function privateReadBridge(installationId: string, userId: string) 
 }
 export type PrivateMailCapability = { accessVerified: true; operations: string[]; connectionVersion: number };
 export function privateMailCapability(value: unknown): PrivateMailCapability {
-  if (!record(value) || !record(value.mail) || value.mail.accessVerified !== true || !Array.isArray(value.mail.operations) || value.mail.operations.some(op => !["folders", "list", "search", "read"].includes(String(op))) || !Number.isSafeInteger(value.mail.connectionVersion) || Number(value.mail.connectionVersion) < 1) return deny();
+  if (record(value) && record(value.mail) && value.mail.accessVerified === false) throw new PrivateReadBridgeError("MAIL_ACCESS_DENIED", 403);
+  if (!record(value) || !record(value.mail) || value.mail.accessVerified !== true || !Array.isArray(value.mail.operations) || value.mail.operations.length < 1 || value.mail.operations.some(op => !["folders", "list", "search", "read"].includes(String(op))) || new Set(value.mail.operations).size !== value.mail.operations.length || !Number.isSafeInteger(value.mail.connectionVersion) || Number(value.mail.connectionVersion) < 1) throw new PrivateReadBridgeError("PRIVATE_READ_RESPONSE_INVALID", 502);
   return value.mail as PrivateMailCapability;
+}
+export type PrivateSageCapability = { accessVerified: true; operations: ("discover" | "read" | "read_batch")[]; queries: { name: string; description?: string; parameters: string[] }[] | null };
+/** Optional query metadata stays unknown until the SOURCE supplies it; no local query list grants access. */
+export function privateSageCapability(value: unknown): PrivateSageCapability {
+  if (record(value) && record(value.sage) && value.sage.accessVerified === false) throw new PrivateReadBridgeError("SAGE_ACCESS_DENIED", 403);
+  if (!record(value) || !record(value.sage) || value.sage.accessVerified !== true || !Array.isArray(value.sage.operations) || value.sage.operations.length < 1 || value.sage.operations.some(op => !["discover", "read", "read_batch"].includes(String(op))) || new Set(value.sage.operations).size !== value.sage.operations.length) throw new PrivateReadBridgeError("PRIVATE_READ_RESPONSE_INVALID", 502);
+  const queries = value.sage.queries;
+  if (queries !== undefined && queries !== null && (!Array.isArray(queries) || queries.length > 128 || queries.some(q => !record(q) || typeof q.name !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(q.name) || !Array.isArray(q.parameters) || q.parameters.some(p => typeof p !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(p)) || q.description !== undefined && (typeof q.description !== "string" || q.description.length > 16_384)) || new Set(queries.map(q => q.name)).size !== queries.length)) throw new PrivateReadBridgeError("PRIVATE_READ_RESPONSE_INVALID", 502);
+  return { accessVerified: true, operations: value.sage.operations as PrivateSageCapability["operations"], queries: queries as PrivateSageCapability["queries"] ?? null };
 }

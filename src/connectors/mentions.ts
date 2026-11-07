@@ -85,7 +85,7 @@ async function resolvedMentions(installationId: string, userId: string, session?
       ...(installation.connectors?.instantly?.enabled ? [{ ids: ["instantly"], read: () => instantlyCapability(installation, userId).then((capability) => [capability]) }] : []),
       { ids: [GMAIL_CONNECTOR_ID], read: () => gmailCapabilityForSession(session).then((capability) => [capability]) },
       { ids: [OUTLOOK_CONNECTOR_ID], read: () => outlookCapabilityForSession(session).then((capability) => [capability]) },
-      ...(installation.connectors?.mail?.enabled ? [{ ids: [MAIL_CONNECTOR_ID], read: () => mailCapabilityForSession(session).then((capability) => capability ? [capability] : []) }] : []),
+      ...(resources.some(resource => resource.connectorId === MAIL_CONNECTOR_ID) ? [{ ids: [MAIL_CONNECTOR_ID], read: () => mailCapabilityForSession(session).then((capability) => capability ? [capability] : []) }] : []),
     ];
     const results = await Promise.allSettled(groups.map((group) => group.read()));
     for (const [index, result] of results.entries()) {

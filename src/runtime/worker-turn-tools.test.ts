@@ -159,12 +159,59 @@ describe("turn module catalogue", () => {
   it.each(["g03-production", "synthetic-company"])("keeps document and mail admission explicit (%s)", installationId => {
     const input = context(); input.installationId = installationId; input.documentNetworkAvailable = true;
     input.connectors = { mail: { enabled: true, provider: "nominalia" } };
+    input.desktopOutlookAvailable = true;
     const plan = buildWorkerTurnTools(input);
     containsSpecs(plan.dynamicTools, [...COMPANY_FILES_DYNAMIC_TOOLS, ...MAIL_DYNAMIC_TOOLS]);
     expect(plan.desktopOutlookEnabled).toBe(installationId === "g03-production");
     expect(plan.developerInstructions.some(text => text.startsWith("G03 personal Outlook:"))).toBe(plan.desktopOutlookEnabled);
     if (plan.desktopOutlookEnabled) containsSpecs(plan.dynamicTools, OUTLOOK_DESKTOP_DYNAMIC_TOOLS);
     else withoutSpecs(plan.dynamicTools, OUTLOOK_DESKTOP_DYNAMIC_TOOLS);
+  });
+
+  it("admits verified source mail without installing its credentials locally and retains Sage discovery", () => {
+    const input = context(); input.installationId = "g03-production"; input.sessions.identity = true;
+    input.availableConnectorIds = ["mail", "g03-sage"];
+    const plan = buildWorkerTurnTools(input);
+    containsSpecs(plan.dynamicTools, MAIL_DYNAMIC_TOOLS);
+    expect(names(plan.dynamicTools)).toContain("aibrain_g03_sage");
+    withoutSpecs(plan.dynamicTools, [...GMAIL_DYNAMIC_TOOLS, ...OUTLOOK_DYNAMIC_TOOLS]);
+    expect(plan.desktopOutlookEnabled).toBe(false);
+    expect(plan.developerInstructions.some(text => text.startsWith("G03 personal Outlook:"))).toBe(false);
+    input.availableConnectorIds = [];
+    withoutSpecs(buildWorkerTurnTools(input).dynamicTools, MAIL_DYNAMIC_TOOLS);
+    expect(names(buildWorkerTurnTools(input).dynamicTools)).not.toContain("aibrain_g03_sage");
+  });
+  it("publishes only source-admitted Sage reads and mailbox operations, without native sponsor Apps", () => {
+    const input = context(); input.installationId = "g03-production"; input.sessions.identity = true;
+    input.availableConnectorIds = ["mail", "g03-sage"];
+    input.sageReadOperations = ["discover", "read"]; input.sageWritesAllowed = false;
+    input.mailOperations = ["folders", "list", "search", "read"];
+    const plan = buildWorkerTurnTools(input);
+    const toolNames = (name: string) => plan.dynamicTools.flatMap(spec => spec.name === name && spec.type === "namespace" ? spec.tools.map(tool => tool.name) : []);
+    expect(toolNames("aibrain_g03_sage")).toEqual(["discover", "read"]);
+    expect(toolNames("aibrain_mail")).toEqual(["folders", "list", "search", "read"]);
+    for (const name of ["aibrain_outlook", "aibrain_gmail", "aibrain_outlook_desktop"]) expect(names(plan.dynamicTools)).not.toContain(name);
+    // A revoked or failed fresh capability cannot retain yesterday's tools.
+    input.mailOperations = []; input.sageReadOperations = [];
+    const revoked = names(buildWorkerTurnTools(input).dynamicTools);
+    expect(revoked).not.toContain("aibrain_mail"); expect(revoked).not.toContain("aibrain_g03_sage");
+  });
+  it("does not advertise an unpaired desktop as an operational mailbox or force it before verified mail", () => {
+    const input = context(); input.installationId = "g03-production";
+    input.connectors = { mail: { enabled: true, provider: "nominalia" } };
+    input.availableConnectorIds = ["mail"]; input.desktopOutlookAvailable = false;
+    const plan = buildWorkerTurnTools(input);
+    containsSpecs(plan.dynamicTools, MAIL_DYNAMIC_TOOLS);
+    expect(plan.desktopOutlookEnabled).toBe(false);
+    expect(plan.desktopOutlookStatusEnabled).toBe(true);
+    expect(plan.developerInstructions.some(text => text.startsWith("G03 personal Outlook:"))).toBe(false);
+    const diagnostic = plan.dynamicTools.find(spec => spec.name === "aibrain_outlook_desktop");
+    expect(diagnostic?.type === "namespace" ? diagnostic.tools.map(tool => tool.name) : []).toEqual(["status"]);
+    input.desktopOutlookAvailable = true;
+    const paired = buildWorkerTurnTools(input);
+    expect(paired.desktopOutlookEnabled).toBe(true);
+    const operational = paired.dynamicTools.find(spec => spec.name === "aibrain_outlook_desktop");
+    expect(operational?.type === "namespace" ? operational.tools.map(tool => tool.name) : []).toContain("execute");
   });
 
   it("keeps website demo tools and guidance behind both identity and installation gates", () => {

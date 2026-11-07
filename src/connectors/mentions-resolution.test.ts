@@ -9,7 +9,7 @@ const mocked = vi.hoisted(() => ({
   roleId: "workspace-member",
   health: [] as Array<{ connectorId: string; status: string; statusCode: string | null }>,
   loadConfig: vi.fn(), workspace: vi.fn(), capabilities: vi.fn(),
-  nativeHealth: vi.fn(),
+  nativeHealth: vi.fn(), bridge: vi.fn(), sourceRequest: vi.fn(), userRead: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/config/installation", () => ({ loadInstallationConfig: mocked.loadConfig }));
@@ -31,6 +31,10 @@ vi.mock("@/connectors/outlook-server-service", () => ({
   outlookCapabilityForSession: vi.fn(async () => mocked.health.find(row => row.connectorId === "outlook") ?? { connectorId: "outlook", status: "not_configured", statusCode: "OUTLOOK_NOT_ENABLED" }),
   outlookAccessForIdentity: vi.fn(async () => { throw new Error("NO_OUTLOOK_BINDING"); }),
 }));
+
+vi.mock("@/connectors/private-read-bridge", async original => ({ ...await original<typeof import("@/connectors/private-read-bridge")>(), privateReadBridge: mocked.bridge }));
+vi.mock("@/auth/local-user-store", () => ({ FileLocalUserStore: class { read = mocked.userRead; } }));
+vi.mock("@/g03-products/connectors", () => ({ internalConnectorsForIdentity: async () => [] }));
 
 // Keep the catalog resolver unmocked: its real tenant, user and role rules decide
 // visibility, independently of the synthetic provider connection snapshots.
@@ -65,9 +69,11 @@ beforeEach(() => {
     paths: { dataRoot: "/synthetic/data", companyContextRoot: "/synthetic/company", usersRoot: "/synthetic/users", sourceReadRoot: "/synthetic/source", publishWriteRoot: "/synthetic/publish", backupsRoot: "/synthetic/backups" },
   } satisfies InstallationConfig;
   mocked.loadConfig.mockImplementation(async () => mocked.config);
-  mocked.workspace.mockImplementation(async () => ({ roleId: mocked.roleId, groups: [], policy: { capabilities: { execute: true } } }));
+  mocked.workspace.mockImplementation(async () => ({ roleId: mocked.roleId, groups: [], policy: { capabilities: { consult: true, execute: true } } }));
   mocked.capabilities.mockImplementation(async () => mocked.health.filter(row => row.connectorId.startsWith("composio-")));
   mocked.nativeHealth.mockResolvedValue(new Map());
+  mocked.bridge.mockResolvedValue(null);
+  mocked.userRead.mockResolvedValue({ userId: USER, email: session.user.email, enabled: true });
   setResources([resource("gmail"), resource("outlook")]);
 });
 
@@ -145,4 +151,37 @@ it("cannot discover resources from another catalog tenant even when provider sna
   expect(await resolveAvailableConnectorsForTurn(INSTALLATION, USER, [], session)).toEqual([]);
   await expect(resolveAvailableConnectorsForTurn(INSTALLATION, USER, ["gmail"], session))
     .rejects.toMatchObject({ code: "CONNECTOR_MENTION_DENIED" });
+});
+
+it("admits authorized SOURCE mail in a support session without local mail config and rejects revoked/hosted-disabled bindings", async () => {
+  const tenant = "g03-production";
+  mocked.config = { ...(mocked.config as InstallationConfig), installationId: tenant, connectors: {} };
+  setResources([resource("mail")]);
+  mocked.catalog = { ...(mocked.catalog as CatalogState), installationId: tenant };
+  const supportSession = { ...session, tenant: { ...session.tenant, id: tenant }, support: { actorEmail: "operator@example.test", expiresAt: session.expiresAt } };
+  mocked.bridge.mockResolvedValue({ request: mocked.sourceRequest });
+  mocked.sourceRequest.mockResolvedValue({ mail: { accessVerified: true, operations: ["folders", "list"], connectionVersion: 4 } });
+  const result = await resolveAvailableConnectorsForTurn(tenant, USER, [], supportSession);
+  expect(result.map(row => row.resource.id)).toEqual(["mail"]);
+  expect(result[0].mention).toMatchObject({ canRead: true, status: "connected" });
+  expect(mocked.sourceRequest).toHaveBeenCalledWith("capabilities", {});
+  mocked.sourceRequest.mockResolvedValue({ mail: { accessVerified: false, operations: [] } });
+  expect(await resolveAvailableConnectorsForTurn(tenant, USER, [], supportSession)).toEqual([]);
+  mocked.bridge.mockResolvedValue(null);
+  expect(await resolveAvailableConnectorsForTurn(tenant, USER, [], supportSession)).toEqual([]);
+});
+
+it("does not admit Sage or mail from a stale SOURCE snapshot when app-identity transport traversal fails", async () => {
+  const tenant = "g03-production";
+  mocked.config = { ...(mocked.config as InstallationConfig), installationId: tenant, connectors: {} };
+  setResources([{ ...resource("g03-sage"), credentialMode: "none" }, resource("mail")]);
+  mocked.catalog = { ...(mocked.catalog as CatalogState), installationId: tenant };
+  const supportSession = { ...session, tenant: { ...session.tenant, id: tenant }, support: { actorEmail: "operator@example.test", expiresAt: session.expiresAt } };
+  mocked.bridge.mockResolvedValue({ request: mocked.sourceRequest });
+  mocked.sourceRequest.mockResolvedValue({ sage: { accessVerified: true, operations: ["discover", "read"] }, mail: { accessVerified: true, operations: ["folders", "list"], connectionVersion: 4 } });
+  expect((await resolveAvailableConnectorsForTurn(tenant, USER, [], supportSession)).map(row => row.resource.id)).toEqual(["g03-sage", "mail"]);
+  mocked.sourceRequest.mockClear();
+  mocked.bridge.mockRejectedValue(Object.assign(new Error("transport traversal failed"), { code: "EACCES" }));
+  expect(await resolveAvailableConnectorsForTurn(tenant, USER, [], supportSession)).toEqual([]);
+  expect(mocked.sourceRequest).not.toHaveBeenCalled();
 });

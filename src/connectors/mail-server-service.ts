@@ -30,9 +30,9 @@ async function mailReadBridge(installationId: string, userId: string) {
   try { return await privateReadBridge(installationId, userId); }
   catch (error) { if (error instanceof PrivateReadBridgeError) throw new MailConnectorError(error.code, error.status); throw error; }
 }
-async function policyContext(identity: Identity, mutating = false) {
+async function policyContext(identity: Identity, mutating = false, sourceNative = false) {
   const { config, userId } = identity;
-  if (!config.connectors?.mail?.enabled || config.connectors.mail.provider !== "nominalia") throw new MailConnectorError("MAIL_NOT_ENABLED", 404);
+  if (!sourceNative && (!config.connectors?.mail?.enabled || config.connectors.mail.provider !== "nominalia")) throw new MailConnectorError("MAIL_NOT_ENABLED", 404);
   const user = await new FileLocalUserStore(config.paths.usersRoot).read(userId);
   if (!user?.enabled || user.userId !== userId) throw new MailConnectorError("MAIL_IDENTITY_INVALID", 403);
   const workspace = await workspacePolicyForIdentity(config.installationId, userId, config);
@@ -42,6 +42,7 @@ async function policyContext(identity: Identity, mutating = false) {
   return { config, user, principal, policyHash: hash(workspace.policy) };
 }
 async function context(identity: Identity, mutating = false) {
+  if (await mailReadBridge(identity.config.installationId, identity.userId)) throw new MailConnectorError("MAIL_ACCESS_DENIED", 403);
   const ctx = await policyContext(identity, mutating);
   return { ...ctx, store: new FileMailStore(ctx.config, mailEncryptionKey()), bindings: new FileConnectorBindingStore(ctx.config.installationId, ctx.config.paths.dataRoot) };
 }
@@ -85,7 +86,7 @@ export async function disconnectMail(session: AuthSession) {
 export async function mailAccessForIdentity(config: Readonly<InstallationConfig>, userId: string) {
   const bridge = await mailReadBridge(config.installationId, userId);
   if (bridge) {
-    await policyContext({ config, userId });
+    await policyContext({ config, userId }, false, true);
     const capability = privateMailCapability(await bridge.request("capabilities", {}));
     return { binding: { transport: "source-native" as const, version: capability.connectionVersion }, capability };
   }
@@ -93,17 +94,17 @@ export async function mailAccessForIdentity(config: Readonly<InstallationConfig>
 }
 export async function mailCapabilityForSession(session: AuthSession, transport: MailTransport = nominaliaMailTransport) {
   const config = await loadInstallationConfig();
-  if (!config.connectors?.mail?.enabled) return null;
   const base = { connectorId: MAIL_CONNECTOR_ID, label: "Correo", effectiveOperations: [] as string[], approvalRequiredOperations: [] as string[], connectUrl: "/api/connectors/mail/connect", disconnectUrl: null as string | null, accountEmail: session.user.email, connectionVersion: null as number | null, checkedAt: null as string | null };
   try {
     const bridge = await mailReadBridge(config.installationId, session.user.id);
     if (bridge) {
       if (session.provider !== "local" || session.tenant.id !== config.installationId || !Number.isFinite(Date.parse(session.expiresAt)) || Date.parse(session.expiresAt) <= Date.now()) throw new MailConnectorError("MAIL_IDENTITY_INVALID", 403);
-      const ctx = await policyContext({ config, userId: session.user.id });
+      const ctx = await policyContext({ config, userId: session.user.id }, false, true);
       if (ctx.user.email !== session.user.email.trim().toLowerCase()) throw new MailConnectorError("MAIL_IDENTITY_INVALID", 403);
       const remote = privateMailCapability(await bridge.request("capabilities", {}));
       return { ...base, status: "connected" as const, statusCode: "SOURCE_PERMISSION_VERIFIED_REACHABILITY_UNTESTED", connectUrl: null, effectiveOperations: remote.operations, connectionVersion: remote.connectionVersion };
     }
+    if (!config.connectors?.mail?.enabled) return null;
     await sessionContext(session);
     const ctx = await access({ config, userId: session.user.id });
     // Provider reachability is checked on connect and operations. Settings does
@@ -187,12 +188,12 @@ export async function executeMailOperation(identity: Identity, operation: Exclud
   const bridge = await mailReadBridge(identity.config.installationId, identity.userId);
   if (bridge) {
     if (!["folders", "list", "search", "read"].includes(operation)) throw new MailConnectorError("MAIL_ACCESS_DENIED", 403);
-    const initial = await policyContext(identity);
+    const initial = await policyContext(identity, false, true);
     normalizeMailOperationArgs(operation, args);
     // Preserve the native requested limit/cursor. Native source normalization owns paging metadata.
     try {
       const value = await bridge.request("mail", { operation, input: args });
-      const fresh = await policyContext(identity);
+      const fresh = await policyContext(identity, false, true);
       if (fresh.policyHash !== initial.policyHash || JSON.stringify(fresh.user) !== JSON.stringify(initial.user)) throw new MailConnectorError("MAIL_CONNECTION_CHANGED", 403);
       return value;
     } catch (error) { if (error instanceof PrivateReadBridgeError) throw new MailConnectorError(error.code, error.status); throw error; }

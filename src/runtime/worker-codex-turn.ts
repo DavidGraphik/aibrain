@@ -1,8 +1,11 @@
 import { type TrinalumCapabilitySnapshot } from "@/connectors/trinalum-capabilities";
 import { trinalumToolAdmitted } from "@/runtime/trinalum-tool-contract";
 import { buildWorkerTurnTools } from "@/runtime/worker-turn-tools";
+import { desktopOutlookAvailableForTurn } from "@/runtime/outlook-desktop-admission";
 import { SUPPORT_NAMESPACE } from "@/runtime/support-tool-contract";
 import { handleSupportTool } from "@/runtime/support-dynamic-tools";
+import { g03SageReadCapabilities } from "@/connectors/g03-sage-service";
+import { mailCapabilityForSession } from "@/connectors/mail-server-service";
 import { G03_SAGE_NAMESPACE, handleG03SageTool } from "@/runtime/g03-sage-dynamic-tools";
 import { WorkerTurnRecoveryPendingError } from "@/runtime/worker-turn-recovery-error";
 export { WorkerTurnRecoveryPendingError } from "@/runtime/worker-turn-recovery-error";
@@ -1179,6 +1182,12 @@ async function runWorkerCodexTurnAttempt(
     readInstantly: runtimeIdentitySession ? (operation, args) => instantlyReadForIdentity(runtime.config, runtimeIdentitySession.user.id, operation, args) : undefined,
   };
   const outreachSystemTools = outreachSystemToolsForTurn(outreachSystemContext);
+  const [desktopOutlookAvailable, sageCapabilities, mailCapability] = await Promise.all([
+    desktopOutlookAvailableForTurn(runtime.config, runtimeIdentitySession),
+    sageSelected ? g03SageReadCapabilities(installationId, authenticatedUserId).catch(() => null) : null,
+    mailSelected && (runtimeIdentitySession ?? automationSession)
+      ? mailCapabilityForSession((runtimeIdentitySession ?? automationSession)!).catch(() => null) : null,
+  ]);
   const turnTools = buildWorkerTurnTools({
     installationId, connectors: runtime.config.connectors,
     sessions: {
@@ -1186,7 +1195,10 @@ async function runWorkerCodexTurnAttempt(
     },
     execution: { background: backgroundExecution, hostAnalysisPolicy, automationStateAvailable: Boolean(automationRunState) },
     documentNetworkAvailable: Boolean(enterpriseDocumentNetwork),
-    trinalumOperations,
+    trinalumOperations, desktopOutlookAvailable,
+    sageReadOperations: sageCapabilities?.readOperations ?? [],
+    sageWritesAllowed: sageCapabilities ? sageCapabilities.writesAllowed : false,
+    mailOperations: mailCapability?.effectiveOperations ?? [],
     availableConnectorIds: availableConnectors.flatMap(({ resource }) => resource.connectorId ? [resource.connectorId] : []),
     modules: {
       websiteDemo: process.env.AIBRAIN_INSIJETS_WEBSITE_CHAT_LOCAL_DEMO === "true",
@@ -2720,7 +2732,7 @@ async function runWorkerCodexTurnAttempt(
               threadId: chatRequest.threadId, messageId: chatRequest.assistantMessageId, storageOwnerId: authenticatedUserId };
             return await handleOutlookDesktopDynamicToolCall(request.params as never, {
               config: runtime.config, installationId, userId: authenticatedUserId,
-              runtimeThreadId: threadId, runtimeTurnId, mailSelected: turnTools.desktopOutlookEnabled, fileContext,
+              runtimeThreadId: threadId, runtimeTurnId, mailSelected: turnTools.desktopOutlookEnabled || turnTools.desktopOutlookStatusEnabled && request.params.tool === "status", fileContext,
               chatAuthorization: createInteractiveChatAuthorization({ session: runtimeIdentitySession ?? automationSession,
                 installationId, userId: authenticatedUserId, threadId, turnId: runtimeTurnId,
                 userMessageId: chatRequest.userMessageId, message: chatRequest.message, signal: turnSignal,

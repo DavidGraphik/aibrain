@@ -61,7 +61,7 @@ describe("runtime thread token", () => {
   it.each(["g03-production", "g03-qa", "g03-development"])("refreshes pre-mail G03 threads and resumes the new mail contract in %s", installationId => {
     const previous = "aibrain-tools-2026-10-15-g03-chat-authorization-v1";
     const current = currentThreadToolsetRevision(installationId);
-    const digest = createHash("sha256").update(JSON.stringify({ tools: G03_PRODUCT_TOOLS, instructions: g03ProductInstructions, conversationAndSourcePdfRevision: 1, sageTools: G03_SAGE_DYNAMIC_TOOLS, documentTools: DOCUMENT_DYNAMIC_TOOLS, historicalPdfTools: G03_HISTORICAL_PDF_TOOLS })).digest("hex").slice(0, 32);
+    const digest = createHash("sha256").update(JSON.stringify({ tools: G03_PRODUCT_TOOLS, instructions: g03ProductInstructions, conversationAndSourcePdfRevision: 1, connectorAdmissionRevision: 2, sageTools: G03_SAGE_DYNAMIC_TOOLS, documentTools: DOCUMENT_DYNAMIC_TOOLS, historicalPdfTools: G03_HISTORICAL_PDF_TOOLS })).digest("hex").slice(0, 32);
     expect(current).toBe(`${CURRENT_THREAD_TOOLSET_REVISION}-g03-${digest}`);
     expect(current.length).toBeLessThanOrEqual(127);
     const preHistoricalPdf = createHash("sha256").update(JSON.stringify({ tools: G03_PRODUCT_TOOLS, instructions: g03ProductInstructions, conversationAndSourcePdfRevision: 1, sageTools: G03_SAGE_DYNAMIC_TOOLS, documentTools: DOCUMENT_DYNAMIC_TOOLS })).digest("hex").slice(0, 32);
@@ -286,4 +286,13 @@ it('refreshes pre-attachment Trinalum runtime schema without changing the public
  expect(previousRevision).not.toBe(CURRENT_TRINALUM_THREAD_TOOLSET_REVISION);
  expect(runtimeThreadIdForChatMessage({threadId:'old-runtime',toolsetRevision:previousRevision},'Continúa','trinalum-production')).toBeNull();
  expect(CONVERSATION_ATTACHMENT_DYNAMIC_TOOLS.flatMap(t=>t.type==='namespace'?t.tools.map(x=>x.name):[])).toEqual(['search_attachments','open_attachment']);
+});
+
+it("refreshes a G03 runtime whose immutable catalogue preceded source-backed connector admission", () => {
+  const oldDigest = createHash("sha256").update(JSON.stringify({ tools: G03_PRODUCT_TOOLS, instructions: g03ProductInstructions, conversationAndSourcePdfRevision: 1, sageTools: G03_SAGE_DYNAMIC_TOOLS, documentTools: DOCUMENT_DYNAMIC_TOOLS, historicalPdfTools: G03_HISTORICAL_PDF_TOOLS })).digest("hex").slice(0, 32);
+  const installation = "g03-production", user = "00000000-0000-4000-8000-000000000001";
+  const old = readThreadTokenContext(issueThreadToken(installation, user, "before-source-mail", `${CURRENT_THREAD_TOOLSET_REVISION}-g03-${oldDigest}`), installation, user);
+  expect(runtimeThreadIdForChatMessage(old, "Continúa", installation)).toBeNull();
+  const fresh = readThreadTokenContext(issueThreadToken(installation, user, "source-mail-ready"), installation, user);
+  expect(runtimeThreadIdForChatMessage(fresh, "Continúa", installation)).toBe("source-mail-ready");
 });

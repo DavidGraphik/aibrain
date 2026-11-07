@@ -41,6 +41,7 @@ const mocked = vi.hoisted(() => ({
   capacityWaits: null as number[] | null,
   capacityAbort: null as (() => void) | null,
   availableConnectors: vi.fn<(...args: unknown[]) => Promise<ResolvedConnectorMention[]>>(),
+  mailCapability: vi.fn(),
   nativeMcpConfig: vi.fn().mockResolvedValue({}),
   nativeAppTools: vi.fn().mockResolvedValue({}),
 }));
@@ -58,6 +59,9 @@ vi.mock("node:timers/promises", async (importOriginal) => {
 });
 vi.mock("server-only", () => ({}));
 vi.mock("@/connectors/mentions", () => ({ resolveAvailableConnectorsForTurn: mocked.availableConnectors }));
+vi.mock("@/connectors/mail-server-service", async importOriginal => ({
+  ...await importOriginal<typeof import("@/connectors/mail-server-service")>(), mailCapabilityForSession: mocked.mailCapability,
+}));
 vi.mock("@/runtime/native-mcp-config", () => ({ nativeMcpConfigForTurn: mocked.nativeMcpConfig }));
 vi.mock("@/runtime/native-app-tools", async importOriginal => ({
   ...await importOriginal<typeof import("@/runtime/native-app-tools")>(), nativeAppToolsForTurn: mocked.nativeAppTools,
@@ -937,6 +941,7 @@ describe("worker Codex turn", () => {
     mocked.cancelTurn = null;
     mocked.pendingCancellation = false;
     mocked.availableConnectors.mockReset().mockResolvedValue([]);
+    mocked.mailCapability.mockReset().mockResolvedValue({ effectiveOperations: ["folders", "list", "search", "read", "attachment", "reply", "draft", "prepare_send", "send", "flags", "move"] });
     mocked.nativeMcpConfig.mockReset().mockResolvedValue({});
     mocked.nativeAppTools.mockReset().mockResolvedValue({});
   });

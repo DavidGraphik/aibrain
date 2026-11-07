@@ -63,6 +63,11 @@ export type WorkerTurnToolsContext = {
    * production always supplies this snapshot, never the browser selection. */
   availableConnectorIds?: readonly string[];
   trinalumOperations?: readonly string[];
+  /** Fresh pairing status for this exact authenticated employee, never install-wide. */
+  desktopOutlookAvailable?: boolean;
+  sageReadOperations?: readonly string[];
+  sageWritesAllowed?: boolean;
+  mailOperations?: readonly string[];
   modules: { websiteDemo: boolean; trinalumBridge: boolean; modtimeReporting: boolean };
   preparedTools: {
     operators: ReturnType<typeof operatorChatToolsForTurn>;
@@ -75,7 +80,7 @@ export type WorkerTurnToolsContext = {
  * A support preview deliberately replaces the full catalogue with its restricted set.
  */
 export function buildWorkerTurnTools({
-  installationId, connectors, sessions, execution, documentNetworkAvailable, modules, preparedTools, availableConnectorIds, trinalumOperations,
+  installationId, connectors, sessions, execution, documentNetworkAvailable, modules, preparedTools, availableConnectorIds, trinalumOperations, desktopOutlookAvailable, sageReadOperations, sageWritesAllowed, mailOperations,
 }: WorkerTurnToolsContext) {
   const connected = (id: string) => availableConnectorIds === undefined || availableConnectorIds.includes(id);
   const { background, hostAnalysisPolicy, automationStateAvailable } = execution;
@@ -84,9 +89,24 @@ export function buildWorkerTurnTools({
   const horariaEnabled = sessions.identity || sessions.automation;
   const websiteEnabled = sessions.identity && installationId === "insijets-demo" && modules.websiteDemo;
   const runStateEnabled = background && !hostAnalysisPolicy && automationStateAvailable;
-  // Pairing does not depend on a second server-mail password. Handlers still
-  // revalidate this employee's current personal-mail catalogue and workspace.
-  const desktopOutlookEnabled = installationId === "g03-production" && connectors?.mail?.enabled === true;
+  const desktopOutlookConfigured = installationId === "g03-production" && connectors?.mail?.enabled === true;
+  const desktopOutlookEnabled = desktopOutlookConfigured && desktopOutlookAvailable === true;
+  // A fresh source-backed mailbox capability is sufficient. Private transports
+  // deliberately keep provider credentials/configuration on the source server.
+  const mailEnabled = connected("mail") && (availableConnectorIds !== undefined || connectors?.mail?.enabled === true);
+  const admittedMailTools = mailOperations === undefined ? MAIL_DYNAMIC_TOOLS : MAIL_DYNAMIC_TOOLS.flatMap(spec => {
+    if (spec.type !== "namespace") return [];
+    const tools = spec.tools.filter(tool => mailOperations.includes(tool.name));
+    return tools.length ? [{ ...spec, tools }] : [];
+  });
+  const admittedSageTools = G03_SAGE_DYNAMIC_TOOLS.flatMap(spec => {
+    if (spec.type !== "namespace") return [];
+    const tools = spec.tools.filter(tool => {
+      const read = ["discover", "read", "read_batch"].includes(tool.name);
+      return read ? sageReadOperations === undefined || sageReadOperations.includes(tool.name) : sageWritesAllowed !== false;
+    });
+    return tools.length ? [{ ...spec, tools }] : [];
+  });
   const developerInstructions = [
     ...(supportEnabled ? [SUPPORT_INSTRUCTIONS] : []),
     ...(horariaEnabled ? [horariaInstructions] : []),
@@ -115,15 +135,18 @@ export function buildWorkerTurnTools({
       ...(connected("gmail") ? GMAIL_DYNAMIC_TOOLS : []),
       ...(connectors?.instantly?.enabled && connected("instantly") ? INSTANTLY_DYNAMIC_TOOLS : []),
       ...(connected("outlook") ? OUTLOOK_DYNAMIC_TOOLS : []),
-      ...(connectors?.mail?.enabled && connected("mail") ? MAIL_DYNAMIC_TOOLS : []),
-      ...(desktopOutlookEnabled ? OUTLOOK_DESKTOP_DYNAMIC_TOOLS : []),
+      ...(mailEnabled ? admittedMailTools : []),
+      ...(desktopOutlookConfigured ? OUTLOOK_DESKTOP_DYNAMIC_TOOLS.map(spec => desktopOutlookEnabled || spec.type !== "namespace" ? spec : {
+        ...spec, description: "Check only this employee's desktop pairing metadata. An unpaired desktop is not a mailbox. Use an available authenticated server mail connection for current server mail; desktop absence does not mean the server INBOX is empty.",
+        tools: spec.tools.filter(tool => tool.name === "status"),
+      }) : []),
       ...(websiteEnabled ? WEBSITE_CHAT_TOOLS as unknown as DynamicToolSpec[] : []),
       ...preparedTools.operators as unknown as DynamicToolSpec[],
       ...preparedTools.outreach as unknown as DynamicToolSpec[],
       ...(installationId === "trinalum-production" && modules.trinalumBridge ? trinalumToolsForOperations(trinalumOperations) : []),
       ...(modules.modtimeReporting ? MODTIME_DYNAMIC_TOOLS : []),
       ...(sessions.g03 ? G03_DYNAMIC_TOOLS : []),
-      ...(installationId === "g03-production" && connected("g03-sage") ? G03_SAGE_DYNAMIC_TOOLS : []),
+      ...(installationId === "g03-production" && connected("g03-sage") ? admittedSageTools : []),
       ...composioToolsForTurn(connectors?.composio?.toolkits, availableConnectorIds),
       ...(connectors?.codexManagedAppAction ? CONNECTED_ACTION_DYNAMIC_TOOLS : []),
       ...(sessions.automation ? AUTOMATION_DYNAMIC_TOOLS : []),
@@ -133,6 +156,7 @@ export function buildWorkerTurnTools({
   return {
     dynamicTools,
     desktopOutlookEnabled,
+    desktopOutlookStatusEnabled: desktopOutlookConfigured,
     developerInstructions,
     automationRunStateInstructions: runStateEnabled ? [AUTOMATION_RUN_STATE_INSTRUCTIONS] : [],
   };
