@@ -75,6 +75,8 @@ export async function documentServicesForUser(
   });
   const storageGate = new FileDocumentStorageGate({
     rootDirectory: path.join(installation.paths.dataRoot, "locks", "document-storage"),
+    capacityDirectories: [manifest.roots.staging, path.join(stateRoot, "document-previews"),
+      path.join(stateRoot, "document-history"), legacyOriginals.rootDirectory],
   });
   const toolchain = documentToolchainFromEnvironment();
   const previews = new DocumentPreviewService({

@@ -13,6 +13,7 @@ const USER_B = "0198b9f0-6631-7000-8000-000000000502";
 const UPLOAD_ID = "0198b9f0-6631-7000-8000-000000000511";
 const BAD_UPLOAD_ID = "0198b9f0-6631-7000-8000-000000000512";
 const auth = vi.hoisted(() => ({ session: null as AuthSession | null }));
+const capacityFault = vi.hoisted(() => ({ mode: null as "low" | "unknown" | null }));
 const storageFault = vi.hoisted(() => ({ code: null as "ENOSPC" | "EDQUOT" | null, phase: "write" as "write" | "open" }));
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
@@ -31,7 +32,11 @@ vi.mock("node:fs", async (original) => {
 
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
-  return { ...fs, open: (...args: Parameters<typeof fs.open>) => {
+  return { ...fs, statfs: (...args: Parameters<typeof fs.statfs>) => {
+    if (capacityFault.mode === "unknown") return Promise.reject(Object.assign(new Error("synthetic statfs denial"), { code: "EACCES" }));
+    if (capacityFault.mode === "low") return Promise.resolve({ bavail: 999_999_999n, bsize: 1n });
+    return fs.statfs(...args);
+  }, open: (...args: Parameters<typeof fs.open>) => {
     if (storageFault.code && storageFault.phase === "open" && String(args[0]).endsWith(".upload")) {
       const code = storageFault.code;
       storageFault.code = null;
@@ -148,6 +153,26 @@ describe("authenticated document routes", () => {
   });
 
   it.each([
+    { mode: "low", status: 507, code: "DOCUMENT_STORAGE_CAPACITY_LOW" },
+    { mode: "unknown", status: 503, code: "DOCUMENT_STORAGE_CAPACITY_UNAVAILABLE" },
+  ] as const)("rejects $mode capacity before intake and releases the slot", async ({ mode, status, code }) => {
+    const route = await import("@/app/api/threads/[threadId]/documents/route");
+    const { documentServicesForUser } = await import("@/documents/server-service");
+    const { loadInstallationConfig } = await import("@/config/installation");
+    const services = await documentServicesForUser(await loadInstallationConfig(), USER_A);
+    const failedId = "0198b9f0-6631-7000-8000-000000000590";
+    auth.session = session(USER_A);
+    capacityFault.mode = mode;
+    try {
+      const response = await route.POST(uploadRequest(failedId, new File(["never intake"], "capacity.txt", { type: "text/plain" })), { params: Promise.resolve({ threadId }) });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toMatchObject({ code });
+      await expect(services.staging.readById(threadId, failedId)).rejects.toThrow();
+    } finally { capacityFault.mode = null; }
+    await expect(services.storageGate.run(() => "slot released")).resolves.toBe("slot released");
+  });
+
+  it.each([
     { code: "ENOSPC", phase: "write", suffix: "531" },
     { code: "EDQUOT", phase: "write", suffix: "532" },
     { code: "ENOSPC", phase: "open", suffix: "533" },
@@ -171,7 +196,7 @@ describe("authenticated document routes", () => {
       expect(await resourceLocationIndexForInstallation(await loadInstallationConfig()).binding("upload", failedId)).toBeNull();
       // A fresh gate must acquire the exact shared slot after the failed write.
       const { FileDocumentStorageGate } = await import("@/documents/storage-gate");
-      await expect(new FileDocumentStorageGate({ rootDirectory: path.join(dataRoot, "locks", "document-storage"), maxActiveUploads: 1 }).run(() => "released")).resolves.toBe("released");
+      await expect(new FileDocumentStorageGate({ rootDirectory: path.join(dataRoot, "locks", "document-storage"), capacityDirectories: [dataRoot], maxActiveUploads: 1 }).run(() => "released")).resolves.toBe("released");
       const retry = await uploadRoute.POST(uploadRequest(failedId, new File(["retry succeeds"], "failed.txt", { type: "text/plain" })), { params: Promise.resolve({ threadId }) });
       expect(retry.status).toBe(201);
     } finally { storageFault.code = null; }
@@ -677,7 +702,7 @@ describe("authenticated document routes", () => {
     process.env.AIBRAIN_DOCUMENT_STORAGE_RETRY_AFTER_MS = "4200";
     const { FileDocumentStorageGate } = await import("@/documents/storage-gate");
     const gate = new FileDocumentStorageGate({
-      rootDirectory: path.join(dataRoot, "locks", "document-storage"),
+      rootDirectory: path.join(dataRoot, "locks", "document-storage"), capacityDirectories: [dataRoot],
       maxActiveUploads: 1,
     });
     let release!: () => void;

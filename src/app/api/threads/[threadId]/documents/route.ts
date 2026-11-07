@@ -37,6 +37,12 @@ function documentErrorResponse(error: unknown) {
       reason: error.reason,
     } : {}),
   });
+  if (code === "DOCUMENT_STORAGE_CAPACITY_UNAVAILABLE") {
+    return NextResponse.json({ error: "No s’ha pogut mesurar l’espai per desar el document. La càrrega no ha començat.", code }, { status: 503 });
+  }
+  if (code === "DOCUMENT_STORAGE_CAPACITY_LOW") {
+    return NextResponse.json({ error: "Cal almenys 1 GB lliure per admetre adjunts. La càrrega no ha començat.", code }, { status: 507 });
+  }
   if (code === "DOCUMENT_STORAGE_FULL") {
     return NextResponse.json({
       error: "El disc no ha pogut desar el document perquè no té espai disponible. La càrrega no s’ha completat. Torna-ho a provar després d’alliberar espai.",

@@ -12,7 +12,7 @@ import { CompanyMailError, validMailDate } from "@/connectors/company-mail-contr
 import { MAIL_HASH, privateMailDirectory } from "@/connectors/company-mail-store";
 import { importCompanyMailInvoices, invoiceLedgerForMailbox, mailboxIdentity, mailHash, mailInvoiceChangesForDay, parseMailInvoiceReview, recordMailInvoiceReview, refreshMailInvoiceWorkbook } from "@/connectors/company-mail-invoices";
 import { persistGeneratedDocumentArtifact, generatedDocumentArtifactId } from "@/runtime/generated-document-artifacts";
-import { DocumentStorageBackpressureError, DocumentStorageFullError, FileDocumentStorageGate } from "@/documents/storage-gate";
+import { DocumentStorageBackpressureError, DocumentStorageFullError, FileDocumentStorageGate, DocumentStorageCapacityLowError, DocumentStorageCapacityUnavailableError } from "@/documents/storage-gate";
 import { atomicWriteFile } from "@/storage";
 import { readRegularFileWithin } from "@/security/safe-file";
 import path from "node:path";
@@ -51,7 +51,9 @@ export async function handleCompanyMailTool(params: DynamicToolCallParams, c: Co
     const project = await getWritableProject(c.session, c.projectId);
     if (project.status === "archived") throw new CompanyMailError("MAIL_PROJECT_ARCHIVED", "El proyecto está archivado.");
     const access = await companyMailAccessForIdentity(c.config, c.userId);
-    const admission = new FileDocumentStorageGate({ rootDirectory: path.join(c.config.paths.dataRoot, "locks", "document-storage") });
+    const admission = new FileDocumentStorageGate({ rootDirectory: path.join(c.config.paths.dataRoot, "locks", "document-storage"),
+      capacityDirectories: [await access.store.root(c.userId), c.projectWorkspace,
+        path.join(c.config.paths.dataRoot, "generated-document-artifacts", c.userId)], });
     return await admission.run(() => access.store.withUserLock(c.userId, async () => {
       const fresh = await companyMailAccessForIdentity(c.config, c.userId);
       if (fresh.binding.credentialRef !== access.binding.credentialRef) throw new CompanyMailError("MAIL_CONNECTION_CHANGED", "La conexión ha cambiado; vuelve a intentarlo.");
@@ -121,6 +123,11 @@ export async function handleCompanyMailTool(params: DynamicToolCallParams, c: Co
       code: error.code,
       error: "Hay otros documentos procesándose. Vuelve a intentarlo en unos segundos.",
       retryable: true, retryAfterMs: error.retryAfterMs,
+    });
+    if (error instanceof DocumentStorageCapacityLowError || error instanceof DocumentStorageCapacityUnavailableError) return result(false, {
+      code: error.code, error: error instanceof DocumentStorageCapacityLowError
+        ? "Se necesita al menos 1 GB libre para admitir adjuntos. El trabajo no ha comenzado."
+        : "No se ha podido medir el espacio para guardar adjuntos. El trabajo no ha comenzado.",
     });
     if (error instanceof DocumentStorageFullError) return result(false, {
       code: error.code, error: "El disco no ha podido guardar el documento porque no tiene espacio disponible. El trabajo no se ha completado.",

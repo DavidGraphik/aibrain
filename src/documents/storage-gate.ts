@@ -1,4 +1,7 @@
 import path from "node:path";
+import { statfs } from "node:fs/promises";
+
+export const DOCUMENT_ATTACHMENT_MINIMUM_FREE_BYTES = 1_000_000_000n;
 import { ResourceLockTimeoutError, StorageError } from "@/storage/errors";
 import { ResourceLockManager, type ResourceLockLease } from "@/storage/resource-lock";
 
@@ -44,6 +47,40 @@ export class DocumentStorageFullError extends StorageError {
   }
 }
 
+export class DocumentStorageCapacityLowError extends StorageError {
+  readonly requiredBytes = DOCUMENT_ATTACHMENT_MINIMUM_FREE_BYTES;
+  constructor(readonly availableBytes: bigint) {
+    super("DOCUMENT_STORAGE_CAPACITY_LOW", "At least 1 GB of free storage is required to admit attachments.");
+  }
+}
+
+export class DocumentStorageCapacityUnavailableError extends StorageError {
+  readonly retryable = true;
+  constructor(cause: unknown) {
+    super("DOCUMENT_STORAGE_CAPACITY_UNAVAILABLE", "Attachment storage capacity could not be measured safely.", { cause });
+  }
+}
+
+// A first upload may not have created its destination directory yet. Only an
+// absent path permits checking its existing parent, the filesystem it will use.
+async function availableBytesAt(directory: string): Promise<bigint> {
+  let current = directory;
+  for (;;) {
+    try {
+      const capacity = await statfs(current, { bigint: true });
+      if (typeof capacity.bavail !== "bigint" || typeof capacity.bsize !== "bigint"
+        || capacity.bavail < 0n || capacity.bsize <= 0n) throw new Error("Invalid filesystem capacity.");
+      return capacity.bavail * capacity.bsize;
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        const parent = path.dirname(current);
+        if (parent !== current) { current = parent; continue; }
+      }
+      throw new DocumentStorageCapacityUnavailableError(error);
+    }
+  }
+}
+
 function isFilesystemFull(error: unknown) {
   const visited = new Set<unknown>();
   while (error && typeof error === "object" && !visited.has(error)) {
@@ -56,17 +93,20 @@ function isFilesystemFull(error: unknown) {
 
 /**
  * Installation-wide concurrency admission for the complete upload + preview
- * lifecycle. Attachments do not reserve a fixed or percentage free-space floor;
- * actual filesystem failures remain errors after the operation cleans up.
+ * lifecycle. Each actual attachment destination must independently have at
+ * least 1 GB free, regardless of readiness ratios or upload concurrency.
+ * This admission check does not reserve bytes; real write failures remain errors.
  */
 export class FileDocumentStorageGate {
   readonly rootDirectory: string;
+  readonly capacityDirectories: readonly string[];
   readonly maxActiveUploads: number;
   readonly retryAfterMs: number;
   private readonly locks: ResourceLockManager;
 
   constructor(options: {
     rootDirectory: string;
+    capacityDirectories: readonly string[];
     maxActiveUploads?: number;
     retryAfterMs?: number;
     staleAfterMs?: number;
@@ -81,6 +121,12 @@ export class FileDocumentStorageGate {
         "Storage gate root must be a non-root absolute path.",
       );
     }
+    if (!Array.isArray(options.capacityDirectories) || options.capacityDirectories.length === 0
+      || options.capacityDirectories.some(directory => typeof directory !== "string"
+        || !path.isAbsolute(directory) || path.resolve(directory) === path.parse(directory).root)) {
+      throw new StorageError("DOCUMENT_STORAGE_GATE_INVALID", "Actual attachment storage destinations are required.");
+    }
+    this.capacityDirectories = Object.freeze([...new Set(options.capacityDirectories.map(directory => path.resolve(directory)))]);
     this.rootDirectory = path.resolve(options.rootDirectory);
     this.maxActiveUploads = checkedInteger(
       "maxActiveUploads",
@@ -127,11 +173,16 @@ export class FileDocumentStorageGate {
     try {
       const lease = await this.acquire(options.signal);
       try {
+        for (const directory of this.capacityDirectories) {
+          const available = await availableBytesAt(directory);
+          if (available < DOCUMENT_ATTACHMENT_MINIMUM_FREE_BYTES) throw new DocumentStorageCapacityLowError(available);
+        }
         return await operation();
       } finally {
         await lease.release();
       }
     } catch (error) {
+      if (error instanceof DocumentStorageCapacityUnavailableError) throw error;
       if (isFilesystemFull(error)) throw new DocumentStorageFullError(error);
       throw error;
     }

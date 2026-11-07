@@ -1,3 +1,4 @@
+import { StorageError } from "@/storage";
 import { NextResponse } from "next/server";
 import { getSession } from "@/auth/session";
 import { isSameOriginMutation } from "@/auth/request-security";
@@ -25,7 +26,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     if (access.role === "viewer") return NextResponse.json({ error: "No puedes editar las referencias de este proyecto." }, { status: 403 });
     const config = await loadInstallationConfig();
     const { staging, locks } = projectSourceStore(config, access.ownerUserId);
-    const gate = new FileDocumentStorageGate({ rootDirectory: path.join(config.paths.dataRoot, "locks", "document-storage") });
+    const gate = new FileDocumentStorageGate({ rootDirectory: path.join(config.paths.dataRoot, "locks", "document-storage"),
+      capacityDirectories: [staging.rootDirectory, path.join(config.paths.dataRoot, "server", "legacy-excel-originals", access.ownerUserId)], });
     return await gate.run(async () => {
       const upload = await parseStreamingDocumentUpload(request, staging.rootDirectory, locks);
       try {
@@ -45,6 +47,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       } finally { await upload.dispose(); }
     });
   } catch (error) {
+    if (error instanceof StorageError && error.code === "DOCUMENT_STORAGE_CAPACITY_UNAVAILABLE") return NextResponse.json({ error: "No se ha podido medir el espacio para guardar el archivo. La carga no ha comenzado.", code: error.code }, { status: 503 });
+    if (error instanceof StorageError && error.code === "DOCUMENT_STORAGE_CAPACITY_LOW") return NextResponse.json({ error: "Se necesita al menos 1 GB libre para admitir adjuntos. La carga no ha comenzado.", code: error.code }, { status: 507 });
     if (error instanceof DocumentStorageFullError) return NextResponse.json({ error: "El disco no ha podido guardar el archivo porque no tiene espacio disponible. La carga no se ha completado.", code: error.code }, { status: 507 });
     if (error instanceof UploadValidationError) return NextResponse.json({ error: "No se ha podido guardar el archivo. Comprueba el formato y el límite de 20 MB.", code: error.code }, { status: 400 });
     return workbenchErrorResponse(error, "No se ha podido guardar la referencia.");

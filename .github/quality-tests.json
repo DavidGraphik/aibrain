@@ -104,5 +104,8 @@
   "src/connectors/private-read-service-routing.test.ts",
   "src/components/login-form.test.tsx",
   "src/runtime/outlook-desktop-admission.test.ts",
-  "src/components/workbench-dialogs.test.tsx"
+  "src/components/workbench-dialogs.test.tsx",
+  "src/documents/storage-gate.test.ts",
+  "tests/integration/document-routes.integration.test.ts",
+  "tests/integration/document-storage-process.integration.test.ts"
 ]

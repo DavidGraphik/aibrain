@@ -11,6 +11,7 @@ const holdMs = Number(holdValue ?? "0");
 const maxActiveUploads = Number(maximumValue ?? "1");
 const gate = new FileDocumentStorageGate({
   rootDirectory,
+  capacityDirectories: [capacityRoot],
   maxActiveUploads,
   retryAfterMs: 250,
   staleAfterMs: 120,
