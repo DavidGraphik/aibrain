@@ -124,6 +124,7 @@ export async function g03SageHealth(installationId: string, userId: string) {
     return { status: "connected", statusCode: "SAGE_READ_ONLY_VERIFIED", accessVerified };
   } catch(error) {
     if (error instanceof PrivateReadBridgeError || error instanceof SageError && process.env.AIBRAIN_PRIVATE_READ_BRIDGE_CONFIG) return { status: error.code === "SAGE_ACCESS_DENIED" || error.code === "PRIVATE_READ_BINDING_DENIED" ? "not_configured" : "unavailable", statusCode: error.code, accessVerified: false };
+    if (process.env.AIBRAIN_PRIVATE_READ_BRIDGE_CONFIG) return { status: "unavailable", statusCode: "SAGE_HEALTH_UNAVAILABLE", accessVerified: false };
     return error instanceof SageError && error.code !== "SAGE_NOT_CONFIGURED" && error.code !== "SAGE_ACCESS_DENIED"
       ? { status: "unavailable", statusCode: error.code, accessVerified } : { status: "not_configured", statusCode: "G03_SAGE_API_PENDING", accessVerified: false };
   } finally { clearTimeout(timer); }

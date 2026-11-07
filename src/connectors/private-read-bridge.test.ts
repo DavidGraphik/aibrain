@@ -1,10 +1,21 @@
 import { describe,it,expect,vi } from 'vitest';
 vi.mock('server-only',()=>({}));
 import {createPrivateReadBridge,validatePrivateReadConfig,privateMailCapability,type PrivateReadConfig} from './private-read-bridge';
+import {ConnectorTransportError} from '@/runtime/trinalum-broker-transport';
 const user='11111111-1111-4111-8111-111111111111',other='22222222-2222-4222-8222-222222222222';
 const cfg=():PrivateReadConfig=>({schemaVersion:1,installationId:'g03-production',enabled:true,readOnly:true,createdAt:Date.now()-1000,expiresAt:Date.now()+60000,bindings:[{userId:user,socketPath:`/run/aibrain-user-access/private-read/${user}/broker.sock`,token:'a'.repeat(48)}]});
 const response=(body:unknown,id=user)=>new Response(JSON.stringify({kind:'private-employee-native-response',schemaVersion:1,installationId:'g03-production',userId:id,body}));
 describe('source-native private read transport',()=>{
+ it('reports a broken transport as unavailable without retrying or exposing provider text',async()=>{
+  const exchange=vi.fn().mockRejectedValue(Object.assign(new Error('write EPIPE with private diagnostic'),{code:'EPIPE'}));
+  await expect(createPrivateReadBridge(cfg(),'g03-production',user,exchange).request('capabilities',{})).rejects.toMatchObject({code:'PRIVATE_READ_TRANSPORT_UNAVAILABLE',status:503,message:'PRIVATE_READ_TRANSPORT_UNAVAILABLE'});
+  expect(exchange).toHaveBeenCalledTimes(1);
+ });
+ it.each([[429,'CONNECTOR_BUSY','PRIVATE_READ_BUSY'],[504,'CONNECTOR_TIMEOUT','PRIVATE_READ_TIMEOUT'],[413,'CONNECTOR_RESULT_TOO_LARGE','PRIVATE_READ_RESULT_TOO_LARGE']] as const)('retains transport status %i',async(status,code,expected)=>{
+  const exchange=vi.fn().mockRejectedValue(new ConnectorTransportError(code,status));
+  await expect(createPrivateReadBridge(cfg(),'g03-production',user,exchange).request('capabilities',{})).rejects.toMatchObject({status,code:expected});
+  expect(exchange).toHaveBeenCalledTimes(1);
+ });
  it('rejects unknown, foreign, expired and duplicate bindings',()=>{
   for(const [c,t,u] of [[cfg(),'g03-production',other],[cfg(),'trinalum-production',user],[{...cfg(),expiresAt:Date.now()-1},'g03-production',user],[{...cfg(),createdAt:1},'g03-production',user]] as const)expect(()=>validatePrivateReadConfig(c,t,u)).toThrow();
   const c=cfg();c.bindings.push(c.bindings[0]);expect(()=>validatePrivateReadConfig(c,'g03-production',user)).toThrow();

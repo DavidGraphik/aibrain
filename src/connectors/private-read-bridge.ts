@@ -2,7 +2,7 @@ import "server-only";
 import { constants } from "node:fs";
 import { open, realpath, lstat } from "node:fs/promises";
 import path from "node:path";
-import { unixBrokerFetch } from "@/runtime/trinalum-broker-transport";
+import { ConnectorTransportError, unixBrokerFetch } from "@/runtime/trinalum-broker-transport";
 
 export class PrivateReadBridgeError extends Error { constructor(readonly code: string, readonly status = 503) { super(code); } }
 const deny = (): never => { throw new PrivateReadBridgeError("PRIVATE_READ_BINDING_DENIED", 403); };
@@ -38,7 +38,17 @@ export function createPrivateReadBridge(config: PrivateReadConfig, installationI
       if (kind === "capabilities" ? Object.keys(body).length !== 0 : ![...(kind === "sage" ? ["discover", "read", "read_batch"] : ["folders", "list", "search", "read"])].includes(String(body.operation))) return deny();
       const raw = JSON.stringify({ kind, body });
       if (Buffer.byteLength(raw) + 1 > 65_536) throw new PrivateReadBridgeError("PRIVATE_READ_REQUEST_TOO_LARGE", 413);
-      const response = await exchange(binding.socketPath, new URL("http://127.0.0.1/read"), { method: "POST", headers: { Authorization: `Bearer ${binding.token}`, "Content-Type": "application/json" }, body: raw, signal }, { timeoutMs: 65_000, maximumBytes: 2 * 1024 * 1024 });
+      let response: Response;
+      try {
+        response = await exchange(binding.socketPath, new URL("http://127.0.0.1/read"), { method: "POST", headers: { Authorization: `Bearer ${binding.token}`, "Content-Type": "application/json" }, body: raw, signal }, { timeoutMs: 65_000, maximumBytes: 2 * 1024 * 1024 });
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (error instanceof ConnectorTransportError) {
+          const code = error.status === 429 ? "PRIVATE_READ_BUSY" : error.status === 504 ? "PRIVATE_READ_TIMEOUT" : error.status === 413 ? "PRIVATE_READ_RESULT_TOO_LARGE" : "PRIVATE_READ_TRANSPORT_UNAVAILABLE";
+          throw new PrivateReadBridgeError(code, error.status);
+        }
+        throw new PrivateReadBridgeError("PRIVATE_READ_TRANSPORT_UNAVAILABLE", 503);
+      }
       if (response.status !== 200) {
         if (!ERROR_STATUSES.has(response.status)) throw new PrivateReadBridgeError("PRIVATE_READ_RESPONSE_INVALID", 502);
         let error: unknown; try { error = await response.json(); } catch { /* Only safe typed errors are forwarded. */ }

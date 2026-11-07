@@ -18,6 +18,13 @@ import {handleG03SageTool} from '@/runtime/g03-sage-dynamic-tools';
 const session={provider:'local',tenant:{id:'g03-production',name:'G03'},user:{id:user,email,name:'Employee'},expiresAt:new Date(Date.now()+600000).toISOString()} as AuthSession;
 beforeEach(()=>{vi.clearAllMocks();m.user.mockResolvedValue({userId:user,email,enabled:true});m.catalog.mockResolvedValue({allowsConnector:()=>true});m.bridge.mockResolvedValue({request:m.request});m.request.mockResolvedValue({nextCursor:'exact',coverage:{complete:false}});});
 describe('existing UI tool routing to source-native connectors',()=>{
+ it('never labels a failing opted-in transport as missing provider setup',async()=>{
+  vi.stubEnv('AIBRAIN_PRIVATE_READ_BRIDGE_CONFIG','/unused/private-read.json');
+  try {
+   m.bridge.mockRejectedValue(Object.assign(new Error('private diagnostic'),{code:'EPIPE'}));
+   expect(await g03SageHealth('g03-production',user)).toEqual({status:'unavailable',statusCode:'SAGE_HEALTH_UNAVAILABLE',accessVerified:false});
+  } finally {vi.unstubAllEnvs();}
+ });
  it('uses actual source grant/version without local crypto or credentials',async()=>{m.request.mockResolvedValue({mail:{accessVerified:true,operations:['list','search','read'],connectionVersion:7}});expect((await mailAccessForIdentity(config,user)).binding).toEqual({transport:'source-native',version:7});expect(await mailCapabilityForSession(session)).toMatchObject({connectionVersion:7,effectiveOperations:['list','search','read'],disconnectUrl:null});});
  it('preserves native folders parity for a remote-authorized employee',async()=>{expect(normalizeMailOperationArgs('folders',{})).toEqual({});m.request.mockResolvedValue({folders:[{name:'INBOX'}]});expect(await executeMailOperation({config,userId:user},'folders',{})).toEqual({folders:[{name:'INBOX'}]});expect(m.request).toHaveBeenCalledWith('mail',{operation:'folders',input:{}});});
  it('routes existing mail search with native limit/cursor',async()=>{const args={query:{text:'QA'},limit:100,cursor:'source'};const result=await handleMailDynamicToolCall({namespace:'aibrain_mail',tool:'search',arguments:args,threadId:'t',turnId:'u'} as never,{config,installationId:'g03-production',userId:user,runtimeThreadId:'t',runtimeTurnId:'u',mailSelected:true});expect(result.success).toBe(true);expect(m.request).toHaveBeenCalledWith('mail',{operation:'search',input:args});});
