@@ -1,11 +1,15 @@
 "use client";
 import { useUiText } from "@/i18n/provider";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { WarningCircle, X } from "@phosphor-icons/react";
 import { useModalFocus } from "@/ui/use-modal-focus";
 
-export function TextDialog({
+export function TextDialog(props: Parameters<typeof TextDialogContents>[0]) {
+  return props.open ? <TextDialogContents key={props.initialValue ?? ""} {...props} /> : null;
+}
+
+function TextDialogContents({
   open,
   title,
   label,
@@ -32,15 +36,6 @@ export function TextDialog({
   const [value, setValue] = useState(initialValue);
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useModalFocus<HTMLFormElement>(open, onClose, inputRef, returnFocusRef);
-
-  useEffect(() => {
-    if (!open) return;
-    const frame = requestAnimationFrame(() => {
-      setValue(initialValue);
-      inputRef.current?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [initialValue, open]);
 
   if (!open) return null;
   return (
