@@ -129,7 +129,14 @@ async function getLocalSession(sessionId: string): Promise<AuthSession | null> {
     return null;
   }
   if (isPrivateOwnerAuthRequested()) {
-    try { await assertPrivateOwnerSession({ installationId: installation.installationId, userId: user.userId, email: user.email }); }
+    try {
+      // A support target keeps its own application/provider identity. Only the
+      // audited actor is the private QA subscription owner; never copy owner
+      // identity into the target session or admit an ordinary employee cookie.
+      const support = resolved.record.support;
+      await assertPrivateOwnerSession({ installationId: installation.installationId,
+        userId: support?.actorUserId ?? user.userId, email: support?.actorEmail ?? user.email });
+    }
     catch { return null; }
   }
   return bindLocalServerSession({

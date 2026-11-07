@@ -95,5 +95,7 @@
   "src/settings/connector-settings.test.ts",
   "src/connectors/native-oauth-orchestration.test.ts",
   "tests/integration/private-owner-auth.integration.test.ts",
-  "tests/unit/recoverable-chat-stream.test.ts"
+  "tests/unit/recoverable-chat-stream.test.ts",
+  "src/auth/private-owner-support-session.test.ts",
+  "src/auth/support-session.test.ts"
 ]

@@ -7,7 +7,11 @@ export async function isSupportSessionAuthorized(record: LocalSessionRecord,
   if (!record.support) return true;
   try {
     const policy = await readSupportAccessPolicy(installation.paths.dataRoot, installation.installationId);
-    if (!policy || policy.operatorUserId !== record.support.actorUserId) return false;
+    if (record.installationId !== installation.installationId
+      || !policy || policy.operatorUserId !== record.support.actorUserId
+      || record.idleExpiresAt <= Date.now() || record.absoluteExpiresAt <= Date.now()) return false;
+    const target = await users.read(record.userId);
+    if (!target?.enabled || await users.hasInitialPasswordMarker(record.userId)) return false;
     const actor = await users.read(record.support.actorUserId);
     return Boolean(actor?.enabled && actor.email === record.support.actorEmail);
   } catch { return false; }
