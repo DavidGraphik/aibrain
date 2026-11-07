@@ -85,7 +85,10 @@ describe("runtime source and tool result projection", () => {
     const activity = itemActivity(params, true);
     expect(result?.title).toBe("Consultando archivos del proyecto");
     expect(activity?.detail).toBe("Consultando archivos del proyecto");
-    expect(JSON.stringify({ result, activity })).not.toMatch(/\/bin\/sh|\/var\/lib|company-qa|Codex|fc71a2c4/iu);
+    expect(JSON.stringify({ result, activity })).not.toMatch(/\/bin\/sh|\/var\/lib|company-qa|fc71a2c4/iu);
+    // Output may quote a product name literally; labels still hide the command.
+    expect(result?.output).toContain("Codex");
+    expect(activity?.output).toContain("Codex");
     expect(result?.output).toContain("entorno privado");
     expect(result?.output).not.toContain("Arnall");
   });
