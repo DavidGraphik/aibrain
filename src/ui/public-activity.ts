@@ -32,11 +32,11 @@ function withoutMarkdown(value: string) {
     .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gmu, "");
 }
 
-function redactInternalDetails(value: string, assistantName = "el asistente", evidence: PublicReferenceEvidence = {}) {
+function redactInternalDetails(value: string, assistantName = "el asistente", evidence: PublicReferenceEvidence = {}, runtimeLabels = true) {
   const denied = new Set((evidence.privateReferences ?? []).filter(isPublicReference).map(referenceKey));
   const allowed = new Set((evidence.publicReferences ?? []).filter(isPublicReference).map(referenceKey));
   const identifier = (match: string) => allowed.has(referenceKey(match)) && !denied.has(referenceKey(match)) ? match : "identificador interno";
-  return value
+  const redacted = value
     .replace(INSTALLATION_REFERENCE, "entorno privado")
     .replace(INSTALLATION_SLUG, "entorno privado")
     .replace(FILE_URL, "archivo interno")
@@ -49,9 +49,10 @@ function redactInternalDetails(value: string, assistantName = "el asistente", ev
       return isPrivateReferenceField(field) && !verifiedIdentity ? `${prefix}identificador interno` : match;
     })
     .replace(INTERNAL_ID, identifier)
-    .replace(INTERNAL_DIGEST, identifier)
-    .replace(INTERNAL_NAMESPACE, "herramienta autorizada")
-    .replace(INTERNAL_BRAND, assistantName);
+    .replace(INTERNAL_DIGEST, identifier);
+  // Only runtime-owned activity labels may be reworded. Answers and provider
+  // data can quote these same words/namespaces literally.
+  return runtimeLabels ? redacted.replace(INTERNAL_NAMESPACE, "herramienta autorizada").replace(INTERNAL_BRAND, assistantName) : redacted;
 }
 
 /**
@@ -70,7 +71,8 @@ export function publicActivityText(value: unknown, maximum = 12_000, evidence: P
 
 /** Keeps useful command output reviewable without exposing its host/runtime. */
 export function publicToolOutput(value: unknown, maximum = 64_000, evidence: PublicReferenceEvidence = {}) {
-  return publicActivityText(value, maximum, evidence);
+  const output = withoutMarkdown(publicAssistantText(value, "el asistente", maximum, evidence)).trim();
+  return output || null;
 }
 
 /**
@@ -102,7 +104,7 @@ export function publicAssistantText(value: unknown, assistantName: string, maxim
     },
   );
   const safeName = assistantName.trim() || "el asistente";
-  const redacted = redactInternalDetails(protectedText, safeName, evidence)
+  const redacted = redactInternalDetails(protectedText, safeName, evidence, false)
     .replace(/[ \t]+/gu, " ")
     .replace(/\n{3,}/gu, "\n\n");
   return redacted.replace(/SAFEURLTOKEN(\d+)ENDTOKEN/gu, (_match, index: string) => links[Number(index)] ?? "").slice(0, maximum);

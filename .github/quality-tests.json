@@ -101,5 +101,6 @@
   "src/runtime/support-model-qa.test.ts",
   "src/auth/support-access.test.ts",
   "src/connectors/private-read-bridge.test.ts",
-  "src/connectors/private-read-service-routing.test.ts"
+  "src/connectors/private-read-service-routing.test.ts",
+  "src/components/login-form.test.tsx"
 ]

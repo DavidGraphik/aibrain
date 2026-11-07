@@ -1,7 +1,7 @@
 "use client";
 import { useUiText } from "@/i18n/provider";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState, useSyncExternalStore, type CSSProperties } from "react";
 import {
   ArrowRight,
   EnvelopeSimple,
@@ -14,6 +14,10 @@ import { BrandMark, Button, TextField, ThemeToggle } from "@/components/ui/primi
 import { customAccentTokens } from "@/config/brain";
 import type { PublicInstallationBranding } from "@/config/installation-branding";
 import { DecryptedText } from "@/components/ui/decrypted-text";
+
+const subscribeToHydration = () => () => {};
+const clientHydrationSnapshot = () => true;
+const serverHydrationSnapshot = () => false;
 
 type LoginStyle = CSSProperties & {
   "--brain-accent-light": string;
@@ -39,6 +43,9 @@ export function LoginForm({
 }) {
   const t = useUiText();
   const router = useRouter();
+  // Server-rendered controls remain inert until React owns submission. This
+  // prevents credentials entered before hydration from being lost to native GET.
+  const interactive = useSyncExternalStore(subscribeToHydration, clientHydrationSnapshot, serverHydrationSnapshot);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -235,7 +242,7 @@ export function LoginForm({
                 <button
                   type="button"
                   key={account.id}
-                  disabled={loading !== null}
+                  disabled={!interactive || loading !== null}
                   onClick={() => void loginDemo(account.id)}
                   className="ui-surface group flex w-full items-center gap-3 p-3.5 text-left transition hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)] disabled:cursor-default disabled:opacity-50"
                 >
@@ -264,6 +271,7 @@ export function LoginForm({
                   <EnvelopeSimple aria-hidden size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-subtle)]" />
                   <TextField
                     type="email"
+                    disabled={!interactive}
                     autoComplete="email"
                     required
                     maxLength={320}
@@ -282,6 +290,7 @@ export function LoginForm({
                     <LockKey aria-hidden size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-subtle)]" />
                     <TextField
                       type="password"
+                      disabled={!interactive}
                       autoComplete="current-password"
                       required
                       maxLength={4096}
@@ -293,7 +302,7 @@ export function LoginForm({
                 </label>
               ) : null}
 
-              <Button type="submit" variant="primary" disabled={loading !== null} className="w-full">
+              <Button type="submit" variant="primary" disabled={!interactive || loading !== null} className="w-full">
                 {loading ? t("Validando…") : recovering ? t("Enviar recuperación") : t("Entrar")}
               </Button>
               {isSupabase ? <Button
@@ -301,6 +310,7 @@ export function LoginForm({
                 size="sm"
                 variant="ghost"
                 className="w-full"
+                disabled={!interactive}
                 onClick={() => {
                   setRecovering((current) => !current);
                   setError(null);
@@ -343,13 +353,13 @@ export function LoginForm({
               </label>
               <button type="button" aria-pressed={showPasswords} aria-controls="initial-password initial-password-confirmation" onClick={() => setShowPasswords(shown => !shown)} className="min-h-11 rounded-lg px-2 text-[12px] font-semibold">{t(showPasswords ? "Ocultar contraseñas" : "Mostrar contraseñas")}</button>
               <p id="initial-password-requirements" className="text-[11px] leading-5 text-[var(--text-muted)]">{t("Entre 12 y 128 caracteres, con al menos una letra y un número.")}</p>
-              <Button type="submit" variant="primary" disabled={loading !== null} className="w-full">
+              <Button type="submit" variant="primary" disabled={!interactive || loading !== null} className="w-full">
                 {loading ? t("Actualizando…") : t("Actualizar y entrar")}
               </Button>
               <Button
                 type="button"
                 variant="ghost"
-                disabled={loading !== null}
+                disabled={!interactive || loading !== null}
                 className="w-full"
                 onClick={returnToLogin}
               >
