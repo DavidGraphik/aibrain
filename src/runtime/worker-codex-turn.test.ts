@@ -1105,7 +1105,7 @@ describe("worker Codex turn", () => {
         ready!();
       }
       await first;
-      expect(mocked.availableConnectors).toHaveBeenCalledExactlyOnceWith(installationId, userId, [], session);
+      expect(mocked.availableConnectors).toHaveBeenCalledExactlyOnceWith(installationId, userId, [], session, expect.any(Function));
       expect(calls.map(({ method }) => method)).toEqual(["thread/start", "turn/start"]);
       const params = calls[0].params;
       expect(params.config).toMatchObject({ web_search: "live", apps: {
