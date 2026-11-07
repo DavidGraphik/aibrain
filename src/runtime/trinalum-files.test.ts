@@ -1,7 +1,7 @@
 import type { InstallationConfig } from '@/config/installation-schema';
 import type { AuthSession } from '@/auth/types';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, lstat, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,11 +10,27 @@ import { resourceLocationIndexForInstallation } from '@/library/server-resource-
 import { GET } from '@/app/api/threads/[threadId]/connector-files/[artifactId]/route';
 
 vi.mock('server-only',()=>({}));
+const storageFault=vi.hoisted(()=>({capacity:null as 'low'|'unknown'|null,writeFailure:false}));
+vi.mock('node:fs/promises',async original=>{
+ const fs=await original<typeof import('node:fs/promises')>();
+ return {...fs,statfs:(...args:Parameters<typeof fs.statfs>)=>{
+  if(String(args[0]).includes('/trinalum-connector-files/')&&storageFault.capacity==='low')return Promise.resolve({bavail:999_999_999n,bsize:1n});
+  if(String(args[0]).includes('/trinalum-connector-files/')&&storageFault.capacity==='unknown')return Promise.reject(Object.assign(new Error('synthetic capacity unavailable'),{code:'EACCES'}));
+  return fs.statfs(...args);
+ },open:async(...args:Parameters<typeof fs.open>)=>{
+  const handle=await fs.open(...args);
+  if(storageFault.writeFailure&&String(args[0]).includes('/trinalum-connector-files/')&&String(args[0]).endsWith('.tmp')){
+   storageFault.writeFailure=false;const write=handle.writeFile.bind(handle);
+   handle.writeFile=async data=>{await write(Buffer.isBuffer(data)?data.subarray(0,8):String(data).slice(0,8));throw Object.assign(new Error('synthetic short write then disk full'),{code:'ENOSPC'});};
+  }
+  return handle;
+ }};
+});
 const mocks=vi.hoisted(()=>({session:vi.fn(),resource:vi.fn()}));
 vi.mock('@/auth/session',()=>({getSession:mocks.session}));
 vi.mock('@/library/server-resource-access',async importOriginal=>({...await importOriginal<typeof import('@/library/server-resource-access')>(),resolveGeneratedDocumentResource:mocks.resource}));
 const roots:string[]=[];
-afterEach(async()=>{vi.clearAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+afterEach(async()=>{storageFault.capacity=null;storageFault.writeFailure=false;vi.unstubAllEnvs();vi.clearAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 const owner='11111111-1111-4111-8111-111111111111';
 async function fixture(){
  const dataRoot=await mkdtemp(path.join(tmpdir(),'trinalum-private-file-'));roots.push(dataRoot);
@@ -26,6 +42,36 @@ async function fixture(){
 async function saved(){const f=await fixture();const artifact=await persistTrinalumFile(f.file,f.context);const index=resourceLocationIndexForInstallation(f.context.installation);const location=await index.resolve('generated-document',artifact.id,{projectId:f.context.projectId,threadId:f.context.threadId});return {...f,artifact,index,location};}
 
 describe('private original connector files',()=>{
+ it.each(['low','unknown'] as const)('rejects %s destination capacity before creating artifact directories',async mode=>{
+  const f=await fixture();storageFault.capacity=mode;
+  await expect(persistTrinalumFile(f.file,f.context)).rejects.toMatchObject({code:mode==='low'?'DOCUMENT_STORAGE_CAPACITY_LOW':'DOCUMENT_STORAGE_CAPACITY_UNAVAILABLE'});
+  await expect(lstat(path.join(f.dataRoot,'trinalum-connector-files'))).rejects.toMatchObject({code:'ENOENT'});
+  storageFault.capacity=null;await expect(persistTrinalumFile(f.file,f.context)).resolves.toMatchObject({status:'ready'});
+ });
+ it('uses the same installation-wide upload slots as document uploads',async()=>{
+  const f=await fixture();vi.stubEnv('AIBRAIN_DOCUMENT_MAX_ACTIVE_UPLOADS','1');
+  const {FileDocumentStorageGate}=await import('@/documents/storage-gate');
+  const gate=new FileDocumentStorageGate({rootDirectory:path.join(f.dataRoot,'locks','document-storage'),capacityDirectories:[f.dataRoot]});
+  let acquired!:()=>void;let release!:()=>void;const ready=new Promise<void>(resolve=>{acquired=resolve;});const held=new Promise<void>(resolve=>{release=resolve;});
+  const running=gate.run(async()=>{acquired();await held;});await ready;
+  try{await expect(persistTrinalumFile(f.file,f.context)).rejects.toMatchObject({code:'DOCUMENT_STORAGE_BACKPRESSURE'});}
+  finally{release();await running;}
+  await expect(persistTrinalumFile(f.file,f.context)).resolves.toMatchObject({status:'ready'});
+ });
+ it('cleans only its new temporary after ENOSPC and permits an exact retry',async()=>{
+  const f=await fixture();storageFault.writeFailure=true;
+  await expect(persistTrinalumFile(f.file,f.context)).rejects.toMatchObject({code:'DOCUMENT_STORAGE_FULL'});
+  const ownerRoot=path.join(f.dataRoot,'trinalum-connector-files',owner);const dirs=await readdir(ownerRoot);expect(dirs).toHaveLength(1);
+  expect(await readdir(path.join(ownerRoot,dirs[0]))).toEqual([]);
+  const artifact=await persistTrinalumFile(f.file,f.context);const record=await resourceLocationIndexForInstallation(f.context.installation).binding('generated-document',artifact.id);
+  expect(await readFile(path.join(f.dataRoot,record!.relativePath!))).toEqual(f.contents);
+  expect(await readdir(path.dirname(path.join(f.dataRoot,record!.relativePath!)))).toEqual(['private.pdf']);
+ });
+ it('leaves a preexisting immutable target unchanged and cleans only the new temp on a conflict',async()=>{
+  const f=await saved();const target=path.join(f.dataRoot,f.location.relativePath!);const original=Buffer.from('preexisting different original');await writeFile(target,original);
+  await expect(persistTrinalumFile(f.file,f.context)).rejects.toThrow('CONNECTOR_FILE_CHANGED');
+  expect(await readFile(target)).toEqual(original);expect(await readdir(path.dirname(target))).toEqual(['private.pdf']);
+ });
  it('persists verified original bytes behind an owner/thread-bound artifact without returning base64 or provider URLs',async()=>{
   const f=await saved();expect(f.artifact).toMatchObject({name:'private.pdf',mimeType:'application/pdf',size:f.contents.length,status:'ready',url:`/api/threads/${f.context.threadId}/connector-files/${f.artifact.id}`});
   expect(JSON.stringify(f.artifact)).not.toContain(f.file.content_base64);expect(f.location).toMatchObject({storageOwnerId:owner,threadId:f.context.threadId,messageId:f.context.messageId,sha256:f.file.sha256});

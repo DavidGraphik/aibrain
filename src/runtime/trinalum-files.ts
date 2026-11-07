@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { DocumentArtifact } from "@/lib/chat-contract";
 import { resourceLocationIndexForInstallation } from "@/library/server-resource-access";
 import { readRegularFileWithin } from "@/security/safe-file";
-import { generatedDocumentArtifactId, type GeneratedDocumentArtifactContext } from "./generated-document-artifacts";
+import { FileDocumentStorageGate } from "@/documents/storage-gate";
+import { persistImmutableDocument, generatedDocumentArtifactId, type GeneratedDocumentArtifactContext } from "./generated-document-artifacts";
 
 export const TRINALUM_FILE_MAXIMUM = 30 * 1024 * 1024;
 
@@ -42,8 +42,16 @@ export async function persistTrinalumFile(file: Record<string, unknown>, context
   const pdfHeaderVerified = hasPdfOriginalHeader(contents);
   const mimeType = pdfHeaderVerified ? "application/pdf" : declaredType;
   const artifactId = generatedDocumentArtifactId(context.messageId, `connector/${sha256}/${name}`);
-  let directory = await realpath(context.installation.paths.dataRoot);
-  const base = directory;
+  const base = await realpath(context.installation.paths.dataRoot);
+  for (const part of [context.storageOwnerId, artifactId]) {
+    if (!/^[\w-]+$/.test(part)) throw Error("CONNECTOR_FILE_IDENTITY_INVALID");
+  }
+  const admission = new FileDocumentStorageGate({
+    rootDirectory: path.join(base, "locks", "document-storage"),
+    capacityDirectories: [path.join(base, "trinalum-connector-files", context.storageOwnerId)],
+  });
+  return admission.run(async () => {
+  let directory = base;
   for (const part of ["trinalum-connector-files", context.storageOwnerId, artifactId]) {
     if (!/^[\w-]+$/.test(part)) throw Error("CONNECTOR_FILE_IDENTITY_INVALID");
     directory = path.join(directory, part);
@@ -52,11 +60,12 @@ export async function persistTrinalumFile(file: Record<string, unknown>, context
     if (!meta.isDirectory() || meta.isSymbolicLink() || await realpath(directory) !== directory) throw Error("CONNECTOR_FILE_PATH_UNSAFE");
   }
   const target = path.join(directory, name);
+  const metadata = await lstat(directory);
   try {
-    const handle = await open(target, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
-    try { await handle.writeFile(contents); await handle.sync(); } finally { await handle.close(); }
+    await persistImmutableDocument({ path: directory, device: metadata.dev, inode: metadata.ino, dataRoot: base }, name, contents);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (error instanceof Error && error.message === "Generated document content changed for a stable id.") throw Error("CONNECTOR_FILE_CHANGED");
+    throw error;
   }
   if (!(await readRegularFileWithin(directory, name, TRINALUM_FILE_MAXIMUM)).equals(contents)) throw Error("CONNECTOR_FILE_CHANGED");
   const relativePath = path.relative(base, target).split(path.sep).join("/");
@@ -69,4 +78,5 @@ export async function persistTrinalumFile(file: Record<string, unknown>, context
     kind, mimeType, size: contents.length, status: "ready", pages: null, previewUrl: null,
     publicationStatus: null, publicationError: null, targetLabel: null, error: null,
     ...(sourceRead ? { provenance: "source-read" as const } : {}) };
+  });
 }

@@ -587,6 +587,17 @@ describe('operator-only native disposition reconciliation',()=>{
 });
 
 describe('private connector PDF reading bridge',()=>{
+ it.each(['DOCUMENT_STORAGE_CAPACITY_LOW','DOCUMENT_STORAGE_CAPACITY_UNAVAILABLE','DOCUMENT_STORAGE_FULL','DOCUMENT_STORAGE_BACKPRESSURE'] as const)('reports %s from private artifact publication without calling it a provider failure',async code=>{
+  const f=await fixture();const gate=await import('@/documents/storage-gate');
+  const errors={DOCUMENT_STORAGE_CAPACITY_LOW:new gate.DocumentStorageCapacityLowError(999_999_999n),DOCUMENT_STORAGE_CAPACITY_UNAVAILABLE:new gate.DocumentStorageCapacityUnavailableError(new Error('measurement unavailable')),DOCUMENT_STORAGE_FULL:new gate.DocumentStorageFullError(new Error('disk full')),DOCUMENT_STORAGE_BACKPRESSURE:new gate.DocumentStorageBackpressureError(5000)};
+  const result=await handleTrinalumTool(params('mail_api',{input:{operation:'original'}}),{...f.context,onFile:async()=>{throw errors[code];},fetcher:async()=>Response.json({kind:'file',filename:'message.eml',content_base64:'YWJj'})});
+  expect(result.success).toBe(false);expect(body(result)).toMatchObject({error:code});expect(JSON.stringify(result)).not.toContain('CONNECTOR_UNAVAILABLE');
+ });
+ it('preserves an honest source response-limit error for an admitted bundle without retry',async()=>{
+  const f=await fixture();const fetcher=vi.fn(async()=>Response.json({error:'CONNECTOR_RESPONSE_LIMIT'},{status:502}));const onFile=vi.fn();
+  const result=await handleTrinalumTool(params('mail_api',{input:{operation:'bundle',messageId:'owned'}}),{...f.context,fetcher,onFile});
+  expect(result.success).toBe(false);expect(body(result)).toMatchObject({error:'CONNECTOR_RESPONSE_LIMIT',status:502});expect(fetcher).toHaveBeenCalledTimes(1);expect(onFile).not.toHaveBeenCalled();
+ });
  it.each(['attachment','original'])('exports mail %s metadata without parsing, rendering or claiming content coverage',async operation=>{
   const f=await fixture();const bytes=Buffer.from('%PDF-1.7\noriginal private bytes\n%%EOF');const readPrivateFile=vi.fn(async()=>{throw Error('export must never invoke conversion');});
   const file={kind:'file',filename:'invoice.pdf',mimeType:'application/pdf',bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),pdfHeaderPresent:true,content_base64:bytes.toString('base64'),reading:{status:'read',complete:true,text:'untrusted provider reading claim'},text:'unrequested provider text',png:'unrequested image',images:['unrequested image']};

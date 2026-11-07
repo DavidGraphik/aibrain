@@ -1,3 +1,4 @@
+import { DocumentStorageBackpressureError, DocumentStorageCapacityLowError, DocumentStorageCapacityUnavailableError, DocumentStorageFullError } from "@/documents/storage-gate";
 import {attioProjectionArguments,projectAttioRecords} from './attio-record-projection';
 import type { JsonValue } from "@/runtime/transport";
 import { readFile } from "node:fs/promises";
@@ -30,6 +31,7 @@ const mailFailureHints:Record<string,string>={
  SIBEMA_TARIFF_REMARKS_TOO_LONG:'Customer-tariff remarks exceed the current255-character limit including one Unidad precio prefix. Existing returned remarks already contain that prefix and are reused without adding it again. Preserve all existing notes and requested commercial conditions; never truncate or silently discard details. If the complete requested information cannot fit, explain that limitation without claiming it was saved. This preparation was rejected before a provider write.',
 
  SIBEMA_LINE_REFERENCES_UNVERIFIED:'The exact native line descriptions or frozen numeric fields could not be verified. Correct invalid fields before preparation. If the offer was already dispatched, reconcile that same offer and its lines; never create a duplicate or claim all references were saved.',
+ CONNECTOR_RESPONSE_LIMIT:'The exact original or bundle exceeds this source transport response limit. No partial file was transferred. This is a real coverage limit, not invalid model arguments or a provider outage. Do not retry automatically or claim the original was published.',
  MAIL_API_INVALID:'Use mail_api input.operation=discover for exact read/action fields. Correct the request before preparing another action.',
  MAIL_SEARCH_INTENT_INVALID:'Use either structured criteria or a literal query, never both. Keep every known reference, company, sender and date constraint together and reuse identical criteria with its cursor. Correct invalid fields without dropping constraints or broadening the search silently.',
  ATTIO_API_INVALID_ARGUMENTS:'Discover this exact method/path using attio_api and follow its required parameters and body schema.',
@@ -240,7 +242,17 @@ export async function handleTrinalumTool(params: DynamicToolCallParams, context:
       });
     }
     return await read();
-  } catch(error) { return error instanceof ConnectorRequestError?response(false,{error:error.code,status:error.status,...(mailFailureHints[error.code]?{hint:mailFailureHints[error.code]}:{})}):response(false, { error: "CONNECTOR_UNAVAILABLE" }); }
+  } catch(error) {
+    if (error instanceof DocumentStorageCapacityLowError || error instanceof DocumentStorageCapacityUnavailableError || error instanceof DocumentStorageFullError || error instanceof DocumentStorageBackpressureError) {
+      return response(false, { error: error.code, hint: error instanceof DocumentStorageCapacityLowError
+        ? "The original was not published: its storage needs at least 1 GB free. This is a local storage limit, not a provider failure."
+        : error instanceof DocumentStorageCapacityUnavailableError
+        ? "The original was not published because its storage capacity could not be measured safely. Do not claim the file is available."
+        : error instanceof DocumentStorageBackpressureError
+        ? "Other document uploads occupy the shared storage slots. No new original was published."
+        : "The filesystem could not persist the original. No partial new file was published; existing originals remain unchanged." });
+    }
+    return error instanceof ConnectorRequestError?response(false,{error:error.code,status:error.status,...(mailFailureHints[error.code]?{hint:mailFailureHints[error.code]}:{})}):response(false, { error: "CONNECTOR_UNAVAILABLE" }); }
 }
 
 function sibemaReadArgumentError(input: unknown): Record<string, JsonValue> | null {

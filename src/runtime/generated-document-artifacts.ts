@@ -62,7 +62,7 @@ async function secureDocumentRoot(dataRoot: string, storageOwnerId: string, arti
   return { path: current, device: metadata.dev, inode: metadata.ino, dataRoot: canonicalDataRoot };
 }
 
-async function persistImmutableDocument(
+export async function persistImmutableDocument(
   root: Awaited<ReturnType<typeof secureDocumentRoot>>,
   fileName: string,
   contents: Buffer,
