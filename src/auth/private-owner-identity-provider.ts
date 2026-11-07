@@ -6,7 +6,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import type { AuthIdentityProvider, IdentityCredentials, RecoveryVerificationProof, VerifiedIdentity } from "./identity-provider";
 import { IdentityProviderError } from "./identity-provider";
 import type { FileLocalUserStore } from "./local-user-store";
-import { assertPersonalModelTest, configuredModelAuth } from "@/runtime/server-model-auth";
+import { assertOwnPersonalModelTest, assertPersonalModelTest, configuredModelAuth } from "@/runtime/server-model-auth";
 
 export const PRIVATE_OWNER_LOGIN_PATH = "/etc/aibrain/private-owner-login.json";
 const SCRYPT = Object.freeze({ N: 65_536, r: 8, p: 1, maxmem: 128 * 1024 * 1024 });
@@ -31,6 +31,14 @@ export function isPrivateOwnerAuthConfigured() {
   } catch { return false; }
 }
 
+/** Model QA only; never selects the private-owner login provider for Supabase. */
+export function isSupportModelQaAuthConfigured() {
+  try {
+    return isPrivateOwnerAuthConfigured() || process.env.AIBRAIN_AUTH_MODE?.trim() === "supabase"
+      && process.env.AIBRAIN_CODEX_AUTH_SCOPE?.trim() === "per-user" && configuredModelAuth() === "personal-test";
+  } catch { return false; }
+}
+
 type OwnerCredential = {
   installationId: string; userId: string; email: string; salt: Buffer; passwordHash: Buffer; fingerprint: string;
 };
@@ -38,12 +46,12 @@ function wipe(value?: OwnerCredential) { value?.salt.fill(0); value?.passwordHas
 
 /** Fixed, backend-readable root file only. No caller may supply a path or
  * hashing parameters. Replacing or changing it during a read fails closed. */
-async function credential(expectedInstallation: string): Promise<OwnerCredential> {
+async function credential(expectedInstallation: string, supportSponsor = false): Promise<OwnerCredential> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let bytes: Buffer | undefined;
   let salt: Buffer | undefined, passwordHash: Buffer | undefined;
   try {
-    if (!isPrivateOwnerAuthConfigured() || !installationId(expectedInstallation)
+    if (!(supportSponsor ? isSupportModelQaAuthConfigured() : isPrivateOwnerAuthConfigured()) || !installationId(expectedInstallation)
       || await realpath(PRIVATE_OWNER_LOGIN_PATH) !== PRIVATE_OWNER_LOGIN_PATH) throw unavailable();
     const initial = await lstat(PRIVATE_OWNER_LOGIN_PATH);
     if (!initial.isFile() || initial.isSymbolicLink()) throw unavailable();
@@ -82,11 +90,22 @@ async function credential(expectedInstallation: string): Promise<OwnerCredential
 /** Ordinary stored sessions retain their existing TTL/store, but cannot cross
  * the protected private owner's identity or survive removal of its profile. */
 export async function assertPrivateOwnerSession(identity: { installationId: string; userId: string; email: string }) {
+  await assertProtectedOwner(identity, false);
+}
+
+/** Only model support sponsorship may verify the protected owner under Supabase.
+ * The sponsor must own the finite personal profile, never another sponsor lease. */
+export async function assertPrivateOwnerSupportSponsor(identity: { installationId: string; userId: string; email: string }) {
+  await assertProtectedOwner(identity, true);
+}
+
+async function assertProtectedOwner(identity: { installationId: string; userId: string; email: string }, supportSponsor: boolean) {
   let value: OwnerCredential | undefined;
   try {
-    value = await credential(identity.installationId);
+    value = await credential(identity.installationId, supportSponsor);
     if (value.userId !== identity.userId || value.email !== identity.email) throw unavailable();
-    await assertPersonalModelTest(identity);
+    if (supportSponsor) await assertOwnPersonalModelTest(identity);
+    else await assertPersonalModelTest(identity);
   } catch { throw unavailable(); }
   finally { wipe(value); }
 }

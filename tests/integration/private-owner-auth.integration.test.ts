@@ -31,7 +31,7 @@ vi.mock("node:fs/promises", () => {
     },
   };
 });
-import { assertPrivateOwnerSession, isPrivateOwnerAuthConfigured, PrivateOwnerIdentityProvider, PRIVATE_OWNER_LOGIN_PATH } from "@/auth/private-owner-identity-provider";
+import { assertPrivateOwnerSession, assertPrivateOwnerSupportSponsor, isSupportModelQaAuthConfigured, isPrivateOwnerAuthConfigured, PrivateOwnerIdentityProvider, PRIVATE_OWNER_LOGIN_PATH } from "@/auth/private-owner-identity-provider";
 import { PERSONAL_MODEL_TEST_PATH } from "@/runtime/server-model-auth";
 
 const identity = { installationId: "owner-private-test", userId: "11111111-1111-4111-8111-111111111111", email: "owner@example.test" };
@@ -110,5 +110,29 @@ describe("private owner login boundary", () => {
     await expect(provider().verifyPassword(identity.email, password)).rejects.toMatchObject({ code: "provider_unavailable" });
     await expect(provider().requestPasswordRecovery(identity.email, "", "")).rejects.toMatchObject({ code: "provider_unavailable" });
     await expect(provider().updatePassword({ accessToken: "synthetic", refreshToken: "synthetic" }, password)).rejects.toMatchObject({ code: "provider_unavailable" });
+  });
+});
+
+describe("protected model sponsor under Supabase", () => {
+  beforeEach(() => vi.stubEnv("AIBRAIN_AUTH_MODE", "supabase"));
+  it("admits only the protected sponsor identity while keeping private login and private sessions disabled", async () => {
+    expect(isSupportModelQaAuthConfigured()).toBe(true); expect(isPrivateOwnerAuthConfigured()).toBe(false);
+    await expect(assertPrivateOwnerSupportSponsor(identity)).resolves.toBeUndefined();
+    await expect(assertPrivateOwnerSession(identity)).rejects.toMatchObject({ code: "provider_unavailable" });
+    await expect(provider().verifyPassword(identity.email, password)).rejects.toMatchObject({ code: "provider_unavailable" });
+  });
+  it.each(["missing-owner", "unsafe-owner", "missing-profile", "expired-profile", "foreign-profile", "wrong-email", "replaced-owner"])("retains root credential and own finite-profile checks: %s", async kind => {
+    if (kind === "missing-owner") files.entries.delete(PRIVATE_OWNER_LOGIN_PATH);
+    if (kind === "unsafe-owner") files.entries.get(PRIVATE_OWNER_LOGIN_PATH)!.changes = { mode: 0o100644n };
+    if (kind === "missing-profile") files.entries.delete(PERSONAL_MODEL_TEST_PATH);
+    if (kind === "expired-profile") set(PERSONAL_MODEL_TEST_PATH, { ...profile(), expiresAt: Date.now() - 1 });
+    if (kind === "foreign-profile") set(PERSONAL_MODEL_TEST_PATH, { ...profile(), canonicalUserId: "22222222-2222-4222-8222-222222222222" });
+    if (kind === "replaced-owner") files.onRead = () => { files.entries.get(PRIVATE_OWNER_LOGIN_PATH)!.changes = { ino: 3n }; };
+    await expect(assertPrivateOwnerSupportSponsor({ ...identity, ...(kind === "wrong-email" ? { email: "other@example.test" } : {}) })).rejects.toMatchObject({ code: "provider_unavailable" });
+  });
+  it.each(["server-api-key", "personal-codex", "unknown", ""])("rejects non-personal-test model mode: %s", async mode => {
+    vi.stubEnv("AIBRAIN_MODEL_AUTH", mode); vi.stubEnv("NODE_ENV", "production");
+    expect(isSupportModelQaAuthConfigured()).toBe(false);
+    await expect(assertPrivateOwnerSupportSponsor(identity)).rejects.toMatchObject({ code: "provider_unavailable" });
   });
 });

@@ -4,7 +4,7 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { readRegularFileWithin } from "@/security/safe-file";
 import { createLocalSessionContext } from "@/auth/auth-context";
-import { assertPrivateOwnerSession, isPrivateOwnerAuthConfigured } from "@/auth/private-owner-identity-provider";
+import { assertPrivateOwnerSupportSponsor, isSupportModelQaAuthConfigured } from "@/auth/private-owner-identity-provider";
 import { assertOwnPersonalModelTest, ModelAuthUnavailableError } from "./server-model-auth";
 import { userAccessAuthProvider } from "./personal-auth-provider";
 import type { SharedAuthProvider } from "./workers/shared-auth-broker";
@@ -39,7 +39,7 @@ export function parseSupportModelQaPolicy(v: unknown, identity: Identity, now = 
 }
 
 async function readPolicy(identity: Identity) {
-  if (!isPrivateOwnerAuthConfigured() || await realpath(SUPPORT_MODEL_QA_PATH) !== SUPPORT_MODEL_QA_PATH) throw fail();
+  if (!isSupportModelQaAuthConfigured() || await realpath(SUPPORT_MODEL_QA_PATH) !== SUPPORT_MODEL_QA_PATH) throw fail();
   let h: Awaited<ReturnType<typeof open>> | undefined;
   try {
     const initial = await lstat(SUPPORT_MODEL_QA_PATH);
@@ -85,7 +85,7 @@ export async function supportModelSponsor(identity: Identity): Promise<Identity>
     const digest = await targetDigests(installation.paths.dataRoot, identity.userId);
     if (digest.profileSha256 !== target.profileSha256 || digest.permissionsSha256 !== target.permissionsSha256) throw fail();
     const sponsor = { installationId: identity.installationId, userId: policy.sponsorUserId };
-    await assertPrivateOwnerSession({ ...sponsor, email: policy.sponsorEmail });
+    await assertPrivateOwnerSupportSponsor({ ...sponsor, email: policy.sponsorEmail });
     // Re-read the root lease after all async checks: removal/change fails closed.
     const current = await readPolicy(identity);
     if (JSON.stringify(current) !== JSON.stringify(policy)) throw fail();
@@ -98,6 +98,7 @@ export function personalQaAuthProvider(identity: Identity): SharedAuthProvider {
   let pinnedSponsor: string | undefined;
   let boundProvider: SharedAuthProvider | undefined;
   return async (...args) => {
+    if (!isSupportModelQaAuthConfigured()) throw fail();
     let sponsor: Identity;
     try { await assertOwnPersonalModelTest(identity); sponsor = identity; }
     catch { sponsor = await supportModelSponsor(identity); }
@@ -105,6 +106,7 @@ export function personalQaAuthProvider(identity: Identity): SharedAuthProvider {
     const provider = boundProvider ?? userAccessAuthProvider(sponsor);
     if (!provider) throw fail();
     const value = await provider(...args);
+    if (!isSupportModelQaAuthConfigured()) throw fail();
     if (sponsor.userId === identity.userId) await assertOwnPersonalModelTest(identity);
     else if ((await supportModelSponsor(identity)).userId !== sponsor.userId) throw fail();
     pinnedSponsor = sponsor.userId;

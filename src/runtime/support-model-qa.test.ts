@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 const state = vi.hoisted(() => ({ owner: "10000000-0000-4000-8000-000000000001", target: "10000000-0000-4000-8000-000000000002",
   policy: {} as Record<string, unknown>, binding: {} as Record<string, unknown> | null, enabled: true, initial: false,
   own: false, profile: "profile", permissions: "permissions", unsafe: "", ownerCheck: vi.fn(), snapshot: vi.fn(), provider: vi.fn(), session: vi.fn(), installed: "g03-production" }));
-vi.mock("@/auth/private-owner-identity-provider", () => ({ isPrivateOwnerAuthConfigured: () => true, assertPrivateOwnerSession: state.ownerCheck }));
-vi.mock("@/runtime/server-model-auth", () => ({ ModelAuthUnavailableError: class extends Error { code="MODEL_AUTH_UNAVAILABLE"; },
+vi.mock("@/auth/private-owner-identity-provider", async importOriginal => ({
+  ...await importOriginal<typeof import("@/auth/private-owner-identity-provider")>(), assertPrivateOwnerSupportSponsor: state.ownerCheck,
+}));
+vi.mock("@/runtime/server-model-auth", async importOriginal => ({ ...await importOriginal<typeof import("./server-model-auth")>(), ModelAuthUnavailableError: class extends Error { code="MODEL_AUTH_UNAVAILABLE"; },
   assertOwnPersonalModelTest: async () => { if (!state.own) throw Error("not owner"); } }));
 vi.mock("@/runtime/personal-auth-provider", () => ({ userAccessAuthProvider: state.provider }));
 vi.mock("@/security/safe-file", () => ({ readRegularFileWithin: async (_root: string, p: string) => Buffer.from(p.includes("user.json") ? state.profile : state.permissions) }));
@@ -18,7 +20,12 @@ function info(){return {isFile:()=>true,uid:state.unsafe==="uid"?1n:0n,gid:BigIn
 import { createHash } from "node:crypto";
 import { supportModelSponsor, supportModelPermissionsDigest, parseSupportModelQaPolicy, personalQaAuthProvider, assertSponsoredModelRpc, SPONSORED_MODEL_CONFIG_OVERRIDES } from "./support-model-qa";
 const identity = () => ({installationId:"g03-production",userId:state.target});
+afterEach(() => vi.unstubAllEnvs());
 beforeEach(()=>{
+ vi.stubEnv("AIBRAIN_AUTH_MODE", "private-owner"); vi.stubEnv("AIBRAIN_MODEL_AUTH", "personal-test");
+ vi.stubEnv("AIBRAIN_CODEX_AUTH_SCOPE", "per-user"); vi.stubEnv("AIBRAIN_CODEX_TRANSPORT", "stdio");
+ vi.stubEnv("AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT", "/synthetic/per-user-broker");
+ for (const name of ["AIBRAIN_SHARED_CODEX_AUTH_SOURCE", "AIBRAIN_CODEX_OWNER_AUTH_SOCKET", "AIBRAIN_INSTALLATION_OWNER_AUTH_ACK", "OPENAI_API_KEY", "CODEX_API_KEY"]) vi.stubEnv(name, "");
  state.unsafe="";state.installed="g03-production";state.enabled=true;state.initial=false;state.own=false;state.profile="profile";state.permissions="permissions";
  state.policy={schemaVersion:1,installationId:"g03-production",sponsorUserId:state.owner,sponsorEmail:"david@example.invalid",createdAt:Date.now()-1000,expiresAt:Date.now()+60000,
  targets:[{userId:state.target,sessionIdHash:"a".repeat(64),profileSha256:createHash("sha256").update(state.profile).digest("hex"),permissionsSha256:supportModelPermissionsDigest(Buffer.from(state.permissions),Buffer.from(state.permissions))}]};
@@ -97,4 +104,48 @@ describe("root-pinned model-only support sponsorship",()=>{
   expect(()=>assertSponsoredModelRpc("config/batchWrite",{edits:{keyPath:"features.apps",value:true}})).toThrow();
  });
 
+});
+
+it("admits Supabase only through the current pinned support binding and sponsor", async () => {
+ vi.stubEnv("AIBRAIN_AUTH_MODE", "supabase"); await personalQaAuthProvider(identity())();
+ expect(state.provider).toHaveBeenCalledWith({ installationId: "g03-production", userId: state.owner });
+ expect(state.ownerCheck).toHaveBeenCalledTimes(2);
+});
+it.each(["missing-binding", "expired-policy", "revoked-after-snapshot", "owner-unavailable", "acl-drift"])("Supabase support fails closed: %s", async kind => {
+ vi.stubEnv("AIBRAIN_AUTH_MODE", "supabase");
+ if (kind === "missing-binding") state.binding = null;
+ if (kind === "expired-policy") state.policy.expiresAt = Date.now() - 1;
+ if (kind === "owner-unavailable") state.ownerCheck.mockRejectedValue(Error("expired sponsor"));
+ if (kind === "acl-drift") state.permissions += "changed";
+ if (kind === "revoked-after-snapshot") state.snapshot.mockImplementation(async () => { state.binding = null; return { accessToken: "never-release" }; });
+ await expect(personalQaAuthProvider(identity())()).rejects.toMatchObject({ code: "MODEL_AUTH_UNAVAILABLE" });
+});
+it.each([
+ { AIBRAIN_AUTH_MODE: "demo" }, { AIBRAIN_AUTH_MODE: "unknown" }, { AIBRAIN_AUTH_MODE: "" },
+ { AIBRAIN_MODEL_AUTH: "server-api-key" }, { AIBRAIN_MODEL_AUTH: "personal-codex" }, { AIBRAIN_MODEL_AUTH: "unknown" },
+ { AIBRAIN_MODEL_AUTH: "" }, { AIBRAIN_CODEX_TRANSPORT: "gateway" }, { AIBRAIN_CODEX_AUTH_SCOPE: "shared" },
+ { AIBRAIN_CODEX_AUTH_SCOPE: "" }, { AIBRAIN_CODEX_USER_ACCESS_SOCKET_ROOT: "" }, { OPENAI_API_KEY: "synthetic-forbidden" },
+ { CODEX_API_KEY: "synthetic-forbidden" }, { AIBRAIN_SHARED_CODEX_AUTH_SOURCE: "/synthetic/shared" },
+ { AIBRAIN_CODEX_OWNER_AUTH_SOCKET: "/synthetic/owner" }, { AIBRAIN_INSTALLATION_OWNER_AUTH_ACK: "yes" },
+])("rejects unsupported Supabase QA configuration %#", async patch => {
+ vi.stubEnv("AIBRAIN_AUTH_MODE", "supabase"); vi.stubEnv("NODE_ENV", "production");
+ for (const [name, value] of Object.entries(patch)) vi.stubEnv(name, value);
+ await expect(supportModelSponsor(identity())).rejects.toMatchObject({ code: "MODEL_AUTH_UNAVAILABLE" });
+ expect(state.session).not.toHaveBeenCalled(); expect(state.provider).not.toHaveBeenCalled();
+});
+
+it("allows the Supabase owner's own finite profile without a sponsor binding", async () => {
+ vi.stubEnv("AIBRAIN_AUTH_MODE", "supabase"); state.own = true;
+ const owner = { installationId: "g03-production", userId: state.owner }; await personalQaAuthProvider(owner)();
+ expect(state.provider).toHaveBeenCalledWith(owner); expect(state.session).not.toHaveBeenCalled(); expect(state.ownerCheck).not.toHaveBeenCalled();
+});
+it.each(["demo", "unknown"])("does not let an own profile bypass the QA auth mode: %s", async mode => {
+ state.own = true; vi.stubEnv("AIBRAIN_AUTH_MODE", mode);
+ await expect(personalQaAuthProvider(identity())()).rejects.toMatchObject({ code: "MODEL_AUTH_UNAVAILABLE" });
+ expect(state.provider).not.toHaveBeenCalled();
+});
+it("rejects a model-mode change after the snapshot before releasing credentials", async () => {
+ vi.stubEnv("AIBRAIN_AUTH_MODE", "supabase"); state.own = true;
+ state.snapshot.mockImplementation(async () => { vi.stubEnv("AIBRAIN_MODEL_AUTH", "server-api-key"); return { accessToken: "never-release" }; });
+ await expect(personalQaAuthProvider(identity())()).rejects.toMatchObject({ code: "MODEL_AUTH_UNAVAILABLE" });
 });

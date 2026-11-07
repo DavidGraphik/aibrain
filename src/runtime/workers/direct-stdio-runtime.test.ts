@@ -215,14 +215,33 @@ it("rejects mixed personal/shared identity and prevents another owner in the sam
   await expect(second.connect()).rejects.toThrow();expect(factory).not.toHaveBeenCalled();expect((await first.health()).healthy).toBe(true);
 });
 it("retains the real protected launcher, filesystem privacy overrides, minimal env and compatible kernel execution origin", async () => {
-  const f=await context(),observation=path.join(f.root,"launch.json"),executable=path.join(f.root,"fake-codex.mjs");
-  await writeFile(executable,`#!${process.execPath}\nimport{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(observation)},JSON.stringify({args:process.argv.slice(2),home:process.env.HOME,extra:!!process.env.AIBRAIN_TEST_UNRELATED_SECRET}));process.stdin.resume();`,{mode:0o700});
-  vi.stubEnv("CODEX_BIN",executable);vi.stubEnv("AIBRAIN_TEST_UNRELATED_SECRET","synthetic-not-in-child");
-  const t=new DirectStdioTransport(f.ctx,{quotaToolPrivacy:true,kernelLockCommand:["python3","-c","import fcntl,sys;fcntl.flock(3,fcntl.LOCK_SH|fcntl.LOCK_NB)"]});transports.push(t);
+  const f = await context(), observation = path.join(f.root, "launch.json"), executable = path.join(f.root, "fake-codex.mjs");
+  const excludedNames = [
+    "AIBRAIN_TEST_UNRELATED_SECRET", "SUPABASE_SECRET_KEY", "AIBRAIN_SESSION_SECRET", "OPENAI_API_KEY", "RANDOM_TOKEN",
+    "MODTIME_SHOPIFY_CLIENT_SECRET", "MODTIME_SHOPIFY_OAUTH_ENCRYPTION_KEY", "MODTIME_SHOPIFY_ADMIN_TOKEN",
+    "MODTIME_SHOPIFY_THEME_CLIENT_SECRET", "MODTIME_SHOPIFY_THEME_ENCRYPTION_KEY",
+  ];
+  for (const name of excludedNames) vi.stubEnv(name, "synthetic-not-in-child");
+  vi.stubEnv("LANG", "en_US.UTF-8");
+  await writeFile(executable, `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';
+    const excludedNames = ${JSON.stringify(excludedNames)};
+    writeFileSync(${JSON.stringify(observation)}, JSON.stringify({
+      args: process.argv.slice(2), home: process.env.HOME, codexHome: process.env.CODEX_HOME,
+      xdgConfig: process.env.XDG_CONFIG_HOME, path: process.env.PATH, lang: process.env.LANG,
+      leakedNames: Object.keys(process.env).filter(name => excludedNames.includes(name) || name.startsWith('MODTIME_SHOPIFY')),
+    })); process.stdin.resume();`, { mode: 0o700 });
+  vi.stubEnv("CODEX_BIN", executable);
+  const t = new DirectStdioTransport(f.ctx, { quotaToolPrivacy: true, kernelLockCommand: ["python3", "-c", "import fcntl,sys;fcntl.flock(3,fcntl.LOCK_SH|fcntl.LOCK_NB)"] });
+  transports.push(t);
   await t.connect();
-  await expect.poll(async()=>JSON.parse(await readFile(observation,"utf8"))).toMatchObject({home:f.ctx.environment.HOME,extra:false,args:expect.arrayContaining(["app-server","--stdio","-c"])});
-  expect(await currentWorkerExecutionOrigin(f.ctx.transportAudit)).toMatchObject({instanceId:"app",generation:expect.any(String),ino:expect.any(Number)});
+  await expect.poll(async () => JSON.parse(await readFile(observation, "utf8"))).toMatchObject({
+    home: f.ctx.environment.HOME, codexHome: f.ctx.environment.CODEX_HOME,
+    xdgConfig: f.ctx.environment.XDG_CONFIG_HOME, path: process.env.PATH, lang: "en_US.UTF-8",
+    leakedNames: [], args: expect.arrayContaining(["app-server", "--stdio", "-c"]),
+  });
+  expect(await currentWorkerExecutionOrigin(f.ctx.transportAudit)).toMatchObject({ instanceId: "app", generation: expect.any(String), ino: expect.any(Number) });
 });
+
 it("pins native credential privacy when API auth is selected without the optional privacy flag", async () => {
   const f = await context(), observation = path.join(f.root, "api-launch.json"), executable = path.join(f.root, "fake-api-codex.mjs");
   const config = { cli_auth_credentials_store: "ephemeral", forced_login_method: "api", model_provider: SERVER_MODEL_PROVIDER,
