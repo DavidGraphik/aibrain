@@ -20,8 +20,15 @@ export function requestsProjectPreferences(message: string) {
   const onlyArtifactSave = !describesCriteria
     && /\b(?:borrador\w*|draft\w*|correos?|emails?|pdfs?|archiv\w*|files?|document\w*|informes?|reports?|excels?|factur\w*)\b/u.test(text)
     && !/\b(?:(?:record\w*|recuerd\w*)\s+que|remember\s+that|ten\w*\s+en\s+cuenta\s+que|tingu\w*\s+en\s+compte\s+que)\b/u.test(text);
-  return !onlyArtifactSave && /\b(?:actuali[zc]\w*|actualitz\w*|guard\w*|des[ai]\w*|record\w*|recuerd\w*|save|remember|keep|ten\w*\s+en\s+cuenta|tingu\w*\s+en\s+compte)\b/u.test(text)
-    && !/\b(?:no|not|don't|do not)\s+(?:\w+\s+){0,3}(?:actuali[zc]\w*|actualitz\w*|guard\w*|des[ai]\w*|record\w*|recuerd\w*|save|remember|keep|ten\w*|tingu\w*)\b/u.test(text)
+  // A prohibition on general/company memory does not revoke a separate request
+  // to save project criteria. Remove that entire negative command, so it cannot
+  // itself supply positive intent. Ambiguous or project-scoped prohibitions stay.
+  const intentText = text.replace(/\b(?:no|not|don't|do not)\s+(?:\w+\s+){0,3}(?:actuali[zc]\w*|actualitz\w*|guard\w*|des[ai]\w*|record\w*|recuerd\w*|save|remember|keep|ten\w*|tingu\w*)\b[^.!?;\n]*/gu, command => {
+    const outsideProjectMemory = /\b(?:memoria\s+(?:general|global|(?:compartida\s+)?(?:de\s+)?empresa)|(?:general|global|company(?:-wide)?|shared company)\s+memory)\b/u.test(command);
+    return outsideProjectMemory && !/\b(?:proyect\w*|project\w*|aqui|here)\b/u.test(command) ? "" : command;
+  });
+  return !onlyArtifactSave && /\b(?:actuali[zc]\w*|actualitz\w*|guard\w*|des[ai]\w*|record\w*|recuerd\w*|save|remember|keep|ten\w*\s+en\s+cuenta|tingu\w*\s+en\s+compte)\b/u.test(intentText)
+    && !/\b(?:no|not|don't|do not)\s+(?:\w+\s+){0,3}(?:actuali[zc]\w*|actualitz\w*|guard\w*|des[ai]\w*|record\w*|recuerd\w*|save|remember|keep|ten\w*|tingu\w*)\b/u.test(intentText)
     && !/\b(?:otro\s+proyecto|altre\s+projecte|another\s+project|other\s+project)\b/u.test(text);
 }
 

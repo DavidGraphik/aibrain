@@ -109,5 +109,6 @@
   "tests/integration/document-routes.integration.test.ts",
   "tests/integration/document-storage-process.integration.test.ts",
   "src/runtime/trinalum-files.test.ts",
-  "src/runtime/generated-document-artifacts.test.ts"
+  "src/runtime/generated-document-artifacts.test.ts",
+  "src/workbench/project-preferences.test.ts"
 ]
