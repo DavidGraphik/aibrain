@@ -35,7 +35,7 @@ export function createPrivateReadBridge(config: PrivateReadConfig, installationI
   return {
     async request(kind: "capabilities" | "sage" | "mail", body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
       validatePrivateReadConfig(config, installationId, userId); await recheck(); signal?.throwIfAborted();
-      if (kind === "capabilities" ? Object.keys(body).length !== 0 : ![...(kind === "sage" ? ["discover", "read", "read_batch"] : ["list", "search", "read"])].includes(String(body.operation))) return deny();
+      if (kind === "capabilities" ? Object.keys(body).length !== 0 : ![...(kind === "sage" ? ["discover", "read", "read_batch"] : ["folders", "list", "search", "read"])].includes(String(body.operation))) return deny();
       const raw = JSON.stringify({ kind, body });
       if (Buffer.byteLength(raw) + 1 > 65_536) throw new PrivateReadBridgeError("PRIVATE_READ_REQUEST_TOO_LARGE", 413);
       const response = await exchange(binding.socketPath, new URL("http://127.0.0.1/read"), { method: "POST", headers: { Authorization: `Bearer ${binding.token}`, "Content-Type": "application/json" }, body: raw, signal }, { timeoutMs: 65_000, maximumBytes: 2 * 1024 * 1024 });
@@ -80,6 +80,6 @@ export async function privateReadBridge(installationId: string, userId: string) 
 }
 export type PrivateMailCapability = { accessVerified: true; operations: string[]; connectionVersion: number };
 export function privateMailCapability(value: unknown): PrivateMailCapability {
-  if (!record(value) || !record(value.mail) || value.mail.accessVerified !== true || !Array.isArray(value.mail.operations) || value.mail.operations.some(op => !["list", "search", "read"].includes(String(op))) || !Number.isSafeInteger(value.mail.connectionVersion) || Number(value.mail.connectionVersion) < 1) return deny();
+  if (!record(value) || !record(value.mail) || value.mail.accessVerified !== true || !Array.isArray(value.mail.operations) || value.mail.operations.some(op => !["folders", "list", "search", "read"].includes(String(op))) || !Number.isSafeInteger(value.mail.connectionVersion) || Number(value.mail.connectionVersion) < 1) return deny();
   return value.mail as PrivateMailCapability;
 }

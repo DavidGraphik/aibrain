@@ -186,7 +186,7 @@ export function normalizeMailOperationArgs(operation: Exclude<MailOperation, "se
 export async function executeMailOperation(identity: Identity, operation: Exclude<MailOperation, "verify" | "send">, args: unknown, transport: MailTransport = nominaliaMailTransport, authorization?: InteractiveChatAuthorization) {
   const bridge = await mailReadBridge(identity.config.installationId, identity.userId);
   if (bridge) {
-    if (!["list", "search", "read"].includes(operation)) throw new MailConnectorError("MAIL_ACCESS_DENIED", 403);
+    if (!["folders", "list", "search", "read"].includes(operation)) throw new MailConnectorError("MAIL_ACCESS_DENIED", 403);
     const initial = await policyContext(identity);
     normalizeMailOperationArgs(operation, args);
     // Preserve the native requested limit/cursor. Native source normalization owns paging metadata.
