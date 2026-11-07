@@ -32,6 +32,7 @@ import { LocalGatewayWorkerRuntimeFactory, workerEgressEnvironment } from "@/run
 import { DirectStdioWorkerRuntimeFactory } from "@/runtime/workers/direct-stdio-runtime";
 import { sharedAuthProvider } from "@/runtime/workers/shared-auth-broker";
 import { userAccessAuthProvider } from "@/runtime/personal-auth-provider";
+import { personalQaAuthProvider } from "@/runtime/support-model-qa";
 import { privateCodexToolPermissionsRequired } from "@/runtime/quota-tool-permissions";
 import { WorkerRuntimeRegistry } from "@/runtime/workers/registry";
 import type { WorkerRuntimeHandle } from "@/runtime/workers/types";
@@ -492,11 +493,7 @@ async function serviceState(): Promise<RuntimeServiceState> {
     const factory = modelAuth === "server-api-key"
       ? new DirectStdioWorkerRuntimeFactory({ ...privateOptions, apiKeyAuth: serverModelApiKeyProvider(config.installationId) })
       : modelAuth === "personal-test" ? new DirectStdioWorkerRuntimeFactory({ ...privateOptions, personalTestAuth: true,
-        authForContext: context => {
-          const personal = userAccessAuthProvider(context);
-          if (!personal) throw new ModelAuthUnavailableError();
-          return async (...args) => { await assertPersonalModelTest(context); return personal(...args); };
-        },
+        authForContext: personalQaAuthProvider,
       })
       : new (configuredWorkerTransport() === "stdio" ? DirectStdioWorkerRuntimeFactory : LocalGatewayWorkerRuntimeFactory)({
         ...privateOptions,

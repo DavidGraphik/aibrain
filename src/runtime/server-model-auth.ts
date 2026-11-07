@@ -28,7 +28,7 @@ export function configuredModelAuth(environment: Environment = process.env): Mod
 
 /** This is a short-lived operator-owned personal QA profile, never hosted
  * customer onboarding. Re-read for every admission/dispatch and token snapshot. */
-export async function assertPersonalModelTest(identity: { installationId: string; userId: string }) {
+export async function assertOwnPersonalModelTest(identity: { installationId: string; userId: string }) {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
     if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(identity.installationId)
@@ -60,6 +60,16 @@ export async function assertPersonalModelTest(identity: { installationId: string
       || value.expiresAt - value.createdAt > 2 * 60 * 60_000) throw unavailable();
   } catch { throw unavailable(); }
   finally { await handle?.close().catch(() => undefined); }
+}
+
+/** Ordinary owner admission is unchanged. Only a separately root-pinned,
+ * current audited support lease may sponsor another application's identity. */
+export async function assertPersonalModelTest(identity: { installationId: string; userId: string }) {
+  try { await assertOwnPersonalModelTest(identity); }
+  catch {
+    try { await (await import("./support-model-qa")).supportModelSponsor(identity); }
+    catch { throw unavailable(); }
+  }
 }
 
 /** These values are public policy, never credentials. Pin before initialize. */

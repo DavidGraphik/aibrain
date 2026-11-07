@@ -96,6 +96,23 @@ describe("audited operator support sessions", () => {
     const ordinary = await sessions.create("example-qa", target);
     expect(await sessions.isActiveBinding("example-qa", target, ordinary.record.sessionIdHash)).toBe(true);
   });
+  it("reads only the exact live support binding by root-pinned hash, without renewal", async () => {
+    const grant = await store.issue(input); const support = await store.redeem(grant.code);
+    let authorized = true;
+    const bound = new FileLocalSessionStore({ rootDirectory: path.join(root, "sessions"), now: () => now, validateSupport: async () => authorized });
+    expect(await bound.activeSupportBindingByHash("example-qa", target, support.record.sessionIdHash)).toEqual(support.record);
+    expect(await bound.activeSupportBindingByHash("other-qa", target, support.record.sessionIdHash)).toBeNull();
+    expect(await bound.activeSupportBindingByHash("example-qa", actor, support.record.sessionIdHash)).toBeNull();
+    expect(await bound.activeSupportBindingByHash("example-qa", target, "b".repeat(64))).toBeNull();
+    const ordinary = await sessions.create("example-qa", target);
+    expect(await bound.activeSupportBindingByHash("example-qa", target, ordinary.record.sessionIdHash)).toBeNull();
+    authorized = false; expect(await bound.activeSupportBindingByHash("example-qa", target, support.record.sessionIdHash)).toBeNull();
+    authorized = true; await store.revoke(grant.grantId);
+    expect(await bound.activeSupportBindingByHash("example-qa", target, support.record.sessionIdHash)).toBeNull();
+    const second = await store.redeem((await store.issue(input)).code);
+    now += SUPPORT_SESSION_MAX_MS;
+    expect(await bound.activeSupportBindingByHash("example-qa", target, second.record.sessionIdHash)).toBeNull();
+  });
   it("enforces the absolute short lifetime in the server store and rejects forged long-lived support records", async () => {
     const grant = await store.issue(input); const support = await store.redeem(grant.code);
     expect(() => localSessionSchema.parse({ ...support.record, absoluteExpiresAt: now + SUPPORT_SESSION_MAX_MS + 1 })).toThrow();

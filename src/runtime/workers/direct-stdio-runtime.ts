@@ -19,6 +19,7 @@ import { parseAppServerStdoutJson } from "./app-server-output-json";
 import type { SharedAuthProvider } from "./shared-auth-broker";
 import { assertPersonalModelTest, assertPersonalTestModelRpc, assertServerModelRpc, ModelAuthUnavailableError,
   PERSONAL_TEST_CONFIG_OVERRIDES, SERVER_MODEL_CONFIG_OVERRIDES, type ServerModelApiKeyProvider } from "../server-model-auth";
+import { assertSponsoredModelRpc, isSponsoredModelQa, SPONSORED_MODEL_CONFIG_OVERRIDES } from "../support-model-qa";
 import type { ManagedWorkerRuntime, WorkerLaunchContext, WorkerRuntimeFactory } from "./types";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
@@ -127,6 +128,7 @@ export class DirectStdioTransport implements AppServerTransport {
       codexHome: this.baseContext.environment.CODEX_HOME, transportAudit: this.baseContext.transportAudit,
     }) : []), ...(this.options.apiKeyAuth ? SERVER_MODEL_CONFIG_OVERRIDES
       : this.options.personalTestAuth ? PERSONAL_TEST_CONFIG_OVERRIDES : [])];
+    if (this.options.personalTestAuth && await isSponsoredModelQa(this.baseContext)) overrides.push(...SPONSORED_MODEL_CONFIG_OVERRIDES);
     if (this.retired) throw new LiveStdioClosedError("Worker startup was cancelled.");
     this.child = this.options.processFactory?.(this.context) ?? spawnCodexWorker(this.context, this.kernel, overrides);
     this.child.once("error", () => this.fail());
@@ -205,6 +207,8 @@ export class DirectStdioTransport implements AppServerTransport {
     if (this.options.personalTestAuth) {
       if ("method" in message.rpc) assertPersonalTestModelRpc(message.rpc.method, "params" in message.rpc ? message.rpc.params : undefined);
       await assertPersonalModelTest(this.baseContext);
+      if ("method" in message.rpc && await isSponsoredModelQa(this.baseContext))
+        assertSponsoredModelRpc(message.rpc.method, "params" in message.rpc ? message.rpc.params : undefined);
     }
     const raw = JSON.stringify(message.rpc) + "\n", bytes = Buffer.byteLength(raw);
     if (bytes > MAX_INPUT_BYTES) throw new TransportRequestTooLargeError(message.clientRequestId, bytes, MAX_INPUT_BYTES);

@@ -1,4 +1,5 @@
 import "server-only";
+import { privateReadBridge, PrivateReadBridgeError } from "./private-read-bridge";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
@@ -10,7 +11,7 @@ import { collectSagePages } from "./g03-sage-batch";
 import { SageReader, SageError, SAGE_QUERIES, sageRecord, type SageCredential, type SageQuery } from "./g03-sage-api";
 const readers = new Map<string, SageReader>();
 const denied = (): never => { throw new SageError("SAGE_ACCESS_DENIED"); };
-export async function g03SageAccess(installationId: string, userId: string) {
+async function g03SagePrincipal(installationId: string, userId: string) {
   if (installationId !== "g03-production" || !/^[a-f0-9-]{36}$/.test(userId)) return denied();
   const installation = await loadInstallationConfig();
   if (installation.installationId !== installationId) return denied();
@@ -18,6 +19,10 @@ export async function g03SageAccess(installationId: string, userId: string) {
   if (!actor?.enabled || actor.userId !== userId) return denied();
   const catalog = await catalogRuntimeEnforcer(installationId, userId);
   if (!catalog.allowsConnector("g03-sage")) return denied();
+  return { installation, catalog };
+}
+export async function g03SageAccess(installationId: string, userId: string) {
+  const { catalog } = await g03SagePrincipal(installationId, userId);
   const filename = process.env.AIBRAIN_G03_SAGE_CONFIG?.trim() || path.join((await loadInstallationConfig()).paths.dataRoot,"g03-sage","config.json");
   if (!path.isAbsolute(filename)) throw new SageError("SAGE_NOT_CONFIGURED");
   const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -44,6 +49,12 @@ export async function g03SageAccess(installationId: string, userId: string) {
   return { reader, key, receiving, operations:data.operations, catalogWrite:typeof catalog.allowsConnectorWrite==="function"&&catalog.allowsConnectorWrite("g03-sage") };
 }
 export async function g03SageReadForIdentity(installationId: string, userId: string, operation: "discover" | "read", args: Record<string, unknown>, signal?: AbortSignal) {
+  const bridge = await privateReadBridge(installationId, userId);
+  if (bridge) {
+    await g03SagePrincipal(installationId, userId);
+    try { const value = await bridge.request("sage", { operation: operation, input: args }, signal); await g03SagePrincipal(installationId, userId); return value; }
+    catch (error) { if (error instanceof PrivateReadBridgeError) throw Object.assign(new SageError(error.code), { status: error.status }); throw error; }
+  }
   signal?.throwIfAborted();
   const initial = await g03SageAccess(installationId,userId);
   const value = operation === "discover" ? await initial.reader.discover(signal) : await initial.reader.read(args.query, args.parameters ?? {}, args.skip ?? 0, args.take ?? 10, signal);
@@ -56,6 +67,12 @@ export async function g03SageReadForIdentity(installationId: string, userId: str
 }
 /** Group consecutive pages inside the connector, retaining the native query contract. */
 export async function g03SageReadBatchForIdentity(installationId: string, userId: string, args: Record<string, unknown>, signal?: AbortSignal) {
+  const bridge = await privateReadBridge(installationId, userId);
+  if (bridge) {
+    await g03SagePrincipal(installationId, userId);
+    try { const value = await bridge.request("sage", { operation: "read_batch", input: args }, signal); await g03SagePrincipal(installationId, userId); return value; }
+    catch (error) { if (error instanceof PrivateReadBridgeError) throw Object.assign(new SageError(error.code), { status: error.status }); throw error; }
+  }
   signal?.throwIfAborted();
   const initial = await g03SageAccess(installationId, userId);
   let parameters = args.parameters ?? {};
@@ -81,6 +98,13 @@ export async function g03SageHealth(installationId: string, userId: string) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let accessVerified = false;
   try {
+    const bridge = await privateReadBridge(installationId, userId);
+    if (bridge) {
+      await g03SagePrincipal(installationId, userId);
+      const capabilities = await bridge.request("capabilities", {});
+      if (!sageRecord(capabilities) || !sageRecord(capabilities.sage) || capabilities.sage.accessVerified !== true) return { status: "not_configured", statusCode: "SAGE_ACCESS_DENIED", accessVerified: false };
+      return { status: "connected", statusCode: "SOURCE_PERMISSION_VERIFIED_REACHABILITY_UNTESTED", accessVerified: true };
+    }
     const { reader } = await g03SageAccess(installationId,userId);
     accessVerified = true;
     await Promise.race([reader.discover(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new SageError("SAGE_HEALTH_PENDING")),2000);})]);

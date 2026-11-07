@@ -97,5 +97,9 @@
   "tests/integration/private-owner-auth.integration.test.ts",
   "tests/unit/recoverable-chat-stream.test.ts",
   "src/auth/private-owner-support-session.test.ts",
-  "src/auth/support-session.test.ts"
+  "src/auth/support-session.test.ts",
+  "src/runtime/support-model-qa.test.ts",
+  "src/auth/support-access.test.ts",
+  "src/connectors/private-read-bridge.test.ts",
+  "src/connectors/private-read-service-routing.test.ts"
 ]

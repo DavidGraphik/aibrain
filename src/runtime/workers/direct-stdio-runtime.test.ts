@@ -9,6 +9,7 @@ import { DirectStdioTransport, DirectStdioWorkerRuntimeFactory, LiveStdioDuplica
 import type { WorkerLaunchContext } from "./types";
 import { SERVER_MODEL_PROVIDER } from "../server-model-auth";
 import * as modelAuth from "../server-model-auth";
+import * as supportQa from "../support-model-qa";
 
 vi.mock("server-only", () => ({}));
 const roots: string[] = [], transports: DirectStdioTransport[] = [];
@@ -246,6 +247,7 @@ it("requires the private personal provider and rejects a denied profile before s
   expect(() => new DirectStdioTransport(f.ctx, { personalTestAuth: true, processFactory: factory })).toThrow(modelAuth.ModelAuthUnavailableError);
   expect(factory).not.toHaveBeenCalled();
   let active = false;
+  vi.spyOn(supportQa, "isSponsoredModelQa").mockResolvedValue(false);
   vi.spyOn(modelAuth, "assertPersonalModelTest").mockImplementation(async identity => {
     if (!active || identity.userId !== f.ctx.userId || identity.installationId !== f.ctx.installationId) throw new modelAuth.ModelAuthUnavailableError();
   });
@@ -263,8 +265,9 @@ it("requires the private personal provider and rejects a denied profile before s
   await expect(t.send({ clientRequestId: "expired-turn", kind: "rpc-request", rpc: { id: "expired-turn", method: "turn/start", params: { threadId: "synthetic", input: [] } } })).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
   expect((await t.health()).pendingRequests).toBe(0);expect(provider).toHaveBeenCalledOnce();
 });
-it("pins ephemeral personal QA, native OpenAI and credential privacy before private bootstrap, without a secret in arguments", async () => {
+it.each([false, true])("pins personal QA privacy before bootstrap without secrets; sponsored Apps disabled=%s", async sponsored => {
   const f = await context(), observation = path.join(f.root, "personal-launch.json"), executable = path.join(f.root, "fake-personal-codex.mjs");
+  vi.spyOn(supportQa, "isSponsoredModelQa").mockResolvedValue(sponsored);
   vi.spyOn(modelAuth, "assertPersonalModelTest").mockResolvedValue(undefined);
   await writeFile(executable, `#!${process.execPath}\nimport{writeFileSync}from'node:fs';import{createInterface}from'node:readline';
     writeFileSync(${JSON.stringify(observation)},JSON.stringify(process.argv.slice(2)));
@@ -280,6 +283,8 @@ it("pins ephemeral personal QA, native OpenAI and credential privacy before priv
   for (const option of ['cli_auth_credentials_store="ephemeral"', 'forced_login_method="chatgpt"', 'model_provider="openai"']) expect(args).toContain(option);
   expect(args.some(arg => arg.startsWith("permissions=") && arg.includes(".credentials.json*") && arg.includes("mcp-oauth-locks"))).toBe(true);
   expect(args.some(arg => arg.startsWith("default_permissions="))).toBe(true);expect(args.join(" ")).not.toContain("synthetic-personal-only-not-real");
+  if (sponsored) { expect(args).toContain("features.apps=false"); expect(args).toContain("apps._default.enabled=false"); }
+  else expect(args).not.toContain("features.apps=false");
 });
 it("can close before startup without spawning a child", async () => {
   const f=await context(),factory=vi.fn(f.processFactory),t=transport(f,{processFactory:factory});
@@ -303,4 +308,23 @@ it("cleans a failed spawn and can release its own role for a fresh runtime witho
   const f=await context(),failed=transport(f,{processFactory:()=>spawn("/nonexistent/aibrain-synthetic-child",[],{stdio:["pipe","pipe","pipe"]})});
   await expect(failed.connect()).rejects.toThrow(/Live/u);await failed.close();
   const successor=transport(f);await successor.connect();expect((await successor.health()).healthy).toBe(true);
+});
+
+it("sponsored target transport blocks owner Apps on warm workers and stops after lease revocation", async () => {
+  const f = await context(); let active = true;
+  vi.spyOn(modelAuth, "assertPersonalModelTest").mockImplementation(async () => { if (!active) throw new modelAuth.ModelAuthUnavailableError(); });
+  vi.spyOn(supportQa, "isSponsoredModelQa").mockImplementation(async () => { if (!active) throw new modelAuth.ModelAuthUnavailableError(); return true; });
+  const identities: WorkerLaunchContext[] = [];
+  const t = transport(f, { personalTestAuth: true, authForContext: identity => {
+    identities.push(identity); return async () => ({ accessToken: "sponsored-test-only", chatgptAccountId: "sponsor-model-only", chatgptPlanType: null });
+  } });
+  await t.connect(); await next(t);
+  expect(identities).toEqual([f.ctx]);
+  for (const [method, params] of [["app/installed", {}], ["thread/resume", { threadId: "x", config: { "features.apps": true } }],
+    ["turn/start", { threadId: "x", input: [], config: { apps: { owner: { enabled: true } } } }]] as const) {
+    await expect(t.send({clientRequestId:method,kind:"rpc-request",rpc:{id:method,method,params}} as AppServerRequest)).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+  }
+  active=false;
+  await expect(t.send({clientRequestId:"revoked",kind:"rpc-request",rpc:{id:"revoked",method:"thread/read",params:{threadId:"x"}}})).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
+  expect((await t.health()).pendingRequests).toBe(0);
 });

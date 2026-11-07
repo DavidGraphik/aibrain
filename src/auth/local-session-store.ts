@@ -288,6 +288,20 @@ export class FileLocalSessionStore {
     });
   }
 
+  /** Root-pinned model QA leases use a hash, never a browser-supplied bearer.
+   * Read-only: does not renew the support session or widen its lifetime. */
+  async activeSupportBindingByHash(installationId: string, userId: string, sessionIdHash: string) {
+    if (!HASH_PATTERN.test(sessionIdHash) || !USER_ID_PATTERN.test(userId)) return null;
+    return this.lockManager.withLock(`session:${sessionIdHash}`, async () => {
+      const record = await this.readByHash(sessionIdHash);
+      const now = this.now();
+      if (!record?.support || record.installationId !== installationId || record.userId !== userId
+        || record.idleExpiresAt <= now || record.absoluteExpiresAt <= now) return null;
+      try { return this.validateSupport && await this.validateSupport(record) ? record : null; }
+      catch { return null; }
+    });
+  }
+
   /** Operator cleanup can revoke only explicitly identified support sessions. */
   async revokeSupportHash(installationId: string, sessionIdHash: string) {
     if (!HASH_PATTERN.test(sessionIdHash)) throw new Error("Invalid support session hash.");
