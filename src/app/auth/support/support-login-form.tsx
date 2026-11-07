@@ -1,8 +1,12 @@
 "use client";
-import { useState, type FormEvent } from "react";
+import { useState, useSyncExternalStore, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+const subscribeToHydration = () => () => {};
+const clientHydrationSnapshot = () => true;
+const serverHydrationSnapshot = () => false;
 export function SupportLoginForm() {
   const router = useRouter();
+  const interactive = useSyncExternalStore(subscribeToHydration, clientHydrationSnapshot, serverHydrationSnapshot);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -19,7 +23,7 @@ export function SupportLoginForm() {
     <h1>Accés temporal de suport</h1>
     <p>Comprovació assistida amb els permisos de l’usuari. Caduca en 15 minuts i queda registrada. No canvia la contrasenya personal.</p>
     <label htmlFor="support-code-file">Fitxer privat del codi</label>
-    <input id="support-code-file" type="file" accept=".txt,text/plain" disabled={pending} onChange={async event => {
+    <input id="support-code-file" type="file" accept=".txt,text/plain" disabled={!interactive || pending} onChange={async event => {
       const file = event.target.files?.[0]; setError(""); setCode("");
       if (!file) return;
       if (file.size > 128) { setError("El fitxer del codi no és vàlid."); return; }
@@ -31,8 +35,8 @@ export function SupportLoginForm() {
     }} style={{ display: "block", margin: "12px 0" }} />
     <form onSubmit={submit}>
       <label htmlFor="support-code">Codi de suport d’un sol ús</label>
-      <input id="support-code" type="password" autoComplete="off" value={code} onChange={event => setCode(event.target.value)} required minLength={43} maxLength={43} style={{ display: "block", width: "100%", margin: "12px 0", padding: 8 }} />
-      <button type="submit" disabled={pending}>{pending ? "Entrant…" : "Iniciar comprovació"}</button>
+      <input id="support-code" type="password" autoComplete="off" disabled={!interactive || pending} value={code} onChange={event => setCode(event.target.value)} required minLength={43} maxLength={43} style={{ display: "block", width: "100%", margin: "12px 0", padding: 8 }} />
+      <button type="submit" disabled={!interactive || pending}>{pending ? "Entrant…" : "Iniciar comprovació"}</button>
       {error ? <p role="alert">{error}</p> : null}
     </form>
   </main>;
