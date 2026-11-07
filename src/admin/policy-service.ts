@@ -1,4 +1,5 @@
 import { readdir } from "node:fs/promises";
+import { FileLocalUserStore } from "@/auth/local-user-store";
 import { loadInstallationConfig } from "@/config/installation";
 import type { InstallationConfig } from "@/config/installation-schema";
 import { effectiveWorkspacePolicy, FileWorkspaceAdminStore } from "@/admin/workspace-admin-store";
@@ -15,9 +16,13 @@ export async function workspacePolicyForIdentity(
     throw new Error("The identity does not belong to this installation.");
   }
   const entries = await readdir(installation.paths.usersRoot, { withFileTypes: true });
-  const provisionedUserIds = entries
+  const users = new FileLocalUserStore(installation.paths.usersRoot);
+  const profiles = await Promise.all(entries
     .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && UUID.test(entry.name))
-    .map((entry) => entry.name);
+    .map((entry) => users.read(entry.name)));
+  // Worker/audit directories can outlive their profile. Only validated profiles
+  // are provisioned; retain disabled profiles for existing role/group semantics.
+  const provisionedUserIds = profiles.flatMap((profile) => profile ? [profile.userId] : []);
   if (!provisionedUserIds.includes(userId)) throw new Error("The identity is not provisioned.");
   const store = new FileWorkspaceAdminStore(installation.installationId, installation.paths.dataRoot);
   const state = await store.read(provisionedUserIds);
