@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { CatalogResource } from "@/catalog/contracts";
 import { unixBrokerFetch } from "@/runtime/trinalum-broker-transport";
@@ -12,9 +13,15 @@ export const TRINALUM_CONNECTOR_RESOURCES: CatalogResource[] = [
   managedBy: "company", sharedResource: shared as boolean, appId: null, connectorId: id as string, mcp: null,
 }));
 
+export type TrinalumCapabilitySnapshot = Readonly<{ installationId: string; userId: string; operations: readonly string[]; bindingFingerprint: string }>;
+export function trinalumBindingFingerprint(config: { installationId: string; url?: string; socketPath?: string; users?: Record<string, unknown> }, userId: string) {
+  return createHash("sha256").update(JSON.stringify({ installationId: config.installationId, url: config.url ?? null,
+    socketPath: config.socketPath ?? null, binding: config.users?.[userId] ?? null })).digest("hex");
+}
+
 /** Checks the current authenticated broker binding, never assumes a configured tile is connected. */
 export async function trinalumConnectorHealth(installationId: string, userId: string,
-  options: { configPath?: string; fetcher?: typeof unixBrokerFetch } = {}) {
+  options: { configPath?: string; fetcher?: typeof unixBrokerFetch; onCapabilities?: (snapshot: TrinalumCapabilitySnapshot) => void } = {}) {
   const health = new Map<string, { status: string; statusCode: string | null }>();
   for (const resource of TRINALUM_CONNECTOR_RESOURCES) health.set(resource.id, { status: "not_configured", statusCode: "TRINALUM_CONNECTOR_NOT_CONFIGURED" });
   if (installationId !== "trinalum-production") return health;
@@ -29,7 +36,8 @@ export async function trinalumConnectorHealth(installationId: string, userId: st
     });
     if (!result.ok) throw new Error("BINDING_UNAVAILABLE");
     const body = await result.json();
-    if (body.installationId !== installationId || body.userId !== userId || !Array.isArray(body.operations)) throw new Error("BINDING_MISMATCH");
+    if (body.installationId !== installationId || body.userId !== userId || !Array.isArray(body.operations) || body.operations.length > 128 || body.operations.some((operation: unknown) => typeof operation !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(operation)) || new Set(body.operations).size !== body.operations.length) throw new Error("BINDING_MISMATCH");
+    options.onCapabilities?.(Object.freeze({ installationId, userId, operations: Object.freeze([...body.operations]), bindingFingerprint: trinalumBindingFingerprint(config, userId) }));
     const groups = {
       "trinalum-attio": ["attio_search", "attio_deals", "attio_tasks"],
       "trinalum-sibema": ["sibema_read", "sibema_accounting_summary"],

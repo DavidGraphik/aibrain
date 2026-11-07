@@ -6,6 +6,15 @@ const REFERENCE_FIELD = /^(?:ids?|uuids?|identifiers?|references?|refs?|codes?|[
 const PRIVATE_FIELD = /token|secret|password|credential|authorization|cookie|lease|session|fingerprint|runtime|thread|turn|project|installation|tenant|workspace|user|employee|permission|auth|audit|transport|trace|requestid|call|candidate|build|revision|sourcesha|publicreferences|memory|conversation|automation|metadata|internal|interno|private|debug|diagnostic|profile|connector|catalog|chatgpt|codex|aibrain/iu;
 const UNVERIFIED_FIELD = /^(?:input|arguments|parameters|request|prompt|instructions?|examples?|schema)$/u;
 
+const PROVIDER_IDENTITY_CONTAINER = /^(?:user|member|workspacemember|workspace|account|organization|organisation)$/u;
+
+/** External identity IDs may be public only when observed in a completed
+ * provider result. A matching spelling alone never supplies display evidence. */
+export function isProviderIdentityReferenceField(value: string) {
+  return /^(?:user|member|workspacemember|workspace|account|organization|organisation)(?:id|uuid)$/u
+    .test(value.toLowerCase().replace(/[^a-z0-9]/gu, ""));
+}
+
 export function isPrivateReferenceField(value: string) {
   return PRIVATE_FIELD.test(value.toLowerCase().replace(/[^a-z0-9]/gu, ""));
 }
@@ -40,19 +49,36 @@ export function publicReferencesForResults(results: readonly { status: string; p
   return [...values.values()];
 }
 
-function structuredPayload(value: unknown): unknown {
+function structuredPayload(value: unknown, providerText = false): unknown {
   if (typeof value !== "string") return value;
   if (value.length > 1_048_576) throw new Error("Reference evidence exceeds its limit.");
-  try { return JSON.parse(value); } catch { return null; }
+  try { return JSON.parse(value); } catch {
+    // Native providers also return bounded key:value records. Do not accept
+    // prose, duplicate/ambiguous keys, multiline values or arbitrary tool text.
+    if (!providerText || value.length > 64_000) return null;
+    const lines = value.replace(/\r\n?/gu, "\n").trim().split("\n");
+    if (!lines.length || lines.length > 128) return null;
+    const fields: Record<string, string> = Object.create(null);
+    const seen = new Set<string>();
+    for (const line of lines) {
+      const match = /^([A-Za-z][A-Za-z0-9_[\]-]{0,127}):[ \t]*(.*)$/u.exec(line);
+      if (!match || /[\u0000-\u001f\u007f]/u.test(match[2])) return null;
+      const normalized = match[1].toLowerCase().replace(/[^a-z0-9]/gu, "");
+      if (!normalized || seen.has(normalized)) return null;
+      seen.add(normalized); fields[match[1]] = match[2].trim();
+    }
+    return fields;
+  }
 }
 
-/** Extract before display sanitization, exclusively from successful structured
- * connector results. Free prose, command output and provider-declared allowlists
+/** Extract before display sanitization, exclusively from successful structured or strictly parsed
+ * native provider records. Free prose, command output and provider-declared allowlists
  * cannot authorize a reference. Private branches veto the same value elsewhere. */
 export function observedToolPublicReferences(item: Record<string, unknown>, completed: boolean, privateReferences: readonly string[] = []) {
   if (!(item.status === "completed" || item.status === undefined && completed)
       || item.error || item.success === false) return [];
   const payloads: unknown[] = [];
+  const nativeProvider = item.type === "mcpToolCall";
   if (item.type === "dynamicToolCall") {
     if (item.success !== true || item.namespace === "aibrain_browser") return [];
     if (Array.isArray(item.contentItems)) {
@@ -85,12 +111,15 @@ export function observedToolPublicReferences(item: Record<string, unknown>, comp
     if (Array.isArray(value)) { for (const item of value) walk(item, field, hidden, depth + 1, unverified); return; }
     for (const [key, child] of Object.entries(value)) {
       const normalized = key.toLowerCase().replace(/[^a-z0-9]/gu, "");
-      walk(child, normalized, hidden || isPrivateReferenceField(normalized), depth + 1, unverified || UNVERIFIED_FIELD.test(normalized));
+      const providerIdentity = nativeProvider && (isProviderIdentityReferenceField(normalized)
+        || PROVIDER_IDENTITY_CONTAINER.test(normalized) && child !== null && typeof child === "object");
+      walk(child, normalized, hidden || isPrivateReferenceField(normalized) && !providerIdentity,
+        depth + 1, unverified || UNVERIFIED_FIELD.test(normalized));
     }
   };
   try {
     for (const raw of payloads) {
-      const payload = structuredPayload(raw);
+      const payload = structuredPayload(raw, nativeProvider);
       if (!payload || typeof payload !== "object") continue;
       if (!Array.isArray(payload) && ("success" in payload && payload.success !== true
           || "ok" in payload && payload.ok !== true || "isError" in payload && payload.isError !== false

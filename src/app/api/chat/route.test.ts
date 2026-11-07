@@ -147,6 +147,7 @@ import { runtimeThreadIdForChatMessage } from "@/runtime/chat-thread-selection";
 import { finishThreadTurn, isBrowserPreviewWorkbench, prepareThreadTurn } from "@/workbench/store";
 import { resolveServerTurnPermissions } from "@/runtime/permission-turn";
 import { PermissionResolutionError } from "@/permissions/errors";
+import { SchemaValidationError, StorageCorruptionError } from "@/storage/errors";
 import { continuingDocumentUploads } from "@/lib/continuing-document-uploads";
 import { getSession } from "@/auth/session";
 import { bindLocalServerSession } from "@/auth/server-session-binding";
@@ -229,6 +230,26 @@ describe("chat turn transport lifecycle", () => {
     const response = await POST(chatRequest(new AbortController().signal));
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "No s’ha pogut verificar la política d’aquest torn." });
+    expect(begin).not.toHaveBeenCalled();
+    expect(mocked.runWorkerCodexTurn).not.toHaveBeenCalled();
+    expect(mocked.releaseMaintenance).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    new StorageCorruptionError("/private/policy/state.json", "private recovery detail"),
+    new SchemaValidationError("WorkspaceAdminState", "$.assignments", "private owner detail"),
+    new PermissionResolutionError("PERMISSION_POLICY_INVALID", "private policy text"),
+  ])("marks a verified permanent preflight failure as non-retryable before admission", async error => {
+    const begin = preparePreflightTurn();
+    vi.mocked(resolveServerTurnPermissions).mockRejectedValueOnce(error);
+    const response = await POST(chatRequest(new AbortController().signal));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      code: "PERMISSION_STATE_INVALID",
+      error: "La configuració d’accés no és vàlida. Cal revisar-la abans de tornar-ho a provar.",
+      retryable: false,
+    });
+    expect(response.headers.has("Retry-After")).toBe(false);
     expect(begin).not.toHaveBeenCalled();
     expect(mocked.runWorkerCodexTurn).not.toHaveBeenCalled();
     expect(mocked.releaseMaintenance).toHaveBeenCalledOnce();

@@ -45,7 +45,7 @@ async function fixture(kind: 'offer' | 'tariff' = 'offer') {
     return Response.json({ data: { status: 'prepared', action: { requestedBy: 'Nerea', type: body.input.type, request: body.input.request } } });
   });
   const approvalStore = new FileApprovalStore({ installationId: config.installationId, userId, usersRoot });
-  const context: TrinalumBridgeContext = { installationId: config.installationId, userId, runtimeThreadId: 'runtime', runtimeTurnId: 'turn',
+  const context: TrinalumBridgeContext = { admitOperation: async () => true, installationId: config.installationId, userId, runtimeThreadId: 'runtime', runtimeTurnId: 'turn',
     configPath, approvalStore, fetcher, canMutate: true, permissionFingerprint: 'b'.repeat(64), authenticatedEmail: actorEmail,
     sourceMessageId: 'human', sourceTurnId: 'assistant', sourceMessage: 'Prepara la eliminación de este registro interno y no la ejecutes.', revalidateWrite: async () => true };
   const input = { type: kind === 'offer' ? 'delete_offer' : 'delete_customer_tariff', request: { customerId: 1206, [kind === 'offer' ? 'offerId' : 'tariffId']: 122 } };

@@ -1,4 +1,4 @@
-import { isPrivateReferenceField, isPublicReference, referenceKey, type PublicReferenceEvidence } from "@/lib/public-references";
+import { isProviderIdentityReferenceField, isPrivateReferenceField, isPublicReference, referenceKey, type PublicReferenceEvidence } from "@/lib/public-references";
 
 const INTERNAL_ID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
 const INTERNAL_DIGEST = /\b(?:sha256:)?[0-9a-f]{32,64}\b/giu;
@@ -43,7 +43,11 @@ function redactInternalDetails(value: string, assistantName = "el asistente", ev
     .replace(ABSOLUTE_PATH, "archivo interno")
     .replace(RUNTIME_PATH, "entorno privado")
     .replace(PRIVATE_API_PATH, "ruta interna")
-    .replace(PRIVATE_FIELD_REFERENCE, (match, prefix: string, field: string) => isPrivateReferenceField(field) ? `${prefix}identificador interno` : match)
+    .replace(PRIVATE_FIELD_REFERENCE, (match, prefix: string, field: string) => {
+      const verifiedIdentity = isProviderIdentityReferenceField(field)
+        && identifier(match.slice(prefix.length)) !== "identificador interno";
+      return isPrivateReferenceField(field) && !verifiedIdentity ? `${prefix}identificador interno` : match;
+    })
     .replace(INTERNAL_ID, identifier)
     .replace(INTERNAL_DIGEST, identifier)
     .replace(INTERNAL_NAMESPACE, "herramienta autorizada")

@@ -5,7 +5,7 @@ import { G03_SAGE_RESOURCE } from "@/connectors/g03-catalog";
 import { instantlyCapability } from "@/connectors/instantly-service";
 import { composioCapability, composioCapabilitiesForSession } from "@/connectors/composio-service";
 import { modtimeReportingCapabilities, MODTIME_REPORTING_RESOURCES } from "@/connectors/modtime-reporting";
-import { trinalumConnectorHealth } from "@/connectors/trinalum-capabilities";
+import { type TrinalumCapabilitySnapshot, trinalumConnectorHealth } from "@/connectors/trinalum-capabilities";
 import "server-only";
 
 import { workspacePolicyForIdentity } from "@/admin/policy-service";
@@ -53,7 +53,7 @@ async function catalogForIdentity(installationId: string, userId: string) {
   return { installation, principal, state };
 }
 
-async function resolvedMentions(installationId: string, userId: string, session?: AuthSession) {
+async function resolvedMentions(installationId: string, userId: string, session?: AuthSession, onTrinalumCapabilities?: (snapshot: TrinalumCapabilitySnapshot) => void) {
   const { installation, state, principal } = await catalogForIdentity(installationId, userId);
   const resources = visibleCatalogResources(state, principal)
     .filter((resource): resource is CatalogResource & { kind: "app" | "connector" | "mcp" } => resource.kind !== "skill")
@@ -65,7 +65,7 @@ async function resolvedMentions(installationId: string, userId: string, session?
   resources.sort((left, right) => left.label.localeCompare(right.label, g03ProductInstallation(installationId) ? "ca" : "es"));
   const connectUrls = new Map<string, string | null>();
   const health = new Map<string, { status: string; statusCode: string | null; accessVerified?: boolean }>();
-  for (const [id, status] of await trinalumConnectorHealth(installationId, userId)) health.set(id, status);
+  for (const [id, status] of await trinalumConnectorHealth(installationId, userId, { onCapabilities: onTrinalumCapabilities })) health.set(id, status);
   health.set(G03_SAGE_RESOURCE.id, await g03SageHealth(installationId, userId));
   // A previously provisioned tile must fail closed if installation configuration is removed.
   for (const resource of MODTIME_REPORTING_RESOURCES) {
@@ -155,6 +155,7 @@ export async function resolveAvailableConnectorsForTurn(
   userId: string,
   resourceIds: readonly string[] = [],
   session?: AuthSession,
+  onTrinalumCapabilities?: (snapshot: TrinalumCapabilitySnapshot) => void,
 ) {
   if (resourceIds.length > 20 || new Set(resourceIds).size !== resourceIds.length) {
     throw new ConnectorMentionError("CONNECTOR_MENTION_INVALID", "Las referencias de conectores no son válidas.");
@@ -162,7 +163,7 @@ export async function resolveAvailableConnectorsForTurn(
   if (session && (session.tenant.id !== installationId || session.user.id !== userId)) {
     throw new ConnectorMentionError("CONNECTOR_MENTION_IDENTITY_MISMATCH", "La sesión del conector no coincide con el turno.");
   }
-  const { resources, mentions } = await resolvedMentions(installationId, userId, session);
+  const { resources, mentions } = await resolvedMentions(installationId, userId, session, onTrinalumCapabilities);
   const projected = new Map(mentions.map((mention) => [mention.id, mention]));
   if (mentions.some(mention => mention.kind === "app" && mention.statusCode === "NATIVE_APP_READINESS_UNAVAILABLE")) {
     throw new ConnectorMentionError("NATIVE_APP_READINESS_UNAVAILABLE", "No se han podido preparar las conexiones personales. Inténtalo de nuevo en unos segundos.");

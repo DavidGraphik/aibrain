@@ -18,6 +18,7 @@ import type { DynamicToolCallResponse } from "../../contracts/codex/0.162.1/type
 
 import type { TrinalumMailReadTurnReplay } from "./trinalum-mail-read-replay";
 
+import { trinalumBindingFingerprint } from "@/connectors/trinalum-capabilities";
 import { TRINALUM_NAMESPACE } from "./trinalum-tool-contract";
 export { TRINALUM_NAMESPACE, TRINALUM_DYNAMIC_TOOLS } from "./trinalum-tool-contract";
 
@@ -67,6 +68,8 @@ export type TrinalumBridgeContext = {
   installationId: string; userId: string; runtimeThreadId: string; runtimeTurnId: string;
   projectId?: string;
   configPath?: string; fetcher?: typeof fetch;
+  /** Server-owned current-turn inventory; missing/old contracts fail closed. */
+  admitOperation?: (tool: string, bindingFingerprint: string) => Promise<boolean>;
   /** Authenticated server session only; never model arguments or provider text. */
   authenticatedEmail?: string;
   approvalStore?:FileApprovalStore; emitApproval?:(item:ApprovalItem)=>Promise<void>;
@@ -127,6 +130,8 @@ export async function handleTrinalumTool(params: DynamicToolCallParams, context:
     const config = JSON.parse(await readFile(configPath, "utf8")) as { installationId: string; url: string; socketPath?:string; users: Record<string, { token: string; status: string }> };
     const binding = config.users?.[context.userId];
     if (config.installationId !== context.installationId || !binding || binding.status !== "active" || typeof binding.token !== "string" || binding.token.length < 32) return response(false, { error: "ACTOR_ACCESS_DENIED" });
+    const admissionFingerprint = trinalumBindingFingerprint(config, context.userId);
+    if (!context.admitOperation || !await context.admitOperation(params.tool, admissionFingerprint)) return response(false, { error: "OPERATION_NOT_ADMITTED" });
     const endpoint = new URL(config.url);
     if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== "/read" ||
         !(endpoint.protocol === "https:" || endpoint.protocol === "http:" && endpoint.hostname === "127.0.0.1")) return response(false, { error: "CONNECTOR_CONFIG_INVALID" });
@@ -153,7 +158,7 @@ export async function handleTrinalumTool(params: DynamicToolCallParams, context:
         return response(false,{error:/^PRIVATE_FILE_(?:REFERENCE_INVALID|PAGE_INVALID|ACCESS_DENIED|READ_DENIED|SOURCE_CHANGED)$/.test(code)?code:'PRIVATE_FILE_READER_UNAVAILABLE'});
       }
     }
-    if(params.tool==='execute_action')return await executeChatAction(params,context,configPath,endpoint,binding,fetcher);
+    if(params.tool==='execute_action')return await executeChatAction(params,context,configPath,endpoint,binding,fetcher,admissionFingerprint);
     if(writes.has(params.tool))return await approvedWrite(params,context,configPath,endpoint,binding,fetcher);
     if(params.tool==='sibema_api'){
       const error = sibemaReadArgumentError(params.arguments);
@@ -166,6 +171,7 @@ export async function handleTrinalumTool(params: DynamicToolCallParams, context:
     if(params.tool==='mail_search'||params.tool==='attio_search'){
       const input=params.arguments;
       if(!input||typeof input!=='object'||Array.isArray(input))return response(false,{error:'INVALID_ARGUMENTS',hint:'Use an object containing query and optional limit.'});
+      if(params.tool==='attio_search' && (typeof input.query!=='string'||!input.query.trim()||input.query.length>500||input.query.includes('\0')))return response(false,{error:'INVALID_ARGUMENTS',field:'query',hint:'Use a nonblank actual company name or identifying term. This search is not a list-all operation; do not invent a query.'});
       if(input.limit!==undefined&&(!Number.isInteger(input.limit)||Number(input.limit)<1||Number(input.limit)>20))return response(false,{error:'INVALID_ARGUMENTS',field:'limit',hint:'limit must be an integer from 1 to 20. Retry with limit 20; broader reviews require multiple bounded searches.'});
     }
     let providerArguments=params.arguments,includeMailHtml=false;
@@ -531,13 +537,14 @@ async function executePrepared(record:ChatAction,context:TrinalumBridgeContext,c
   return response(['executed','replayed'].includes(result.outcome),{outcome:result.outcome,authorization:'authenticated_chat',actionId:record.id,data:result.value?await projectPrivateFiles(result.value,context):null,...(result.outcome==='indeterminate'?{instruction:'The provider effect is uncertain. Reconcile its actual state. Never reissue this operation or prepare another ID as a retry.'}:{})});
 }
 
-async function executeChatAction(params:DynamicToolCallParams,context:TrinalumBridgeContext,configPath:string,endpoint:URL,binding:{token:string;status:string},fetcher:(url:URL,init:RequestInit)=>Promise<Response>){
+async function executeChatAction(params:DynamicToolCallParams,context:TrinalumBridgeContext,configPath:string,endpoint:URL,binding:{token:string;status:string},fetcher:(url:URL,init:RequestInit)=>Promise<Response>,admissionFingerprint:string){
   if(!context.canMutate||!context.approvalStore||!context.sourceMessageId||!context.sourceTurnId||!context.sourceMessage?.trim()||!context.permissionFingerprint)return response(false,{error:'WRITE_ACCESS_DENIED'});
   const input=params.arguments;
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).join(',')!=='actionId'||typeof input.actionId!=='string')return response(false,{error:'INVALID_ARGUMENTS'});
   const chatStore=new TrinalumChatActions(context.approvalStore.userRoot,{installationId:context.installationId,userId:context.userId,threadId:context.runtimeThreadId});
   const record=await chatStore.read(input.actionId);
   if(!record)return response(false,{error:'PREPARED_ACTION_REQUIRED'});
+  if(!context.admitOperation || !await context.admitOperation(record.operation,admissionFingerprint))return response(false,{error:'OPERATION_NOT_ADMITTED'});
   if(!await automationWriteAllowed(context,record.operation,record.input))return response(false,{error:'AUTOMATION_EFFECT_NOT_AUTHORIZED'});
   if(requiresExactEmailReview(record,context.authenticatedEmail)&&(!record.displayedAt||record.sourceTurnId===context.sourceTurnId||record.sourceMessageId===context.sourceMessageId))return response(false,{error:'PREVIOUS_DISPLAYED_ACTION_REQUIRED'});
   const existing=await context.approvalStore.readConnectorApproval(record.locator);

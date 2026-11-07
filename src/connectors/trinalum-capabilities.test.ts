@@ -28,3 +28,21 @@ it("does not reuse another actor or installation and fails closed after transpor
   expect(fetcher).not.toHaveBeenCalled();
   expect((await trinalumConnectorHealth("trinalum-production", "david", { configPath, fetcher })).get("trinalum-attio")?.status).toBe("degraded");
 });
+it("captures one bound inventory per resolution, with no reuse after revocation or an invalid response", async () => {
+  const configPath = await config(), capture = vi.fn();
+  const fetcher = vi.fn(async () => Response.json({ installationId: "trinalum-production", userId: "david", operations: ["attio_search"], mailbox: null }));
+  await trinalumConnectorHealth("trinalum-production", "david", { configPath, fetcher, onCapabilities: capture });
+  expect(fetcher).toHaveBeenCalledTimes(1); expect(capture).toHaveBeenCalledTimes(1);
+  expect(capture.mock.calls[0][0]).toMatchObject({ installationId: "trinalum-production", userId: "david", operations: ["attio_search"], bindingFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  fetcher.mockImplementation(async () => Response.json({ installationId: "trinalum-production", userId: "david", operations: [], mailbox: null }));
+  await trinalumConnectorHealth("trinalum-production", "david", { configPath, fetcher, onCapabilities: capture });
+  expect(capture.mock.calls[1][0].operations).toEqual([]);
+  for (const operations of [["attio_search", "attio_search"], [null], "attio_search"]) {
+    capture.mockClear(); fetcher.mockImplementation(async () => Response.json({ installationId: "trinalum-production", userId: "david", operations, mailbox: null }));
+    await trinalumConnectorHealth("trinalum-production", "david", { configPath, fetcher, onCapabilities: capture });
+    expect(capture).not.toHaveBeenCalled();
+  }
+  capture.mockClear(); fetcher.mockImplementation(async () => Response.json({ installationId: "trinalum-production", userId: "foreign", operations: ["attio_search"] }));
+  await trinalumConnectorHealth("trinalum-production", "david", { configPath, fetcher, onCapabilities: capture });
+  expect(capture).not.toHaveBeenCalled();
+});

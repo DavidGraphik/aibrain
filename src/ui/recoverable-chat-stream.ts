@@ -90,14 +90,20 @@ function retryableResponse(response: Response) {
 
 async function responseFailure(response: Response) {
   let message = "No se ha podido completar la solicitud.";
+  let retryable = retryableResponse(response);
   if (response.headers.get("content-type")?.includes("application/json")) {
     const payload: unknown = await response.clone().json().catch(() => null);
     if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
       const candidate = payload.error.trim();
       if (candidate) message = candidate.slice(0, 280);
     }
+    // A server can mark a known pre-admission failure as permanent. It cannot
+    // make an otherwise non-retryable HTTP status safe to replay.
+    if (payload && typeof payload === "object" && "retryable" in payload && payload.retryable === false) {
+      retryable = false;
+    }
   }
-  return new ChatStreamHttpError(message, retryableResponse(response));
+  return new ChatStreamHttpError(message, retryable);
 }
 
 function emptyMeasurement(): ChatStreamRecoveryMeasurement {

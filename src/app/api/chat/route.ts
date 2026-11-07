@@ -28,6 +28,7 @@ import {
 import { resolveServerTurnPermissions } from "@/runtime/permission-turn";
 import type { ResolvedPermissions } from "@/permissions";
 import { PermissionResolutionError } from "@/permissions/errors";
+import { SchemaValidationError, StorageCorruptionError } from "@/storage/errors";
 import { FileApprovalStore } from "@/runtime/approval-store";
 import {
   currentThreadToolsetRevision,
@@ -587,6 +588,18 @@ export async function POST(request: Request) {
             status: 429,
             headers: { "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1_000))) },
           },
+        );
+      }
+      if (error instanceof StorageCorruptionError || error instanceof SchemaValidationError ||
+          (error instanceof PermissionResolutionError &&
+            error.code !== "PERMISSION_ROOT_UNAVAILABLE" && error.code !== "PERMISSION_AUDIT_FAILED")) {
+        return NextResponse.json(
+          {
+            code: "PERMISSION_STATE_INVALID",
+            error: "La configuració d’accés no és vàlida. Cal revisar-la abans de tornar-ho a provar.",
+            retryable: false,
+          },
+          { status: 503, headers: { "Cache-Control": "private, no-store" } },
         );
       }
       return NextResponse.json(

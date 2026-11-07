@@ -19,11 +19,11 @@ import type { StagedDocument } from '@/documents/staging-store';
 
 const userId='11111111-1111-4111-8111-111111111111';
 const otherUser='22222222-2222-4222-8222-222222222222';
-const base={installationId:'trinalum-production',userId,runtimeThreadId:'thread',runtimeTurnId:'turn-1'};
+const base={admitOperation:async()=>true,installationId:'trinalum-production',userId,runtimeThreadId:'thread',runtimeTurnId:'turn-1'};
 const roots:string[]=[];
 afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 const body=(result:Awaited<ReturnType<typeof handleTrinalumTool>>)=>JSON.parse((result.contentItems[0] as {text:string}).text);
-const params=(tool:string,args:DynamicToolCallParams['arguments'],context=base):DynamicToolCallParams=>({namespace:'trinalum_business',tool,arguments:args,threadId:context.runtimeThreadId,turnId:context.runtimeTurnId,callId:'call'});
+const params=(tool:string,args:DynamicToolCallParams['arguments'],context:Pick<TrinalumBridgeContext,'runtimeThreadId'|'runtimeTurnId'>=base):DynamicToolCallParams=>({namespace:'trinalum_business',tool,arguments:args,threadId:context.runtimeThreadId,turnId:context.runtimeTurnId,callId:'call'});
 async function config(overrides:Record<string,unknown>={}) {
  const dir=await mkdtemp(path.join(tmpdir(),'trinalum-bridge-test-'));roots.push(dir);
  const configPath=path.join(dir,'bridge.json');
@@ -46,6 +46,35 @@ async function confirm(f:Awaited<ReturnType<typeof fixture>>,actionId:string,pat
  const context={...f.context,runtimeTurnId:'turn-2',sourceMessage:'Confirmo',sourceMessageId:'message-2',sourceTurnId:'assistant-2',...patch};
  return handleTrinalumTool(params('execute_action',{actionId,...extra},context),context);
 }
+
+describe('current-turn operation admission',()=>{
+ it('denies missing inventory and revoked operations without any provider RPC',async()=>{
+  const f=await fixture({admitOperation:undefined});
+  expect(body(await handleTrinalumTool(params('attio_deals',{}),f.context)).error).toBe('OPERATION_NOT_ADMITTED');
+  const admitted=new Set(['attio_deals']);f.context.admitOperation=async tool=>admitted.has(tool);
+  expect((await handleTrinalumTool(params('attio_deals',{}),f.context)).success).toBe(true);
+  admitted.clear();f.fetcher.mockClear();
+  expect(body(await handleTrinalumTool(params('attio_deals',{}),f.context)).error).toBe('OPERATION_NOT_ADMITTED');
+  expect(body(await handleTrinalumTool(params('attio_api',{command:'discover'}),f.context)).error).toBe('OPERATION_NOT_ADMITTED');
+  expect(f.fetcher).not.toHaveBeenCalled();
+ });
+ it('invalidates captured local binding admission after credential changes',async()=>{
+  const f=await fixture();let original:string|undefined;
+  f.context.admitOperation=async(_tool,fingerprint)=>{original??=fingerprint;return original===fingerprint;};
+  expect((await handleTrinalumTool(params('attio_deals',{}),f.context)).success).toBe(true);
+  f.fetcher.mockClear();f.value.users[userId].token='b'.repeat(64);await writeFile(f.configPath,JSON.stringify(f.value));
+  expect(body(await handleTrinalumTool(params('attio_deals',{}),f.context)).error).toBe('OPERATION_NOT_ADMITTED');
+  expect(f.fetcher).not.toHaveBeenCalled();
+ });
+ it('rechecks the actual frozen operation behind execute_action',async()=>{
+  const f=await fixture();const prepared=body(await prepare(f));f.fetcher.mockClear();
+  const result=body(await confirm(f,prepared.actionId,{admitOperation:async tool=>tool==='execute_action'}));
+  expect(result.error).toBe('OPERATION_NOT_ADMITTED');expect(f.fetcher).not.toHaveBeenCalled();
+ });
+ it.each(['','   ','\t\n'])('rejects nonblank-search violations locally: %j',async query=>{
+  const f=await fixture();expect(body(await handleTrinalumTool(params('attio_search',{query,limit:2}),f.context))).toMatchObject({error:'INVALID_ARGUMENTS',field:'query'});expect(f.fetcher).not.toHaveBeenCalled();
+ });
+});
 
 describe('mail_read compact body view',()=>{
  const messageId='imap:owned:7:1';

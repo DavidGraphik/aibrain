@@ -18,7 +18,7 @@ import { OUTLOOK_DESKTOP_DYNAMIC_TOOLS } from "@/runtime/outlook-desktop-dynamic
 import { WEBSITE_CHAT_TOOLS } from "@/insijets/website-chat-edit";
 import { operatorChatInstructions, type operatorChatToolsForTurn } from "@/insijets/operator-sourcing-chat";
 import { outreachSystemInstructions, type outreachSystemToolsForTurn } from "@/insijets/outreach-system-chat";
-import { TRINALUM_DYNAMIC_TOOLS } from "@/runtime/trinalum-dynamic-tools";
+import { trinalumToolsForOperations } from "@/runtime/trinalum-tool-contract";
 import { MODTIME_DYNAMIC_TOOLS } from "@/runtime/modtime-dynamic-tools";
 import { G03_SAGE_DYNAMIC_TOOLS } from "@/runtime/g03-sage-dynamic-tools";
 import { composioToolsForTurn } from "@/runtime/composio-dynamic-tools";
@@ -62,6 +62,7 @@ export type WorkerTurnToolsContext = {
   /** Fresh server-resolved connections. Omission preserves older embedders;
    * production always supplies this snapshot, never the browser selection. */
   availableConnectorIds?: readonly string[];
+  trinalumOperations?: readonly string[];
   modules: { websiteDemo: boolean; trinalumBridge: boolean; modtimeReporting: boolean };
   preparedTools: {
     operators: ReturnType<typeof operatorChatToolsForTurn>;
@@ -74,7 +75,7 @@ export type WorkerTurnToolsContext = {
  * A support preview deliberately replaces the full catalogue with its restricted set.
  */
 export function buildWorkerTurnTools({
-  installationId, connectors, sessions, execution, documentNetworkAvailable, modules, preparedTools, availableConnectorIds,
+  installationId, connectors, sessions, execution, documentNetworkAvailable, modules, preparedTools, availableConnectorIds, trinalumOperations,
 }: WorkerTurnToolsContext) {
   const connected = (id: string) => availableConnectorIds === undefined || availableConnectorIds.includes(id);
   const { background, hostAnalysisPolicy, automationStateAvailable } = execution;
@@ -119,7 +120,7 @@ export function buildWorkerTurnTools({
       ...(websiteEnabled ? WEBSITE_CHAT_TOOLS as unknown as DynamicToolSpec[] : []),
       ...preparedTools.operators as unknown as DynamicToolSpec[],
       ...preparedTools.outreach as unknown as DynamicToolSpec[],
-      ...(installationId === "trinalum-production" && modules.trinalumBridge ? TRINALUM_DYNAMIC_TOOLS : []),
+      ...(installationId === "trinalum-production" && modules.trinalumBridge ? trinalumToolsForOperations(trinalumOperations) : []),
       ...(modules.modtimeReporting ? MODTIME_DYNAMIC_TOOLS : []),
       ...(sessions.g03 ? G03_DYNAMIC_TOOLS : []),
       ...(installationId === "g03-production" && connected("g03-sage") ? G03_SAGE_DYNAMIC_TOOLS : []),

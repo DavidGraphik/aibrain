@@ -38,6 +38,22 @@ const withoutSpecs = (actual: ReturnType<typeof buildWorkerTurnTools>["dynamicTo
 };
 
 describe("turn module catalogue", () => {
+  it("admits only the current Trinalum operation inventory and hides unavailable operations on the next turn", () => {
+    const input = context(); input.installationId = "trinalum-production"; input.modules.trinalumBridge = true;
+    const tools = () => buildWorkerTurnTools(input).dynamicTools.flatMap(spec => spec.type === "namespace" && spec.name === "trinalum_business" ? spec.tools.map(tool => tool.name) : []);
+    expect(tools()).toEqual([]);
+    const reads = ["attio_deals", "attio_tasks", "attio_search", "attio_notes", "attio_members", "sibema_read"];
+    input.trinalumOperations = reads;
+    expect(tools()).toEqual(expect.arrayContaining(reads));
+    const search = buildWorkerTurnTools(input).dynamicTools.flatMap(spec => spec.type === "namespace" && spec.name === "trinalum_business" ? spec.tools : []).find(tool => tool.name === "attio_search");
+    expect(search?.inputSchema).toMatchObject({ properties: { query: { minLength: 1, maxLength: 500 } } });
+    expect(search?.description).toContain("nonblank"); expect(search?.description).toContain("not a list-all operation");
+    expect(tools()).not.toEqual(expect.arrayContaining(["attio_api"]));
+    for (const name of ["attio_api", "mail_api", "sibema_action", "attio_action", "execute_action"]) expect(tools()).not.toContain(name);
+    input.trinalumOperations = [];
+    expect(tools()).toEqual([]);
+    expect(buildWorkerTurnTools(input).dynamicTools.length).toBeGreaterThan(0);
+  });
   it("does not offer Composio discovery for native-only users, but keeps a verified Composio connection", () => {
     const input = context();
     input.connectors = { composio: { toolkits: [{ slug: "example_crm", label: "Example CRM", authConfigId: "ac_example", scopes: ["read"], readTools: [{ slug: "EXAMPLE_READ", version: "20261106_01" }] }] } };

@@ -236,7 +236,7 @@ describe("recoverable chat stream", () => {
 
   it.each([400, 403])("returns a non-retryable HTTP %s error immediately", async status => {
     const scheduler = new ControlledScheduler();
-    const request = vi.fn(async () => Response.json({ error: "La petición no es válida." }, { status }));
+    const request = vi.fn(async () => Response.json({ error: "La petición no es válida.", retryable: true }, { status }));
     const run = consumeRecoverableChatStream({
       request,
       signal: new AbortController().signal,
@@ -249,6 +249,21 @@ describe("recoverable chat stream", () => {
 
     await expect(run).rejects.toThrow("La petición no es válida.");
     expect(request).toHaveBeenCalledTimes(1);
+    expect(scheduler.hasPending()).toBe(false);
+  });
+
+  it("surfaces a permanent pre-admission 503 once without reconnecting or admitting a turn", async () => {
+    const scheduler = new ControlledScheduler();
+    const request = vi.fn(async () => Response.json({ error: "Revisa la configuración.", retryable: false }, { status: 503 }));
+    const accepted = vi.fn(), states = vi.fn(), events = vi.fn();
+    const run = consumeRecoverableChatStream({ request, signal: new AbortController().signal,
+      onEvent: events, onAccepted: accepted, onRecoveryState: states, onMeasurement: () => undefined,
+      scheduler: scheduler.api, startedAt: 0 });
+    await expect(run).rejects.toThrow("Revisa la configuración.");
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(accepted).not.toHaveBeenCalled();
+    expect(states).not.toHaveBeenCalled();
+    expect(events).not.toHaveBeenCalled();
     expect(scheduler.hasPending()).toBe(false);
   });
 });
@@ -437,14 +452,14 @@ describe("bounded transport recovery without replaying work", () => {
     expect(fetcher).toHaveBeenCalledTimes(count + 1);
   });
 
-  it("pauses an auth rejection after uncertain admission without fabricating a terminal error", async () => {
+  it.each([401, 503])("pauses a non-retryable HTTP %s after uncertain admission without fabricating a terminal error", async status => {
     const scheduler = new ControlledScheduler();
     const events: ChatStreamEvent[] = [];
     const states: unknown[] = [];
     const parent = new AbortController();
     const request = vi.fn(async () => {
       if (request.mock.calls.length === 1) throw new TypeError("lost admission response");
-      return Response.json({ error: "Sign in" }, { status: 401 });
+      return Response.json({ error: "Request cannot be retried automatically", retryable: false }, { status });
     });
     const run = consumeRecoverableChatStream({ request, signal: parent.signal, scheduler: scheduler.api,
       onEvent: event => events.push(event), onRecoveryState: state => states.push(state), onMeasurement: () => undefined,

@@ -1,3 +1,5 @@
+import { type TrinalumCapabilitySnapshot } from "@/connectors/trinalum-capabilities";
+import { trinalumToolAdmitted } from "@/runtime/trinalum-tool-contract";
 import { buildWorkerTurnTools } from "@/runtime/worker-turn-tools";
 import { SUPPORT_NAMESPACE } from "@/runtime/support-tool-contract";
 import { handleSupportTool } from "@/runtime/support-dynamic-tools";
@@ -1098,12 +1100,18 @@ async function runWorkerCodexTurnAttempt(
   if (chatRequest.options.skill && selectedSkills.length !== 1) {
     throw new Error("La skill seleccionada ja no està disponible.");
   }
+  let trinalumSnapshot: TrinalumCapabilitySnapshot | undefined;
   const availableConnectors = await telemetry.measure("connector_resolution", () => resolveAvailableConnectorsForTurn(
     installationId,
     authenticatedUserId,
     chatRequest.options.connectorMentions ?? [],
     runtimeIdentitySession ?? automationSession,
+    snapshot => { if (snapshot.installationId === installationId && snapshot.userId === authenticatedUserId) trinalumSnapshot = snapshot; },
   ));
+  const trinalumOperations = trinalumSnapshot?.operations.filter(operation => {
+    const connector = operation.startsWith("attio_") ? "trinalum-attio" : operation.startsWith("sibema_") ? "trinalum-sibema" : operation.startsWith("mail_") ? "trinalum-mail" : null;
+    return connector !== null && availableConnectors.some(({ resource }) => resource.connectorId === connector);
+  }) ?? [];
   for (const { resource } of availableConnectors) {
     privateReferenceIds.add(resource.id);
     if (resource.appId) privateReferenceIds.add(resource.appId);
@@ -1178,6 +1186,7 @@ async function runWorkerCodexTurnAttempt(
     },
     execution: { background: backgroundExecution, hostAnalysisPolicy, automationStateAvailable: Boolean(automationRunState) },
     documentNetworkAvailable: Boolean(enterpriseDocumentNetwork),
+    trinalumOperations,
     availableConnectorIds: availableConnectors.flatMap(({ resource }) => resource.connectorId ? [resource.connectorId] : []),
     modules: {
       websiteDemo: process.env.AIBRAIN_INSIJETS_WEBSITE_CHAT_LOCAL_DEMO === "true",
@@ -2611,6 +2620,11 @@ async function runWorkerCodexTurnAttempt(
             const runTrinalum = () => handleTrinalumTool(request.params as never, {
               installationId, userId: authenticatedUserId, runtimeThreadId: trinalumThreadId, runtimeTurnId: trinalumTurnId,
               projectId:chatRequest.projectId,
+              admitOperation:async(tool, fingerprint)=>{
+                if(!trinalumSnapshot || trinalumSnapshot.bindingFingerprint!==fingerprint || !trinalumToolAdmitted(tool,trinalumOperations))return false;
+                const fresh=await resolveServerTurnPermissions(runtime.config,{installationId,userId:authenticatedUserId,turnId:permissions.turnId,projectId:chatRequest.projectId});
+                return fresh.fingerprint===permissions.fingerprint && permissionAllowsGenericToolExecution(fresh);
+              },
               mailReadTurnReplay:backgroundExecution?undefined:trinalumMailReadReplay,
               revalidateReadReplay:async()=>{
                 const fresh=await resolveServerTurnPermissions(runtime.config,{installationId,userId:authenticatedUserId,turnId:permissions.turnId,projectId:chatRequest.projectId});
