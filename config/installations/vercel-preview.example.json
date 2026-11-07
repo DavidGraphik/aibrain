@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "installationId": "example-lab-preview",
+  "companyName": "Example Laboratory",
+  "companySlug": "example-laboratory",
+  "publicUrl": "https://aibrain-workbench-preview.vercel.app",
+  "branding": {
+    "productName": "Example AI",
+    "logoPath": "/branding/example-lab/logo.svg",
+    "faviconPath": "/branding/example-lab/favicon.svg",
+    "accentColor": "#315ee7"
+  },
+  "paths": {
+    "dataRoot": "/tmp/aibrain-example-lab-preview/data",
+    "companyContextRoot": "/tmp/aibrain-example-lab-preview/data/company",
+    "usersRoot": "/tmp/aibrain-example-lab-preview/data/users",
+    "sourceReadRoot": "/tmp/aibrain-example-lab-preview/documents/source-ro",
+    "publishWriteRoot": "/tmp/aibrain-example-lab-preview/documents/publish-rw",
+    "backupsRoot": "/tmp/aibrain-example-lab-preview/data/backups"
+  }
+}

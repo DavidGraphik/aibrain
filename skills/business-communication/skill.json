@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "business-communication",
+  "label": "Comunicación empresarial",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "GraphikAI generic baseline for reviewed business communication; versioned 2026-08-30.",
+  "files": ["SKILL.md"]
+}

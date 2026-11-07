@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "graphikai-company-context",
+  "label": "Contexto de empresa GraphikAI",
+  "version": "1.0.0",
+  "category": "company",
+  "provenance": "Compatibility package for installations configured before the managed skill seed was expanded; versioned 2026-08-30.",
+  "files": ["SKILL.md"]
+}

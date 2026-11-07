@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "source": "air-charter-guide",
+  "synthetic": true,
+  "operators": [
+    {"id":"demo-op-1","name":"Demo Meridian Aviation","aliases":["Demo Meridian Charter"],"sourceURL":"https://example.invalid/operator/1","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-op-2","name":"Demo Atlas Air","sourceURL":"https://example.invalid/operator/2","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-op-3","name":"Demo Operator Without Fleet","sourceURL":"https://example.invalid/operator/3","checkedAt":"2026-10-13T09:00:00Z"}
+  ],
+  "bases": [
+    {"id":"demo-base-1","operatorId":"demo-op-1","region":"Europe","country":"Spain","city":"Barcelona","airport":"LEBL","sourceURL":"https://example.invalid/base/1","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-base-2","operatorId":"demo-op-1","region":"Europe","country":"Italy","city":"Milan","airport":"LIML","sourceURL":"https://example.invalid/base/2","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-base-3","operatorId":"demo-op-2","region":"Africa","country":"Morocco","city":"Casablanca","airport":"GMMN","sourceURL":"https://example.invalid/base/3","checkedAt":"2026-10-13T09:00:00Z"}
+  ],
+  "aircraft": [
+    {"id":"demo-aircraft-1","operatorId":"demo-op-1","baseId":"demo-base-1","model":"Demo Citation XLS+","category":"Midsize Jet","seats":8,"useType":"Passenger","rating":null,"registration":"DEMO-001","sourceURL":"https://example.invalid/aircraft/1","checkedAt":"2026-10-13T09:00:00Z","listingOperatorName":"Demo Meridian Charter"},
+    {"id":"demo-aircraft-2","operatorId":"demo-op-1","baseId":"demo-base-1","model":"Demo Citation XLS+","category":"Midsize Jet","seats":8,"useType":"Passenger","rating":null,"registration":"DEMO-002","sourceURL":"https://example.invalid/aircraft/2","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-aircraft-3","operatorId":"demo-op-1","baseId":"demo-base-2","model":"Demo Global 6000","category":"Heavy Jet","seats":13,"useType":"Passenger","rating":"Demo published rating","sourceURL":"https://example.invalid/aircraft/3","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-aircraft-4","operatorId":"demo-op-2","baseId":"demo-base-3","model":"Demo King Air 350","category":"Turboprop","seats":null,"useType":null,"rating":null,"sourceURL":"https://example.invalid/aircraft/4","checkedAt":"2026-10-13T09:00:00Z","discrepancy":"Synthetic example: listing and profile country differ; retain original values.","profileCountry":"Demo conflicting country"}
+  ],
+  "contacts": [
+    {"id":"demo-contact-1","operatorId":"demo-op-1","baseId":"demo-base-1","email":"barcelona@meridian.example.invalid","published":true,"professional":true,"sourceURL":"https://example.invalid/contact/1","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-contact-2","operatorId":"demo-op-1","baseId":"demo-base-2","email":"milan@meridian.example.invalid","published":true,"professional":true,"sourceURL":"https://example.invalid/contact/2","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-contact-3","operatorId":"demo-op-1","aircraftId":"demo-aircraft-1","email":"BARCELONA@meridian.example.invalid","published":true,"professional":true,"sourceURL":"https://example.invalid/contact/3","checkedAt":"2026-10-13T09:00:00Z"}
+  ],
+  "coverage": [
+    {"id":"demo-europe","region":"Europe","category":"Executive","status":"partial","reportedTotal":null,"sourceURL":"https://example.invalid/coverage/europe","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-africa","region":"Africa","category":"Executive","status":"partial","reportedTotal":null,"sourceURL":"https://example.invalid/coverage/africa","checkedAt":"2026-10-13T09:00:00Z"},
+    {"id":"demo-latam","region":"Latin America","category":"Executive","status":"pending","reportedTotal":null,"sourceURL":"https://example.invalid/coverage/latam","checkedAt":"2026-10-13T09:00:00Z"}
+  ]
+}

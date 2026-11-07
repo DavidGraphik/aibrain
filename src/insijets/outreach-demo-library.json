@@ -1,0 +1,756 @@
+[
+  {
+    "id": "historical-current-en",
+    "name": "Previous enquiry / service request",
+    "audience": "historical",
+    "persona": "H1_EN",
+    "locale": "en",
+    "subject": "Revisiting your travel plans",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Revisiting your travel plans",
+        "body": "{{greeting}}\n\nYou contacted Example Charter on {{previousEnquiryDate}} about {{previousService}} for {{previousItineraryOrServiceContext}}.\n\nI would welcome an update on your travel requirements and the chance to see how we could help. Do you have an upcoming trip you would like us to review?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Revisiting your travel plans",
+        "body": "{{greeting}}\n\nHave your requirements changed since your enquiry about {{previousService}}? If a trip is taking shape, send the current route, dates and passenger count and we can review the options.\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Revisiting your travel plans",
+        "body": "{{greeting}}\n\nI'll leave this with you for now. If a trip comes up, reply here and we can review current options. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Dated CRM enquiry, service and route/context; no booking, active conversation or exclusion; current permission to reconnect.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "historical-H2_EN",
+    "name": "Previous quote — controlled alternative",
+    "audience": "historical",
+    "persona": "H2_EN",
+    "locale": "en",
+    "subject": "Your previous charter enquiry",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Your previous charter enquiry",
+        "body": "{{greeting}}\n\nWe prepared a {{previousService}} quote on {{previousQuoteDate}} for {{previousRoute}}. Is a similar journey coming up, or have your plans changed?\n\nWe would check current availability and pricing afresh. Would you like an updated proposal?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Your previous charter enquiry",
+        "body": "{{greeting}}\n\nIf you are still considering a trip, we can work from your current dates and passenger count. Would you like us to review the original route or a different itinerary?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Your previous charter enquiry",
+        "body": "{{greeting}}\n\nI'll close the loop for now. If the trip comes back onto your calendar, send the details and we can reassess it. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Verified quote date, route and service; mutually exclusive with historical-enquiry for one person/account plan.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "historical-H3_EN",
+    "name": "Dormant professional partner",
+    "audience": "historical",
+    "persona": "H3_EN",
+    "locale": "en",
+    "subject": "Reconnecting on client flight requests",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Reconnecting on client flight requests",
+        "body": "{{greeting}}\n\nWe were previously in touch in {{previousContactMonth}} about {{confirmedProfessionalContext}}. Does your team still receive private flight requests from clients?\n\nMay I send you our current on-demand charter presentation and aircraft network overview?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Reconnecting on client flight requests",
+        "body": "{{greeting}}\n\nWhen an enquiry falls outside your usual arrangements, we can review the route and timing with your nominated contact. Would you be the right person to discuss this with?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Reconnecting on client flight requests",
+        "body": "{{greeting}}\n\nI'll leave this here for now. If a suitable client request arises, feel free to contact me. No client details are needed at this stage. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Confirmed previous professional cooperation/context, contact date and permitted reconnection.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "historical-H1_IT",
+    "name": "Richiesta precedente — campagna principale",
+    "audience": "historical",
+    "persona": "H1_IT",
+    "locale": "it",
+    "subject": "Voli privati — restiamo in contatto",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Voli privati — restiamo in contatto",
+        "body": "{{greeting}}\n\nIn passato ha contattato Example Charter per un volo privato, quindi desideravo ricontattarla.\n\nSe sta pensando a un nuovo viaggio, possiamo valutare le opzioni charter in base a tratta, date e numero di passeggeri. Le sarebbe utile restare in contatto per una futura richiesta?\n\nSe preferisce non ricevere altri messaggi, mi risponda ‘no grazie’ e non la ricontatterò.\n\nLuca\nInsiJets",
+        "threadRule": "initial subject for step 1; subsequent subject only if same-thread continuation unavailable"
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Un seguito alla mia email",
+        "body": "{{greeting}}\n\nLe scrivo brevemente in seguito alla mia email. Se sta organizzando un viaggio, può rispondere indicando la tratta, le date indicative e il numero di passeggeri.\n\nPotremo così valutare le opzioni adatte. Se i suoi programmi sono cambiati, nessun problema.\n\nSe preferisce non ricevere altri messaggi, mi risponda ‘no grazie’ e non la ricontatterò.\n\nLuca\nInsiJets",
+        "threadRule": "initial subject for step 1; subsequent subject only if same-thread continuation unavailable"
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Chiudo qui per ora",
+        "body": "{{greeting}}\n\nChiudo qui per ora. Se in futuro un volo privato dovesse esserle utile, può rispondere a questa email con i dettagli del viaggio. Preferisce che per il momento non la ricontatti?\n\nSe preferisce non ricevere altri messaggi, mi risponda ‘no grazie’ e non la ricontatterò.\n\nLuca\nInsiJets",
+        "threadRule": "initial subject for step 1; subsequent subject only if same-thread continuation unavailable"
+      }
+    ],
+    "sourceReference": "phase1-editorial-sha256:cb93c83b067c43fe93e7a2dc9abb7422bad96e869571f5e22f9a224234da32ce",
+    "sourceDate": "2026-10-16",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Finished proposed editorial copy for Example Representative validation. Not client-approved or permission to send.",
+      "Source sequence: H1_IT",
+      "Legacy Italian translation preserved; pending review against revised EN and confirmed salutation/language."
+    ]
+  },
+  {
+    "id": "c3",
+    "name": "PA and EA",
+    "audience": "new-icp",
+    "persona": "pa-ea",
+    "locale": "en",
+    "subject": "Private flight planning for your office",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Private flight planning for your office",
+        "body": "{{greeting}}\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nAre there any upcoming itineraries for {{principalFullName}} that are difficult to arrange with commercial airlines? We would be happy to review private flight options, without obligation, around your office's requirements.\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flight planning for your office",
+        "body": "{{greeting}}\n\nA useful starting point is the required arrival time and the office's fixed commitments. Could you share an outline route, dates and passenger count for one itinerary you would like assessed?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flight planning for your office",
+        "body": "{{greeting}}\n\nI'll leave this with you for now. If a private flight request comes up for your principal, you can reply here with the outline. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Actual responsibility for principal travel verified; principal link and eligibility recorded; suppress parallel principal approach.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-executives",
+    "name": "Top C-level executives",
+    "audience": "new-icp",
+    "persona": "executives",
+    "locale": "en",
+    "subject": "Private flight options for your business travel",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Private flight options for your business travel",
+        "body": "{{greeting}}\n\nYour role at {{companyName}}, with operations in {{siteA}} and {{siteB}}, prompted this introduction.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nMay I send you our company presentation and aircraft overview? If you have an upcoming trip, we can also prepare a current quotation around your itinerary.\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flight options for your business travel",
+        "body": "{{greeting}}\n\nFor a visit to several business locations, we would review the full journey around the meetings that are fixed. Could your travel coordinator share one proposed route and the time needed at each stop?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flight options for your business travel",
+        "body": "{{greeting}}\n\nI'll leave this here for now. If you need an additional option for a planned or urgent trip, we would be happy to review the requirements and current availability. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Confirmed eligible top C-level title and named sites, if used; sites do not prove actual travel; coordinate assistant/principal as one plan.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "f4",
+    "name": "Business owners",
+    "audience": "new-icp",
+    "persona": "business-owners",
+    "locale": "en",
+    "subject": "Travel around your business expansion",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Travel around your business expansion",
+        "body": "{{greeting}}\n\nI saw {{companyName}}'s {{announcementDate}} announcement about {{expansionProject}}. Congratulations on the development.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nIf the expansion involves upcoming site visits, would it be useful to review private flight options for a specific itinerary?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Travel around your business expansion",
+        "body": "{{greeting}}\n\nFor a site visit, we can review the airport options, visit duration and onward journey to the facility. Is there an outline itinerary you would like us to assess?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Travel around your business expansion",
+        "body": "{{greeting}}\n\nI'll leave this with you. If a site visit comes up, let me know and we can review current private flight options. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Confirmed owner and dated official expansion announcement; do not imply expansion establishes a flight need.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-investors",
+    "name": "Investors",
+    "audience": "new-icp",
+    "persona": "investors",
+    "locale": "en",
+    "subject": "Flight planning around your investor meetings",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Flight planning around your investor meetings",
+        "body": "{{greeting}}\n\nYour announced participation in {{roadshowName}} on {{roadshowDate}} prompted this note.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nIf you are arranging travel around the event, we would be happy to review your requirements. May I send you a presentation about Example Charter and our aircraft network?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Flight planning around your investor meetings",
+        "body": "{{greeting}}\n\nFor a roadshow or series of meetings, we can start with the cities and meeting times that cannot move. Could your coordinator share one itinerary they would like assessed?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Flight planning around your investor meetings",
+        "body": "{{greeting}}\n\nI'll leave this here for now. If a roadshow or portfolio visit needs flight options, you or your coordinator can contact me. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Named future roadshow and recipient participation verified; no inferred private transaction or journey.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-family-offices",
+    "name": "Family offices and wealth managers",
+    "audience": "new-icp",
+    "persona": "family-offices",
+    "locale": "en",
+    "subject": "Aviation enquiries through your office",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Aviation enquiries through your office",
+        "body": "{{greeting}}\n\nI saw that {{officeName}} provides {{principalServiceName}} for principals.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nWe would be happy to discuss how your nominated contact handles private flight enquiries. May I send you our company presentation and aircraft network overview? No principal details are needed at this stage.\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Aviation enquiries through your office",
+        "body": "{{greeting}}\n\nWe could start with your preferred briefing and approval process before considering an itinerary. What would your office need from an aviation contact before making a permitted introduction?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Aviation enquiries through your office",
+        "body": "{{greeting}}\n\nI'll leave this with your office. Your nominated coordinator is welcome to contact me when a private flight request arises. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Verified principal services and aviation/travel or supplier-introduction remit; investment-only offices held; replaces independent wealth sequence.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-sports-managers",
+    "name": "Sports managers",
+    "audience": "new-icp",
+    "persona": "sports-managers",
+    "locale": "en",
+    "subject": "Flights between sporting and sponsor commitments",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Flights between sporting and sponsor commitments",
+        "body": "{{greeting}}\n\nI saw that {{agencyName}} represents athletes taking part in {{competitionName}}.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nIf useful, we can review flights between competitions, sponsor events and other commitments. May I send you our company presentation and aircraft network overview?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Flights between sporting and sponsor commitments",
+        "body": "{{greeting}}\n\nFor an event transfer, we would start with the release time, required arrival time and travelling party. Could your travel team share one itinerary they would like assessed, including any equipment requirements?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Flights between sporting and sponsor commitments",
+        "body": "{{greeting}}\n\nI'll leave this with you. If your travel team needs options for competition or sponsor travel, let me know the outline. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Roster, future competition and actual travel responsibility verified; sponsor travel is an offer, not an asserted itinerary.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-artist-managers",
+    "name": "Artist managers",
+    "audience": "new-icp",
+    "persona": "artist-managers",
+    "locale": "en",
+    "subject": "Flight planning for your artists",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Flight planning for your artists",
+        "body": "{{greeting}}\n\nI saw your team is working on {{tourOrPerformanceName}}.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nWe would be happy to review private flight options between performances and for other travel requirements. May I send you our company presentation and aircraft network overview?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Flight planning for your artists",
+        "body": "{{greeting}}\n\nFor a transfer between performances, we would review departure after the show and arrival before the next commitment. Could we assess one leg with your tour or production coordinator?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Flight planning for your artists",
+        "body": "{{greeting}}\n\nI'll leave this here for now. Your coordinator can contact me if a performance transfer or another trip needs private flight options. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Verified manager/logistics remit and named tour or performance relationship; no inferred travel plans.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-athletes",
+    "name": "Elite athletes — general opener",
+    "audience": "new-icp",
+    "persona": "athletes",
+    "locale": "en",
+    "subject": "Private flight options for your travel",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Private flight options for your travel",
+        "body": "{{greeting}}\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nWe would be happy to review private flight options for your sporting commitments or other travel. Would you or your manager like support assessing an upcoming trip?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flight options for your travel",
+        "body": "{{greeting}}\n\nFor any itinerary you would like assessed, we can review the route, required arrival time and travelling party with your coordinator. Would you like us to work through the details with that person?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flight options for your travel",
+        "body": "{{greeting}}\n\nI'll leave this with you. Your manager or travel coordinator can contact me whenever private flight options would be useful. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Verified identity and professional role; prefer authorised manager; do not require competition-congratulations opener or imply a known trip.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-artists-djs",
+    "name": "Artists and DJs",
+    "audience": "new-icp",
+    "persona": "artists-djs",
+    "locale": "en",
+    "subject": "Private flights for your tour and other travel",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Private flights for your tour and other travel",
+        "body": "{{greeting}}\n\nI saw the announcement for {{tourName}}, including {{cityA}} and {{cityB}}.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nWould you or your tour manager like to review private flight options for the tour or another upcoming itinerary?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flights for your tour and other travel",
+        "body": "{{greeting}}\n\nWe can start with one transfer between {{cityA}} and {{cityB}}, taking performance times and the travelling party into account. Would you like us to assess it with your tour manager, or is there another trip to review?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flights for your tour and other travel",
+        "body": "{{greeting}}\n\nI'll leave this here for now. If you or your tour manager need flight options for the tour or another trip, feel free to contact me. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Official upcoming tour with verified dates/cities; prefer authorised manager and suppress parallel approaches.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "a1",
+    "name": "Art and galleries — future review",
+    "audience": "new-icp",
+    "persona": "art",
+    "locale": "en",
+    "subject": "Passenger travel around art events",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Passenger travel around art events",
+        "body": "{{greeting}}\n\nI saw your gallery's programme for {{artEventName}} on {{artEventDate}}.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nWe can review passenger travel for your team or invited clients around fairs, auctions and exhibitions. If you are planning a visit, would private flight options be useful?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Passenger travel around art events",
+        "body": "{{greeting}}\n\nFor an art event, we can review the airport, onward journey and timing around appointments. Could we assess an outline passenger itinerary with your authorised travel coordinator?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Passenger travel around art events",
+        "body": "{{greeting}}\n\nI'll leave this here. If your team or invited clients need passenger flight options for a future fair, auction or exhibition, you can contact me. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Parked at 0% in month one; verified relevant future fair/auction/exhibition and travel role; passenger travel only.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-yachting",
+    "name": "Yachting — future review",
+    "audience": "new-icp",
+    "persona": "yachting",
+    "locale": "en",
+    "subject": "Guest flights and marina transfers",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Guest flights and marina transfers",
+        "body": "{{greeting}}\n\nI saw your team handles {{guestServiceName}}. I'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements. We can review private flight options for guest arrivals and departures, taking the onward marina transfer into account.\n\nWould it help to assess a flight around a confirmed embarkation time with your guest coordinator?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Guest flights and marina transfers",
+        "body": "{{greeting}}\n\nFor an embarkation or disembarkation, we can review flight timing against the confirmed marina transfer. Could your coordinator share an outline route, guest count and required arrival time?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Guest flights and marina transfers",
+        "body": "{{greeting}}\n\nI'll leave this with you. If a guest arrival or departure needs private flight options, feel free to send the outline. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Parked at 0% in month one; future Example Representative review required; verify guest logistics responsibility; use only authorised itinerary details.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-luxury-travel",
+    "name": "Luxury travel partners",
+    "audience": "new-icp",
+    "persona": "luxury-travel",
+    "locale": "en",
+    "subject": "An aviation contact for your client itineraries",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "An aviation contact for your client itineraries",
+        "body": "{{greeting}}\n\nI noticed your team offers {{bespokeTravelService}}.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nWould an additional aviation contact be useful for your charter enquiries? May I share a presentation about our services and aircraft network?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: An aviation contact for your client itineraries",
+        "body": "{{greeting}}\n\nFor a resort or multi-stop itinerary, we can review flight timing alongside the onward journey. Could your team share an outline brief, without client details, to assess the aviation requirements?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: An aviation contact for your client itineraries",
+        "body": "{{greeting}}\n\nI'll leave this with your team. When a client itinerary calls for a private flight, feel free to get in touch. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Bespoke service and recipient aviation coordination remit verified; no sharing private client data.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-politicians",
+    "name": "Politicians — future review",
+    "audience": "new-icp",
+    "persona": "politicians",
+    "locale": "en",
+    "subject": "Official travel enquiries",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Official travel enquiries",
+        "body": "{{greeting}}\n\nI'm Example Representative at Example Charter. We can review charter options for authorised professional travel, following your procurement procedures.\n\nCould you direct me to the person responsible for official travel enquiries?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Official travel enquiries",
+        "body": "{{greeting}}\n\nAny assessment would follow your office's procurement and approval process. Could the responsible administrator confirm the appropriate channel for a charter enquiry?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Official travel enquiries",
+        "body": "{{greeting}}\n\nI'll close this enquiry for now. If an authorised professional travel requirement arises, your travel administrator is welcome to contact me through this channel. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; never create a separate overlapping follow-up sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Revised draft against Example Representative feedback; not approved or permission to send.",
+      "Parked at 0% in month one; separate future review and procurement approval; official professional travel only.",
+      "Confirmed recipient language and complete CRM salutation required; held commercial claims/attachments excluded."
+    ]
+  },
+  {
+    "id": "icp-pet-relocation",
+    "name": "Pet relocation partners",
+    "audience": "new-icp",
+    "persona": "pet-relocation",
+    "locale": "en",
+    "subject": "Private flight coordination for pet relocations",
+    "steps": [
+      {
+        "offset": 0,
+        "offsetUnit": "calendar-days",
+        "subject": "Private flight coordination for pet relocations",
+        "body": "{{greeting}}\n\nI saw that {{companyName}} provides {{verifiedPetRelocationService}} in {{verifiedServiceLocation}}.\n\nI'm Example Representative at Example Charter. We arrange private charter options around individual travel requirements.\n\nWhen a relocation involves a family travelling with a pet, would an additional aviation contact be useful? We would be happy to explain how we assess flight options alongside the relocation team's requirements.\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; no overlapping sequence."
+      },
+      {
+        "offset": 7,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flight coordination for pet relocations",
+        "body": "{{greeting}}\n\nAn initial discussion could cover the route, travelling party and pet requirements without client details. Would you be the right person to discuss how a permitted referral would work?\n\nIf you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; no overlapping sequence."
+      },
+      {
+        "offset": 17,
+        "offsetUnit": "calendar-days",
+        "subject": "Re: Private flight coordination for pet relocations",
+        "body": "{{greeting}}\n\nI'll leave this here for now. If an appropriate relocation enquiry needs private flight options, feel free to contact me. Pet acceptance, documentation and entry requirements would be checked for the specific trip. If you prefer no further follow-up, just let me know.\n\nKind regards,\nExample Representative\nInsiJets",
+        "threadRule": "Same-thread continuation; no overlapping sequence."
+      }
+    ],
+    "sourceReference": "luca-feedback-2026-10-19:doc02-draft-revision",
+    "sourceDate": "2026-10-22",
+    "cadenceOriginal": "Source offsets 0/+7/+17 calendar days. Same-thread continuation; later subject only when a new thread is needed.",
+    "version": 1,
+    "reviewState": "draft",
+    "sendEnabled": false,
+    "notes": [
+      "Pet relocation partner copy, pending client/geography decision; no enrolment."
+    ]
+  }
+]

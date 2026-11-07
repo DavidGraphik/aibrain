@@ -1,0 +1,10 @@
+{
+  "status": "DRAFT_NOT_SUBMITTED_NOT_APPROVED",
+  "instructions": "Revisar con el responsable, solicitar aprobación Meta y verificar cuenta/número/idioma antes de configurar. No acredita envíos. Los sufijos :ca fuerzan el idioma del cuerpo enviado; no usar el idioma es por defecto para estos textos.",
+  "templates": [
+    {"env": "WHATSAPP_TEMPLATE_BROADCAST", "value": "arnall_disponibilitat_setmanal:ca", "name": "arnall_disponibilitat_setmanal", "language": "ca", "bodyParameters": ["nombre", "semana", "fechaLimite"], "body": "Hola {{1}}. Preparem l'horari de la setmana del {{2}}. Respon amb la disponibilitat dels set dies (matí, tarda, tots dos o no disponible) i les observacions que calgui. El termini és el {{3}}. Si falta algun dia, quedarà pendent de revisió."},
+    {"env": "WHATSAPP_TEMPLATE_REMINDER", "value": "arnall_recordatori_disponibilitat:ca", "name": "arnall_recordatori_disponibilitat", "language": "ca", "bodyParameters": ["nombre", "semana"], "body": "Hola {{1}}. Encara tenim pendent la teva resposta per a la setmana del {{2}}. Indica la disponibilitat dels set dies i les observacions. Gràcies."},
+    {"env": "WHATSAPP_TEMPLATE_MANAGER_REMINDER", "value": "arnall_recordatori_responsable:ca", "name": "arnall_recordatori_responsable", "language": "ca", "bodyParameters": ["nombreResponsable", "semana"], "body": "Hola {{1}}. Hi ha recollides pendents de revisió per a la setmana del {{2}}. Consulta horarIA per comprovar les persones i les incidències abans de preparar l'horari."},
+    {"env": "WHATSAPP_TEMPLATE_HORARIO", "value": "arnall_horari_botiga:ca", "name": "arnall_horari_botiga", "language": "ca", "header": {"format": "DOCUMENT", "purpose": "PDF de la propia tienda"}, "bodyParameters": ["nombreResponsable", "tienda", "semana"], "body": "Hola {{1}}. Adjuntem l'horari de {{2}} per a la setmana del {{3}}. Revisa el document abans de repartir-lo."}
+  ]
+}

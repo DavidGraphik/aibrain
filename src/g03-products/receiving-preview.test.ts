@@ -1,0 +1,40 @@
+import {afterEach, expect, it, vi} from 'vitest';
+import {mkdtemp, rm} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+vi.mock('server-only',()=>({}));
+const sage=vi.hoisted(()=>({read:vi.fn(),write:vi.fn(),capabilities:vi.fn(async()=>({providerWrites:true,productionWrites:true}))}));
+vi.mock('@/connectors/g03-sage-service',()=>({g03SageReadForIdentity:sage.read,g03SageReceivingCapabilities:sage.capabilities,g03SageReceiptWriteForIdentity:sage.write}));
+import {ProductStore} from './persistence';
+import {mutateApp} from './apps';
+import {appPreviewContext} from './app-preview';
+import {receivingTool} from './receiving-tools';
+import {createReceivingProvider} from './receiving-service';
+import {mutateReceiving,processReceivingReceipt} from './receiving';
+import type {ProductContext} from './access';
+import type {InstallationConfig} from '@/config/installation-schema';
+const dirs:string[]=[];
+afterEach(async()=>{vi.clearAllMocks();await Promise.all(dirs.splice(0).map(dir=>rm(dir,{recursive:true,force:true})));});
+it('rejects every live receiving action in an actual synthetic preview context before contacting SAGE or mutating either store',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'g03-receipt-preview-'));dirs.push(dir);
+ const live:ProductContext={installationId:'g03-qa',actor:'fixture-actor',grants:['read','orders','receipts','validate-receipts','apps'],appDesigner:true,store:new ProductStore(dir,'g03-qa')};
+ const app=await mutateApp(live,{action:'create',title:'Fixture',html:'<h1>Fixture</h1>',fields:[],instruction:'Synthetic test'}) as {id:string};
+ const preview=await appPreviewContext(live,app.id);
+ expect(preview.syntheticPreview).toBe(true);
+ const config={installationId:'g03-qa',paths:{dataRoot:dir,usersRoot:dir}} as InstallationConfig;
+ const writeLive=vi.spyOn(live.store,'mutate'),writePreview=vi.spyOn(preview.store,'mutate');
+ const read=await receivingTool(preview,{action:'read'},config);
+ if(!('writePolicy' in read) || !('permissions' in read)) throw new Error('Expected receiving workspace readback');
+ expect(read.writePolicy).toEqual({providerWrites:false,productionWrites:false});
+ expect(read.permissions).toEqual({configure:false,submit:false,validate:false});
+ for(const action of ['configure','submit','validate','sync','preview']){
+  await expect(receivingTool(preview,{action},config)).rejects.toMatchObject({status:403});
+ }
+ await expect(createReceivingProvider(preview,config)).rejects.toMatchObject({status:403});
+ const provider={read:vi.fn(),send:vi.fn(),authorize:vi.fn(),prepare:vi.fn(),reconcile:vi.fn(),stockProof:vi.fn()} as never;
+ await expect(mutateReceiving(preview,{action:'validate'},provider)).rejects.toMatchObject({status:403});
+ await expect(processReceivingReceipt(preview,'fixture',provider)).rejects.toMatchObject({status:403});
+ expect(sage.capabilities).not.toHaveBeenCalled();expect(sage.read).not.toHaveBeenCalled();expect(sage.write).not.toHaveBeenCalled();
+ expect(writeLive).not.toHaveBeenCalled();expect(writePreview).not.toHaveBeenCalled();
+ for(const fn of Object.values(provider as Record<string,ReturnType<typeof vi.fn>>))expect(fn).not.toHaveBeenCalled();
+});

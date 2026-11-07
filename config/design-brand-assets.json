@@ -1,0 +1,9 @@
+[
+  {
+    "companySlug": "arnall",
+    "label": "Example Company",
+    "sourcePath": "branding/approved/example-logo.jpg",
+    "workspacePath": ".aibrain-brand/arnall-logo.jpg",
+    "sha256": "c5deea4fe4ef8510afafc2932b83fc05a8a11f19f69d1cadaadf300c3ee146c0"
+  }
+]

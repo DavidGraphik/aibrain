@@ -1,0 +1,387 @@
+.panel {
+  isolation: isolate;
+  flex-shrink: 0;
+  margin: 0;
+  border: 0;
+  border-right: 0;
+  border-radius: 0;
+  background: var(--sidebar);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+/* Keep the existing decorative layers inert, with one flat native surface. */
+.texture,
+.glass {
+  display: none;
+}
+
+.content {
+  position: relative;
+  z-index: 2;
+}
+
+.panel .rail {
+  z-index: 3;
+  background: var(--sidebar);
+}
+
+.panel button {
+  border-radius: 8px;
+}
+
+.panel :global([data-testid="sidebar-brand"]) > :global(.ui-brand-compact) {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.panel :global([data-testid="sidebar-header"]) button {
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.panel :global([data-sidebar="menu"]) {
+  gap: 1px;
+}
+
+.panel :global([data-sidebar="menu-button"]),
+.panel .threadRow {
+  min-height: 36px;
+  height: 36px;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  letter-spacing: -0.12px;
+  box-shadow: none;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.panel :global([data-sidebar="menu-button"]) > svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+/* The primitive keeps its measured layers for menu geometry and keyboard
+   navigation. Row-local fills avoid a highlight springing across the list. */
+.panel :global(.bg-active),
+.panel :global(.bg-hover) {
+  background: transparent;
+  border-radius: 8px !important;
+}
+
+.panel :global([data-sidebar="menu-button"]):not(:disabled):hover,
+.panel .threadRow:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.panel :global([data-sidebar="menu-button"][aria-current="page"]),
+.panel .threadRow[aria-current="page"] {
+  background: var(--surface-selected);
+  color: var(--text);
+}
+
+.panel :global([data-sidebar="menu-button"]):focus-visible,
+.panel .threadRow:focus-visible,
+.disclosure:focus-visible,
+.showMore:focus-visible,
+.profileCard:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.panel :global([data-sidebar="menu-button"]) > :global(.inline-grid) {
+  min-width: 0;
+  flex: 1;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* One steady text weight keeps labels as quiet as native navigation. */
+.panel :global([data-sidebar="menu-button"]) > :global(.inline-grid) > span {
+  color: inherit;
+  font-weight: 400 !important;
+}
+
+.panel :global([data-sidebar="menu-button"]) > :global(.inline-grid) > span[aria-hidden="true"] {
+  opacity: 0 !important;
+}
+
+.panel :global([data-sidebar="menu-button"]) > :global(.inline-grid) > span:not([aria-hidden="true"]) {
+  opacity: 1 !important;
+}
+
+.panel .newConversation {
+  margin-bottom: 1px;
+  color: var(--text);
+}
+
+.panel .newConversation:disabled {
+  opacity: 0.4;
+}
+
+.section {
+  margin-top: 20px;
+}
+
+.panel .sectionLabel {
+  gap: 5px;
+  padding-inline: 8px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.sectionLabel > svg {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.sectionLabel:hover > svg,
+.sectionLabel:focus-visible > svg,
+.sectionLabel[aria-expanded="false"] > svg {
+  opacity: 1;
+}
+
+.panel .projectRow {
+  position: relative;
+  padding-left: 36px;
+  padding-right: 36px;
+}
+
+.panel .projectRow > svg:first-child {
+  position: absolute;
+  left: 8px;
+  color: var(--text-secondary);
+  transition: opacity 120ms ease;
+}
+
+.panel .projectRow[data-project-active="true"] {
+  color: var(--text);
+}
+
+.disclosure {
+  position: absolute;
+  inset: 0 auto 0 2px;
+  z-index: 20;
+  display: grid;
+  width: 32px;
+  place-items: center;
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: color 120ms ease, opacity 120ms ease;
+}
+
+.disclosure > svg {
+  width: 13px;
+  height: 13px;
+}
+
+.panel :global([data-testid="sidebar-project-header"]):hover .disclosure,
+.panel :global([data-testid="sidebar-project-header"]):focus-within .disclosure {
+  opacity: 1;
+}
+
+.panel :global([data-testid="sidebar-project-header"]):hover .projectRow > svg:first-child,
+.panel :global([data-testid="sidebar-project-header"]):focus-within .projectRow > svg:first-child {
+  opacity: 0;
+}
+
+.projectChildren {
+  margin: 1px 0 10px;
+  padding-left: 24px;
+  border: 0;
+}
+
+.panel .threadRow {
+  padding-right: 36px;
+}
+
+.panel .threadRow > span:first-child {
+  min-width: 0;
+  font-size: inherit;
+}
+
+.projectChildren .threadRow {
+  padding-left: 12px;
+}
+
+.showMore {
+  min-height: 36px;
+  margin-top: 2px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--text-subtle);
+  font-size: 13px;
+  text-align: left;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.showMore:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.panel :global(.sidebar-item-action) {
+  right: 2px;
+  width: 32px;
+  height: 32px;
+  transition: color 120ms ease, background-color 120ms ease, opacity 120ms ease;
+}
+
+.panel :global(.sidebar-item-action):hover {
+  background: var(--surface-selected);
+  color: var(--text);
+}
+
+.panel :global(.sidebar-item-action)[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.account {
+  border: 0;
+  background: var(--sidebar);
+  box-shadow: none;
+}
+
+.panel .profileCard {
+  min-height: 56px;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  transition: background-color 120ms ease;
+}
+
+.profileCard:hover,
+.profileCard[aria-expanded="true"] {
+  background: var(--surface-hover);
+}
+
+.panel .contextMenu {
+  border-radius: 12px;
+}
+
+.contextMenu :global([role="menuitem"]) {
+  min-height: 36px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+@media (max-width: 767px), (hover: none), (pointer: coarse) {
+  .panel :global([data-sidebar="menu-button"]),
+  .panel .threadRow,
+  .contextMenu :global([role="menuitem"]) {
+    min-height: 44px;
+    height: auto;
+  }
+
+  .panel :global(.sidebar-item-action) {
+    right: 0;
+    width: 44px;
+    height: 44px;
+    opacity: 1;
+  }
+
+  .panel .threadRow,
+  .panel .projectRow {
+    padding-right: 44px;
+  }
+
+  .panel .projectRow {
+    padding-left: 44px;
+  }
+
+  .disclosure {
+    left: 0;
+    width: 44px;
+    opacity: 1;
+  }
+
+  .panel .projectRow > svg:first-child {
+    opacity: 0;
+  }
+
+  .sectionLabel > svg {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .panel *,
+  .panel *::before,
+  .panel *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .panel {
+    border-right-color: var(--text-secondary);
+  }
+
+  .panel :global([data-sidebar="menu-button"][aria-current="page"]),
+  .panel .threadRow[aria-current="page"] {
+    outline: 1px solid var(--text-secondary);
+    outline-offset: -1px;
+  }
+}
+
+@media (forced-colors: active) {
+  .panel,
+  .account {
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .panel :global([data-sidebar="menu-button"][aria-current="page"]),
+  .panel .threadRow[aria-current="page"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .panel .projectRow > svg:first-child {
+    color: inherit;
+  }
+}
+
+/* Reserve one stable action column; names do not shift on hover. */
+.panel .projectRow { padding-right: 44px; }
+.panel .projectRow > span { min-width: 0; }
+
+/* The action hit area belongs to its row, including compact 28px chats.
+   A 44px-tall floating control otherwise steals hover/clicks from neighbours. */
+.panel :global(.sidebar-item-action) {
+  top: 0;
+  bottom: 0;
+  height: 100%;
+  translate: none;
+  transform: none;
+}
+.panel :global(.sidebar-item-action[aria-expanded="true"]) { opacity: 1; }
+.panel .threadRow { padding-right: 44px; }
+
+/* Touch actions retain a 44px target by growing their own navigation row. */
+@media (max-width: 767px), (pointer: coarse) {
+  .panel .projectRow,
+  .panel .threadRow { min-height: 44px; }
+}
+
+/* The wide official G03 mark needs its own slot before the product name. */
+.panel :global([data-testid="sidebar-brand"]) > :global(.ui-brand-compact[data-brand="g03"]) {
+  width: 40px;
+}

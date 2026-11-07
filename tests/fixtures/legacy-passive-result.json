@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "reader": "xlrd-2.0.2",
+  "date1904": false,
+  "sheets": [
+    {
+      "name": "Test basic 1",
+      "cells": [
+        [
+          0,
+          0,
+          "text",
+          "Columna fict\u00edcia 1",
+          false
+        ],
+        [
+          0,
+          1,
+          "text",
+          "Columna fict\u00edcia 2",
+          false
+        ],
+        [
+          0,
+          2,
+          "text",
+          "Columna fict\u00edcia 3",
+          false
+        ],
+        [
+          1,
+          0,
+          "number",
+          100.25,
+          false
+        ],
+        [
+          1,
+          1,
+          "number",
+          101.25,
+          false
+        ],
+        [
+          1,
+          2,
+          "number",
+          102.25,
+          false
+        ],
+        [
+          2,
+          0,
+          "text",
+          "#UNVERIFIED_FORMULA_NO_SAVED_VALUE",
+          true
+        ],
+        [
+          2,
+          1,
+          "text",
+          "#UNVERIFIED_FORMULA_NO_SAVED_VALUE",
+          true
+        ],
+        [
+          2,
+          2,
+          "text",
+          "#UNVERIFIED_FORMULA_NO_SAVED_VALUE",
+          true
+        ]
+      ],
+      "formulas": [
+        [
+          2,
+          0,
+          "A2*2.0",
+          "missing"
+        ],
+        [
+          2,
+          1,
+          "B2*2.0",
+          "missing"
+        ],
+        [
+          2,
+          2,
+          "C2*2.0",
+          "missing"
+        ]
+      ]
+    }
+  ],
+  "cellCount": 9,
+  "formulaCount": 3,
+  "missingFormulaCaches": 3,
+  "undecodedFormulas": 0,
+  "omittedSheets": 0,
+  "linkRecords": 1
+}

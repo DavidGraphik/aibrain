@@ -1,0 +1,7 @@
+/** Opaque-origin iframe. Generated programs have no network, cookies, host DOM or navigations. */
+export const APP_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'; frame-ancestors 'self'; sandbox allow-scripts allow-forms";
+export function appDocument(html: string, channel: string) {
+  // The bridge is installed before generated code. Only the parent holds credentials.
+  const bridge = `<script>(()=>{const channel=${JSON.stringify(channel)};let counter=0;const pending=new Map();window.aibrain={data:(operation,input={})=>new Promise((resolve,reject)=>{const requestId=String(++counter);pending.set(requestId,{resolve,reject});parent.postMessage({type:'aibrain-app-data',channel,requestId,operation,input},'*');setTimeout(()=>{const p=pending.get(requestId);if(p){pending.delete(requestId);p.reject(Error('Temps d’espera exhaurit.'))}},15000)})};addEventListener('message',e=>{if(e.source!==parent||e.data?.channel!==channel||e.data?.type!=='aibrain-app-result')return;const p=pending.get(e.data.requestId);if(!p)return;pending.delete(e.data.requestId);e.data.error?p.reject(Error(e.data.error)):p.resolve(e.data.result)})})();<\/script>`;
+  return `<!doctype html><html lang="ca"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${bridge}</head><body>${html}</body></html>`;
+}

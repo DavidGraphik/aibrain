@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">AI</title>
+  <rect width="64" height="64" rx="18" fill="#315ee7"/>
+  <path d="M32 13 14 51h11l3-8h10l3 8h11L36 13Zm3 21h-6l3-8z" fill="#fff"/>
+</svg>

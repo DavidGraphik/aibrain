@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "arnall-company-brief",
+  "label": "Contexto confirmado de Arnall",
+  "version": "1.0.0",
+  "category": "installation",
+  "provenance": "Arnall company context versioned in config/company-context/arnall; checked 2026-08-27 and packaged 2026-08-30.",
+  "files": ["SKILL.md", "resources/confirmed-context.md"]
+}

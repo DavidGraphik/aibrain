@@ -1,0 +1,474 @@
+name: "${AIBRAIN_COMPOSE_PROJECT_NAME:?set AIBRAIN_COMPOSE_PROJECT_NAME}"
+
+services:
+  app:
+    image: "${AIBRAIN_IMAGE:?set AIBRAIN_IMAGE to an immutable image digest}"
+    env_file:
+      - "${AIBRAIN_RUNTIME_ENV_FILE:?set AIBRAIN_RUNTIME_ENV_FILE}"
+      - "${AIBRAIN_EGRESS_ENV_FILE:?set AIBRAIN_EGRESS_ENV_FILE}"
+    environment:
+      AIBRAIN_INSTALLATION_CONFIG: /etc/aibrain/installation.json
+      AIBRAIN_CHROME_BIN: /usr/local/bin/aibrain-chrome
+      AIBRAIN_SOFFICE_BIN: /usr/local/bin/aibrain-soffice
+      AIBRAIN_PDFINFO_BIN: /usr/local/bin/aibrain-pdfinfo
+      AIBRAIN_PDFTOPPM_BIN: /usr/local/bin/aibrain-pdftoppm
+      AIBRAIN_PDFTOTEXT_BIN: /usr/local/bin/aibrain-pdftotext
+      AIBRAIN_QPDF_BIN: /usr/local/bin/aibrain-qpdf
+      AIBRAIN_CODEX_EXPECTED_VERSION: "0.162.1"
+      CHAT_RUNTIME: codex
+      CODEX_BIN: /usr/local/bin/aibrain-codex-worker
+      CODEX_APPROVAL_POLICY: never
+      AIBRAIN_BROWSER_INTERACTIVE_APPROVALS: disabled
+      CODEX_SANDBOX: workspace-write
+      NODE_ENV: production
+      TZ: "${AIBRAIN_TIMEZONE:-Europe/Madrid}"
+      AIBRAIN_EGRESS_PROXY_URL: http://egress-gateway:8080
+      AIBRAIN_RUNTIME_INSTANCE: app
+      AIBRAIN_REVISION: "${AIBRAIN_REVISION:?set AIBRAIN_REVISION to the exact git commit}"
+      AIBRAIN_AUTOMATION_WORKER_ENABLED: "${AIBRAIN_AUTOMATION_WORKER_ENABLED:-true}"
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+    user: "${AIBRAIN_UID:-10001}:${AIBRAIN_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=aibrain-container
+      # Bubblewrap mounts a fresh procfs inside each private PID namespace.
+      # Docker's inherited masked proc submounts make modern kernels reject
+      # that mount as "too revealing". The process remains non-root, has no
+      # capabilities, uses the fail-closed seccomp profile and a read-only root.
+      - systempaths=unconfined
+      - seccomp=./browser/seccomp_profile.json
+    restart: unless-stopped
+    depends_on:
+      egress-gateway:
+        condition: service_healthy
+    stop_grace_period: 45s
+    pids_limit: ${AIBRAIN_PIDS_LIMIT:-768}
+    cpus: ${AIBRAIN_CPU_LIMIT:-2.0}
+    mem_limit: "${AIBRAIN_MEMORY_LIMIT:-4g}"
+    mem_reservation: "${AIBRAIN_MEMORY_RESERVATION:-1g}"
+    shm_size: "${AIBRAIN_SHM_SIZE:-1g}"
+    ulimits:
+      nofile:
+        soft: ${AIBRAIN_NOFILE_SOFT:-8192}
+        hard: ${AIBRAIN_NOFILE_HARD:-16384}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=${AIBRAIN_TMP_SIZE:-512m},mode=1777
+      - /run:rw,nosuid,nodev,noexec,size=16m,mode=0755
+      - /app/.next/cache:rw,nosuid,nodev,noexec,size=${AIBRAIN_NEXT_CACHE_SIZE:-256m},mode=0700,uid=${AIBRAIN_UID:-10001},gid=${AIBRAIN_GID:-10001}
+    volumes:
+      - type: bind
+        source: "${AIBRAIN_INSTALLATION_CONFIG_HOST:?set AIBRAIN_INSTALLATION_CONFIG_HOST}"
+        target: /etc/aibrain/installation.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: aibrain-data
+        target: /var/lib/aibrain/data
+      - type: volume
+        source: aibrain-backups
+        target: /var/lib/aibrain/data/backups
+      - type: volume
+        source: aibrain-restores
+        target: /var/lib/aibrain-restores
+      - type: bind
+        source: "${AIBRAIN_SOURCE_HOST_PATH:?set AIBRAIN_SOURCE_HOST_PATH}"
+        target: /srv/aibrain/source-ro
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${AIBRAIN_PUBLISH_HOST_PATH:?set AIBRAIN_PUBLISH_HOST_PATH}"
+        target: /srv/aibrain/publish-rw
+        bind:
+          create_host_path: false
+    networks:
+      - aibrain-internal
+    healthcheck:
+      test: [CMD, node, /usr/local/share/aibrain/healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${AIBRAIN_LOG_MAX_SIZE:-10m}"
+        max-file: "${AIBRAIN_LOG_MAX_FILES:-5}"
+        mode: non-blocking
+        max-buffer-size: "${AIBRAIN_LOG_BUFFER_SIZE:-4m}"
+
+  automation-worker:
+    image: "${AIBRAIN_IMAGE:?set AIBRAIN_IMAGE to an immutable image digest}"
+    entrypoint: [/usr/bin/tini, --, /usr/local/bin/aibrain-entrypoint]
+    command: [node, /app/automation-worker.mjs, --interval-ms, "${AIBRAIN_AUTOMATIONS_INTERVAL_MS:-30000}"]
+    env_file:
+      - "${AIBRAIN_RUNTIME_ENV_FILE:?set AIBRAIN_RUNTIME_ENV_FILE}"
+      - "${AIBRAIN_EGRESS_ENV_FILE:?set AIBRAIN_EGRESS_ENV_FILE}"
+    environment:
+      AIBRAIN_INSTALLATION_CONFIG: /etc/aibrain/installation.json
+      AIBRAIN_CHROME_BIN: /usr/local/bin/aibrain-chrome
+      AIBRAIN_SOFFICE_BIN: /usr/local/bin/aibrain-soffice
+      AIBRAIN_PDFINFO_BIN: /usr/local/bin/aibrain-pdfinfo
+      AIBRAIN_PDFTOPPM_BIN: /usr/local/bin/aibrain-pdftoppm
+      AIBRAIN_PDFTOTEXT_BIN: /usr/local/bin/aibrain-pdftotext
+      AIBRAIN_QPDF_BIN: /usr/local/bin/aibrain-qpdf
+      AIBRAIN_CODEX_EXPECTED_VERSION: "0.162.1"
+      CHAT_RUNTIME: codex
+      CODEX_BIN: /usr/local/bin/aibrain-codex-worker
+      CODEX_APPROVAL_POLICY: never
+      AIBRAIN_BROWSER_INTERACTIVE_APPROVALS: disabled
+      CODEX_SANDBOX: workspace-write
+      NODE_ENV: production
+      TZ: "${AIBRAIN_TIMEZONE:-Europe/Madrid}"
+      AIBRAIN_EGRESS_PROXY_URL: http://egress-gateway:8080
+      AIBRAIN_RUNTIME_INSTANCE: automation-worker
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.component: automation-worker
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+    user: "${AIBRAIN_UID:-10001}:${AIBRAIN_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=aibrain-container
+      - systempaths=unconfined
+      - seccomp=./browser/seccomp_profile.json
+    restart: unless-stopped
+    depends_on:
+      egress-gateway:
+        condition: service_healthy
+    stop_grace_period: 45s
+    pids_limit: ${AIBRAIN_AUTOMATIONS_PIDS_LIMIT:-256}
+    cpus: ${AIBRAIN_AUTOMATIONS_CPU_LIMIT:-1.0}
+    mem_limit: "${AIBRAIN_AUTOMATIONS_MEMORY_LIMIT:-2g}"
+    mem_reservation: "${AIBRAIN_AUTOMATIONS_MEMORY_RESERVATION:-512m}"
+    shm_size: "${AIBRAIN_AUTOMATIONS_SHM_SIZE:-512m}"
+    ulimits:
+      nofile:
+        soft: ${AIBRAIN_AUTOMATIONS_NOFILE_SOFT:-4096}
+        hard: ${AIBRAIN_AUTOMATIONS_NOFILE_HARD:-8192}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=${AIBRAIN_AUTOMATIONS_TMP_SIZE:-256m},mode=1777
+      - /run:rw,nosuid,nodev,noexec,size=16m,mode=0755
+    volumes:
+      - type: bind
+        source: "${AIBRAIN_INSTALLATION_CONFIG_HOST:?set AIBRAIN_INSTALLATION_CONFIG_HOST}"
+        target: /etc/aibrain/installation.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: aibrain-data
+        target: /var/lib/aibrain/data
+      - type: volume
+        source: aibrain-backups
+        target: /var/lib/aibrain/data/backups
+      - type: volume
+        source: aibrain-restores
+        target: /var/lib/aibrain-restores
+      - type: bind
+        source: "${AIBRAIN_SOURCE_HOST_PATH:?set AIBRAIN_SOURCE_HOST_PATH}"
+        target: /srv/aibrain/source-ro
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${AIBRAIN_PUBLISH_HOST_PATH:?set AIBRAIN_PUBLISH_HOST_PATH}"
+        target: /srv/aibrain/publish-rw
+        bind:
+          create_host_path: false
+    networks:
+      - aibrain-internal
+    healthcheck:
+      test: [CMD, node, /usr/local/share/aibrain/automation-worker-healthcheck.mjs]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${AIBRAIN_LOG_MAX_SIZE:-10m}"
+        max-file: "${AIBRAIN_LOG_MAX_FILES:-5}"
+        mode: non-blocking
+        max-buffer-size: "${AIBRAIN_LOG_BUFFER_SIZE:-4m}"
+
+  ingress-gateway:
+    image: "${AIBRAIN_EGRESS_IMAGE:?set AIBRAIN_EGRESS_IMAGE to an immutable image digest}"
+    entrypoint: [node, /usr/local/share/aibrain/ingress-gateway.mts]
+    environment:
+      AIBRAIN_INGRESS_LISTEN_HOST: 0.0.0.0
+      AIBRAIN_INGRESS_PORT: "3000"
+      AIBRAIN_INGRESS_TARGET_HOST: app
+      AIBRAIN_INGRESS_TARGET_PORT: "3000"
+      NODE_ENV: production
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.component: ingress-gateway
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+    user: "${AIBRAIN_EGRESS_UID:-10002}:${AIBRAIN_EGRESS_GID:-10002}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${AIBRAIN_HTTP_PORT:?set AIBRAIN_HTTP_PORT}:3000"
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    pids_limit: 64
+    cpus: 0.25
+    mem_limit: 128m
+    mem_reservation: 32m
+    networks:
+      - aibrain-internal
+      - aibrain-ingress
+    healthcheck:
+      test: [CMD, node, -e, "import('node:net').then(n=>{const s=n.createConnection({host:'127.0.0.1',port:3000},()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1))})"]
+      interval: 10s
+      timeout: 3s
+      retries: 4
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${AIBRAIN_LOG_MAX_SIZE:-10m}"
+        max-file: "${AIBRAIN_LOG_MAX_FILES:-5}"
+        mode: non-blocking
+        max-buffer-size: "${AIBRAIN_LOG_BUFFER_SIZE:-4m}"
+
+  backup-replicator:
+    image: "${AIBRAIN_IMAGE:?set AIBRAIN_IMAGE to an immutable image digest}"
+    profiles: [backup]
+    entrypoint: [/usr/bin/tini, --, /usr/local/bin/aibrain-backup-replicate]
+    env_file:
+      - "${AIBRAIN_REPLICA_ENV_FILE:?set AIBRAIN_REPLICA_ENV_FILE}"
+    environment:
+      AIBRAIN_INSTALLATION_CONFIG: /etc/aibrain/installation.json
+      AIBRAIN_RESTIC_BINARY: /usr/bin/restic
+      AIBRAIN_RESTIC_PASSWORD_FILE: /run/secrets/aibrain-restic-password
+      AIBRAIN_REPLICA_STATE_ROOT: /var/lib/aibrain-replication
+      NODE_ENV: production
+      TZ: "${AIBRAIN_TIMEZONE:-Europe/Madrid}"
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.component: backup-replicator
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+    user: "${AIBRAIN_UID:-10001}:${AIBRAIN_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    pids_limit: 128
+    cpus: 0.5
+    mem_limit: 512m
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=${AIBRAIN_UID:-10001},gid=${AIBRAIN_GID:-10001}
+    volumes:
+      - type: bind
+        source: "${AIBRAIN_INSTALLATION_CONFIG_HOST:?set AIBRAIN_INSTALLATION_CONFIG_HOST}"
+        target: /etc/aibrain/installation.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: aibrain-backups
+        target: /var/lib/aibrain/data/backups
+        read_only: true
+      - type: volume
+        source: aibrain-restores
+        target: /var/lib/aibrain-restores
+      - type: bind
+        source: "${AIBRAIN_REPLICA_STATE_HOST_PATH:?set AIBRAIN_REPLICA_STATE_HOST_PATH}"
+        target: /var/lib/aibrain-replication
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${AIBRAIN_RESTIC_PASSWORD_FILE_HOST:?set AIBRAIN_RESTIC_PASSWORD_FILE_HOST}"
+        target: /run/secrets/aibrain-restic-password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - aibrain-egress
+    logging:
+      driver: json-file
+      options:
+        max-size: "${AIBRAIN_LOG_MAX_SIZE:-10m}"
+        max-file: "${AIBRAIN_LOG_MAX_FILES:-5}"
+        mode: non-blocking
+        max-buffer-size: "${AIBRAIN_LOG_BUFFER_SIZE:-4m}"
+
+  alert-dispatcher:
+    image: "${AIBRAIN_IMAGE:?set AIBRAIN_IMAGE to an immutable image digest}"
+    entrypoint: [/usr/bin/tini, --, /usr/local/bin/aibrain-alert-controller]
+    env_file:
+      - "${AIBRAIN_ALERTS_ENV_FILE:?set AIBRAIN_ALERTS_ENV_FILE}"
+    environment:
+      AIBRAIN_INSTALLATION_CONFIG: /etc/aibrain/installation.json
+      NODE_ENV: production
+      TZ: "${AIBRAIN_TIMEZONE:-Europe/Madrid}"
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.component: alert-dispatcher
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+    user: "${AIBRAIN_UID:-10001}:${AIBRAIN_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    pids_limit: 96
+    cpus: 0.25
+    mem_limit: 256m
+    mem_reservation: 64m
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=${AIBRAIN_UID:-10001},gid=${AIBRAIN_GID:-10001}
+    volumes:
+      - type: bind
+        source: "${AIBRAIN_INSTALLATION_CONFIG_HOST:?set AIBRAIN_INSTALLATION_CONFIG_HOST}"
+        target: /etc/aibrain/installation.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: aibrain-data
+        target: /var/lib/aibrain/data
+      - type: volume
+        source: aibrain-backups
+        target: /var/lib/aibrain/data/backups
+        read_only: true
+      - type: bind
+        source: "${AIBRAIN_PUBLISH_HOST_PATH:?set AIBRAIN_PUBLISH_HOST_PATH}"
+        target: /srv/aibrain/publish-rw
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${AIBRAIN_REPLICA_STATE_HOST_PATH:?set AIBRAIN_REPLICA_STATE_HOST_PATH}"
+        target: /var/lib/aibrain-replication
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - aibrain-internal
+      - aibrain-egress
+    healthcheck:
+      test: [CMD, node, /usr/local/share/aibrain/alert-controller-healthcheck.mjs]
+      interval: 30s
+      timeout: 3s
+      retries: 4
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${AIBRAIN_LOG_MAX_SIZE:-10m}"
+        max-file: "${AIBRAIN_LOG_MAX_FILES:-5}"
+        mode: non-blocking
+        max-buffer-size: "${AIBRAIN_LOG_BUFFER_SIZE:-4m}"
+
+  egress-gateway:
+    image: "${AIBRAIN_EGRESS_IMAGE:?set AIBRAIN_EGRESS_IMAGE to an immutable image digest}"
+    env_file:
+      - "${AIBRAIN_EGRESS_ENV_FILE:?set AIBRAIN_EGRESS_ENV_FILE}"
+    environment:
+      AIBRAIN_EGRESS_LISTEN_HOST: 0.0.0.0
+      AIBRAIN_EGRESS_PORT: "8080"
+      NODE_ENV: production
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.component: egress-gateway
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+    user: "${AIBRAIN_EGRESS_UID:-10002}:${AIBRAIN_EGRESS_GID:-10002}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "8080"
+    restart: unless-stopped
+    stop_grace_period: 15s
+    init: true
+    pids_limit: ${AIBRAIN_EGRESS_PIDS_LIMIT:-128}
+    cpus: ${AIBRAIN_EGRESS_CPU_LIMIT:-0.5}
+    mem_limit: "${AIBRAIN_EGRESS_MEMORY_LIMIT:-256m}"
+    mem_reservation: "${AIBRAIN_EGRESS_MEMORY_RESERVATION:-64m}"
+    ulimits:
+      nofile:
+        soft: ${AIBRAIN_EGRESS_NOFILE_SOFT:-2048}
+        hard: ${AIBRAIN_EGRESS_NOFILE_HARD:-4096}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777
+    networks:
+      - aibrain-internal
+      - aibrain-egress
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/__aibrain_egress_health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 4
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "${AIBRAIN_LOG_MAX_SIZE:-10m}"
+        max-file: "${AIBRAIN_LOG_MAX_FILES:-5}"
+        mode: non-blocking
+        max-buffer-size: "${AIBRAIN_LOG_BUFFER_SIZE:-4m}"
+
+networks:
+  aibrain-internal:
+    name: "${AIBRAIN_NETWORK_NAME:?set a unique AIBRAIN_NETWORK_NAME}"
+    driver: bridge
+    internal: true
+    attachable: false
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+  aibrain-egress:
+    name: "${AIBRAIN_EGRESS_NETWORK_NAME:?set a unique AIBRAIN_EGRESS_NETWORK_NAME}"
+    driver: bridge
+    attachable: false
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.component: egress
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+  aibrain-ingress:
+    name: "${AIBRAIN_INGRESS_NETWORK_NAME:?set a unique AIBRAIN_INGRESS_NETWORK_NAME}"
+    driver: bridge
+    attachable: false
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.component: ingress
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+
+volumes:
+  aibrain-data:
+    name: "${AIBRAIN_DATA_VOLUME_NAME:?set a unique AIBRAIN_DATA_VOLUME_NAME}"
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+  aibrain-backups:
+    name: "${AIBRAIN_BACKUP_VOLUME_NAME:?set a unique AIBRAIN_BACKUP_VOLUME_NAME}"
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"
+  aibrain-restores:
+    name: "${AIBRAIN_RESTORE_VOLUME_NAME:?set a unique AIBRAIN_RESTORE_VOLUME_NAME}"
+    labels:
+      com.graphikai.aibrain.product: aibrain
+      com.graphikai.aibrain.installation: "${AIBRAIN_INSTALLATION_ID:?set AIBRAIN_INSTALLATION_ID}"

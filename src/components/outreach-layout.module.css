@@ -1,0 +1,13 @@
+.workspace { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; margin:0; border:0; border-left:1px solid var(--border-subtle); border-radius:0; overflow:hidden; background:var(--surface); }
+.split { display:flex; flex:1; min-width:0; min-height:0; overflow:hidden; }
+.chat { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; }
+.panel { display:flex; width:clamp(390px,48vw,820px); min-height:0; flex-shrink:0; border-left:1px solid var(--border); background:var(--surface); }
+.switch { display:none; }
+@media (max-width:1100px) {
+ .switch { display:flex; align-items:center; gap:8px; min-height:46px; padding:4px 12px; border-bottom:1px solid var(--border); background:var(--surface); }
+ .switch button { min-height:36px; padding:6px 14px; border:1px solid transparent; border-radius:8px; color:var(--text-secondary); background:transparent; font:inherit; font-size:13px; }
+ .switch button[aria-pressed=true] { color:var(--text); background:var(--surface-hover); border-color:var(--border); }
+ .switch button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+ .panel { width:100%; border-left:0; flex:1; }
+ .hiddenCompact { display:none; }
+}

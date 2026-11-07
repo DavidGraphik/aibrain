@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "company-context-work",
+  "label": "Trabajo con contexto de empresa",
+  "version": "1.0.0",
+  "category": "company",
+  "provenance": "Generic company-context workflow versioned with AiBrain; confirmed 2026-08-30.",
+  "files": ["SKILL.md"]
+}

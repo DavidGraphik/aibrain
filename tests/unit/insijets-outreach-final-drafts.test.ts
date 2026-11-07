@@ -1,0 +1,42 @@
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {afterEach,expect,it,vi} from 'vitest';
+import {OutreachSystemStore} from '@/insijets/outreach-system-store';
+import {handleOutreachSystemRequest} from '@/insijets/outreach-system-http';
+import type {OperatorConfiguration,OperatorActor} from '@/insijets/operator-runtime';
+import type {OperatorHttpDependencies} from '@/insijets/operator-http';
+import type {AuthSession} from '@/auth/types';
+const roots:string[]=[];
+const now=()=>Date.parse('2026-10-16T12:00:00.000Z');
+const actor:OperatorActor={actorId:'test-editor',email:'operator@example.invalid',provider:'local',installationId:'insijets-demo',canManageWorkspace:true};
+function config():OperatorConfiguration{const storageRoot=mkdtempSync(join(tmpdir(),'insijets-final-drafts-'));roots.push(storageRoot);return{enabled:true,installationId:'insijets-demo',storageRoot,approvedResearchOrigins:[],approvedVerificationProviders:[]};}
+afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
+it('persists final three-subject edits across reopen, preserves legacy edits and enforces optimistic versions and source reset',()=>{
+ const configuration=config();let store=new OutreachSystemStore(configuration,actor,now);
+ const legacy=store.campaigns()[0];store.saveCampaign({id:legacy.id,version:legacy.version,locale:legacy.locale,subject:'Earlier private edit',bodies:legacy.steps.map(s=>s.body)});
+ const original=store.finalCampaigns().find(c=>c.id==='final-editorial:H1_EN')!;
+ expect(store.finalCampaigns()).toHaveLength(18);
+ const edited={id:original.id,version:original.version,subjects:original.steps.map((s,i)=>`${s.subject} — review ${i+1}`),bodies:original.steps.map((s,i)=>`${s.body}\nPrivate review ${i+1}.`)};
+ const result=store.saveFinalCampaign(edited);expect(result).toMatchObject({campaign:{version:2,sendEnabled:false},emailApprovalGranted:false,campaignActivated:false});store.close();
+ store=new OutreachSystemStore(configuration,actor,now);
+ expect(store.finalCampaigns().find(c=>c.id===original.id)?.steps.map(s=>s.body)).toEqual(edited.bodies);
+ expect(store.finalCampaigns().find(c=>c.id===original.id)?.steps.map(s=>s.subject)).toEqual(edited.subjects);
+ expect(store.campaigns().find(c=>c.id===legacy.id)?.subject).toBe('Earlier private edit');
+ expect(()=>store.saveFinalCampaign(edited)).toThrow('CAMPAIGN_DRAFT_VERSION_CHANGED');
+ expect(()=>store.saveFinalCampaign({...edited,id:legacy.id})).toThrow('FINAL_CAMPAIGN_INPUT_DENIED');
+ expect(()=>store.saveFinalCampaign({...edited,version:2,approved:true})).toThrow('FINAL_CAMPAIGN_INPUT_DENIED');
+ expect(store.saveFinalCampaign({id:original.id,version:2},true).campaign).toMatchObject({...original,version:3});store.close();
+});
+it('guards final draft mutations by session, tenant, admin and same origin; exposes no provider dispatch',async()=>{
+ const configuration=config();const session:AuthSession={provider:'local',user:{id:'test-editor',email:'operator@example.invalid',name:'David'},tenant:{id:'insijets-demo',name:'InsiJets'},expiresAt:'2026-10-17T12:00:00.000Z'};
+ const deps:OperatorHttpDependencies={session:vi.fn(async()=>session),admin:vi.fn(async()=>true),sameOrigin:vi.fn(async()=>true),configuration:vi.fn(async()=>configuration),now};
+ const request=(action='reset-final-campaign',input:unknown={id:'final-editorial:H1_EN',version:1})=>new Request('https://brain.test/api/insijets/outreach/system',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,input})});
+ deps.session=async()=>null;expect((await handleOutreachSystemRequest(request(),deps)).status).toBe(401);
+ deps.session=async()=>({...session,tenant:{id:'other',name:'Other'}});expect((await handleOutreachSystemRequest(request(),deps)).status).toBe(403);
+ deps.session=async()=>session;deps.admin=async()=>false;expect((await handleOutreachSystemRequest(request(),deps)).status).toBe(403);
+ deps.admin=async()=>true;deps.sameOrigin=async()=>false;expect((await handleOutreachSystemRequest(request(),deps)).status).toBe(403);
+ deps.sameOrigin=async()=>true;const result=await handleOutreachSystemRequest(request(),deps);expect(result.status).toBe(200);expect(await result.json()).toMatchObject({externalDispatch:false,emailSent:false,crmWritten:false,linkedinAction:false,result:{campaign:{id:'final-editorial:H1_EN',version:2,sendEnabled:false},resetToSource:true}});
+ const get=await handleOutreachSystemRequest(new Request('https://brain.test/api/insijets/outreach/system'),deps);expect((await get.json()).finalCampaigns.find((c:{id:string})=>c.id==='final-editorial:H1_EN').version).toBe(2);
+ expect((await handleOutreachSystemRequest(request('send'),deps)).status).toBe(400);
+});

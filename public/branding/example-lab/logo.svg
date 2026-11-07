@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" role="img" aria-labelledby="title">
+  <title id="title">Example AI</title>
+  <rect width="40" height="40" rx="12" fill="#315ee7"/>
+  <path d="M12 13h16v4H16v3h10v4H16v3h12v4H12z" fill="#fff"/>
+  <text x="52" y="26" fill="currentColor" font-family="Arial, sans-serif" font-size="16" font-weight="700">Example AI</text>
+</svg>

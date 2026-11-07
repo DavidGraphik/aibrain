@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "local-documents",
+  "label": "Documentos locales",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "GraphikAI generic baseline for private local document workflows; versioned 2026-08-30.",
+  "files": ["SKILL.md"]
+}
