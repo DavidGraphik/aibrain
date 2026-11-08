@@ -668,6 +668,24 @@ describe('foreground Trinalum exact mail read replay',()=>{
   expect(f.fetcher).toHaveBeenCalledTimes(1);expect(f.revalidateReadReplay).toHaveBeenCalledTimes(1);expect(second.data.messages).toEqual(original.data.messages);expect(second.data.cursor).toBe(original.data.cursor);expect(second.data.coverage).toEqual(original.data.coverage);expect(second.data.complete).toBe(false);expect(second.data).toEqual(original.data);expect(second.replayInstruction).toContain('SAME previously returned page');expect(second.mailReadReplay).toMatchObject({providerReadPerformed:false,cursorUnchanged:true,coverageUnchanged:true});
   expect(f.requests[0].input).toEqual(args);
  });
+ it('dispatches native latest_read with authenticated human context and replays only the exact operation/cursor',async()=>{
+  const f=await replayFixture();f.context.sourceMessage='Busca la última confirmación recibida con PDF, sin enviar nada.';
+  const latest=(cursor:string|null)=>({data:{operation:'latest_read',candidate:{id:'imap:owned:7:19'},original:{id:'imap:owned:7:19',subject:'Synthetic confirmation',text:'Current original confirmation'},complete:false,cursor,coverage:{globalLatestVerified:false,categoryVerified:false,originalBytesVerified:true,originalError:null,errors:[]}}});
+  f.fetcher.mockImplementation(async(_url,init)=>{const request=JSON.parse(String(init?.body));f.requests.push(request);return Response.json(request.input.input.operation==='latest_read'?latest(request.input.input.cursor?'last-cursor':'next-cursor'):page());});
+  const input={operation:'latest_read',query:'subject:confirmation OR subject:confirmación',attachmentMime:'application/pdf',maxTextChars:20000};
+  const first=body(await handleTrinalumTool(params('mail_api',{input}),f.context));
+  expect(f.requests[0]).toMatchObject({operation:'mail_api',input:{input},mailSearchContext:{humanMessage:f.context.sourceMessage,sourceMessageId:f.context.sourceMessageId}});
+  const cached=body(await handleTrinalumTool(params('mail_api',{input:{...input}}),f.context));expect(f.fetcher).toHaveBeenCalledTimes(1);expect(cached.data).toEqual(first.data);expect(cached.mailReadReplay).toMatchObject({kind:'latest_read',providerReadPerformed:false,cursorUnchanged:true});expect(cached.data.coverage.globalLatestVerified).toBe(false);
+  await handleTrinalumTool(params('mail_api',{input:{...input,operation:'search'}}),f.context);
+  const next=body(await handleTrinalumTool(params('mail_api',{input:{...input,cursor:'next-cursor'}}),f.context));expect(next.data.cursor).toBe('last-cursor');
+  await handleTrinalumTool(params('mail_api',{input:{...input,cursor:'next-cursor'}}),f.context);expect(f.fetcher).toHaveBeenCalledTimes(3);
+  expect(f.requests[1].input).toMatchObject({input:{operation:'search'}});expect(f.requests[2].input).toMatchObject({input:{operation:'latest_read',cursor:'next-cursor'}});
+ });
+ it('does not retain latest_read original-read failures as valid cached results',async()=>{
+  const f=await replayFixture();f.fetcher.mockImplementation(async()=>Response.json({data:{operation:'latest_read',candidate:{id:'imap:owned:7:19'},original:null,complete:false,cursor:'continue',coverage:{errors:[],originalError:'MAIL_LATEST_READ_BUDGET'}}}));
+  for(let i=0;i<2;i++)expect((await handleTrinalumTool(params('mail_api',{input:{operation:'latest_read',query:'subject:confirmation',attachmentMime:'application/pdf'}}),f.context)).success).toBe(true);
+  expect(f.fetcher).toHaveBeenCalledTimes(2);
+ });
  it('also replays exact folder listings but never aliases them into another operation',async()=>{
   const f=await replayFixture(),input={input:{operation:'folders'}};await handleTrinalumTool(params('mail_api',input),f.context);const replay=body(await handleTrinalumTool(params('mail_api',input),f.context));expect(f.fetcher).toHaveBeenCalledTimes(1);expect(replay.data.folders).toEqual(folderPage().data.folders);expect(replay.mailReadReplay).toMatchObject({kind:'folders',providerReadPerformed:false});
   await handleTrinalumTool(params('mail_api',{input:{operation:'discover'}}),f.context);await handleTrinalumTool(params('mail_api',{input:{operation:'discover'}}),f.context);expect(f.fetcher).toHaveBeenCalledTimes(3);

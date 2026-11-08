@@ -191,7 +191,8 @@ export async function handleTrinalumTool(params: DynamicToolCallParams, context:
     // This hint comes only from the authenticated foreground human request,
     // never model arguments, provider messages, attachments or earlier results.
     const searchArgs=params.arguments && typeof params.arguments==='object' && !Array.isArray(params.arguments)?params.arguments:null;
-    const isMailSearch=params.tool==='mail_search'||params.tool==='mail_api'&&searchArgs?.input&&typeof searchArgs.input==='object'&&!Array.isArray(searchArgs.input)&&searchArgs.input.operation==='search';
+    const mailSearchOperation=params.tool==='mail_search'?'search':params.tool==='mail_api'&&searchArgs?.input&&typeof searchArgs.input==='object'&&!Array.isArray(searchArgs.input)&&['search','latest_read'].includes(String(searchArgs.input.operation))?String(searchArgs.input.operation) as 'search'|'latest_read':null;
+    const isMailSearch=mailSearchOperation!==null;
     const mailSearchContext=isMailSearch&&!context.backgroundExecution&&typeof context.sourceMessage==='string'&&context.sourceMessage.trim()&&context.sourceMessage.length<=8000&&!context.sourceMessage.includes('\0')&&typeof context.sourceMessageId==='string'&&/^[A-Za-z0-9_-]{1,160}$/.test(context.sourceMessageId)
       ?{humanMessage:context.sourceMessage,sourceMessageId:context.sourceMessageId}:undefined;
     const read = async():Promise<DynamicToolCallResponse>=>{
@@ -225,7 +226,7 @@ export async function handleTrinalumTool(params: DynamicToolCallParams, context:
     const resultView=params.tool==='mail_read'?compactMailReadView(parsed,includeMailHtml):params.tool==='mail_api'&&input&&typeof input==='object'&&!Array.isArray(input)&&input.operation==='read_many'?compactMailReadManyView(parsed):parsed;
     return response(true, await projectPrivateFiles(resultView,context,Boolean(mailDiscovery),sourceRead));
     };
-    const replayKind=isMailSearch?'search':params.tool==='mail_api'&&searchArgs?.input&&typeof searchArgs.input==='object'&&!Array.isArray(searchArgs.input)&&searchArgs.input.operation==='folders'?'folders':null;
+    const replayKind=mailSearchOperation??(params.tool==='mail_api'&&searchArgs?.input&&typeof searchArgs.input==='object'&&!Array.isArray(searchArgs.input)&&searchArgs.input.operation==='folders'?'folders':null);
     const replay=context.mailReadTurnReplay;
     if(replay&&replayKind&&!context.backgroundExecution&&context.sourceMessageId&&context.sourceTurnId){
       if(!context.permissionFingerprint||context.signal?.aborted)return response(false,{error:'TURN_ACCESS_DENIED'});

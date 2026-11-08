@@ -13,7 +13,7 @@ export class TrinalumMailReadTurnReplay {
   private blocked=false;
   invalidate(){this.entries.clear();this.bytes=0;this.epoch++;}
 
-  async run(scope:string,key:string,kind:'search'|'folders',read:()=>Promise<DynamicToolCallResponse>,authorizeReplay:()=>Promise<boolean>):Promise<DynamicToolCallResponse>{
+  async run(scope:string,key:string,kind:'search'|'latest_read'|'folders',read:()=>Promise<DynamicToolCallResponse>,authorizeReplay:()=>Promise<boolean>):Promise<DynamicToolCallResponse>{
     if(this.blocked||!scope||this.scope!==null&&this.scope!==scope)return denied();
     this.scope=scope;
     const previous=this.entries.get(key);
@@ -31,7 +31,9 @@ export class TrinalumMailReadTurnReplay {
       const text=copy.contentItems.length===1&&copy.contentItems[0].type==='inputText'?copy.contentItems[0]:null;
       if(text){
         const body=JSON.parse(text.text) as Record<string,unknown>;
-        const warning=kind==='search'
+        const warning=kind==='latest_read'
+          ? 'Repeated identical latest_read in this same authenticated turn. This is the SAME previous result, not a fresh provider read. Preserve its original coverage and follow its unchanged operation cursor; no cursor was advanced.'
+          : kind==='search'
           ? 'Repeated identical search in this same authenticated turn. This is the SAME previously returned page, not a fresh provider read. Keep the literal query and use the cursor from the latest page you have already examined; do not restart. No cursor was advanced or result omitted.'
           : 'Repeated identical folder listing in this same authenticated turn. This is the same previously returned listing, not a fresh provider read. Use its known folder IDs or the exact saved draft messageId; do not list every folder again.';
         // Put this notice before a potentially large folder listing so output
@@ -59,7 +61,7 @@ export class TrinalumMailReadTurnReplay {
   }
 }
 
-function cacheableSnapshot(result:DynamicToolCallResponse,kind:'search'|'folders'){
+function cacheableSnapshot(result:DynamicToolCallResponse,kind:'search'|'latest_read'|'folders'){
   if(!result.success||result.contentItems.length!==1||result.contentItems[0].type!=='inputText')return null;
   try{
     const body:unknown=JSON.parse(result.contentItems[0].text);
@@ -67,6 +69,9 @@ function cacheableSnapshot(result:DynamicToolCallResponse,kind:'search'|'folders
     const data=object(body.data)?body.data:body;
     if(data.error||body.success===false||data.success===false||body.status==='error'||data.status==='error'||Array.isArray(data.errors)&&data.errors.length||object(data.coverage)&&Array.isArray(data.coverage.errors)&&data.coverage.errors.length)return null;
     if(kind==='folders')return Array.isArray(data.folders)?JSON.stringify(result):null;
+    if(kind==='latest_read')return data.operation==='latest_read'&&typeof data.complete==='boolean'&&(data.cursor===null||typeof data.cursor==='string')&&
+      (data.candidate===null||object(data.candidate))&&(data.original===null||object(data.original))&&object(data.coverage)&&
+      Array.isArray(data.coverage.errors)&&data.coverage.errors.length===0&&!data.coverage.originalError&&data.coverage.stopped!=='time_budget'?JSON.stringify(result):null;
     if(!Array.isArray(data.messages)||typeof data.complete!=='boolean'||!(data.cursor===null||typeof data.cursor==='string')||!object(data.coverage)||!Array.isArray(data.coverage.errors)||data.coverage.errors.length)return null;
     return JSON.stringify(result);
   }catch{return null;}
