@@ -29,7 +29,7 @@ describe("SAGE predefined company1 reads",()=>{
  it.each([
   ["Companies",{},0,10],["ExecuteScript",{},0,10],["Products",{CodigoEmpresa:"2"},0,10],["Products",{sql:"SELECT *"},0,10],
   ["SalesOrders",{FechaInicial:"2026-02-30",FechaFinal:"2026-03-01"},0,10],["SalesOrders",{FechaInicial:"2026-03-02",FechaFinal:"2026-03-01"},0,10],
-  ["Products",{},0,51],["Products",{},5001,2],["Products",{},0,-1],
+  ["Products",{},0,51],["Products",{},Number.MAX_SAFE_INTEGER,2],["Products",{},0,-1],
  ])("rejects query/parameter/scope/pagination overrides before HTTP (%s)",async(q,p,s,t)=>{
   const f=vi.fn<typeof fetch>();await expect(new SageReader(credential,f).read(q,p,s,t)).rejects.toMatchObject({code:"SAGE_ARGUMENTS_INVALID"});expect(f).not.toHaveBeenCalled();
  });
@@ -91,8 +91,8 @@ describe("SAGE predefined company1 reads",()=>{
   const foreign=provider(oversized(),Response.json([{CompanyId:2}]));
   await expect(new SageReader(credential,foreign).read("Products",{},0,4)).rejects.toMatchObject({code:"SAGE_COMPANY_SCOPE_INVALID"});
  });
- it("stops at the bounded offset without claiming completeness",async()=>{
-  const f=provider(Response.json([{CompanyId:1}]));expect(await new SageReader(credential,f).read("Products",{},5000,1)).toMatchObject({nextOffset:null,limitReached:true,complete:false});
+ it("continues after the former offset cap without claiming completeness",async()=>{
+  const f=provider(Response.json([{CompanyId:1}]));expect(await new SageReader(credential,f).read("Products",{},5000,1)).toMatchObject({nextOffset:5001,limitReached:false,complete:false});
  });
 });
 
@@ -338,4 +338,11 @@ it('halves above256KiB at exact skip while preserving foreign-company rejection'
  expect(f.mock.calls.slice(3).map(([,init])=>JSON.parse(String(init?.body)))).toMatchObject([{skip:100,take:50},{skip:100,take:25}]);
  const foreign=provider(Response.json([{CompanyId:2,Note:'x'.repeat(200000)}]));
  await expect(new SageReader(credential,foreign).read('Products',{},0,1)).rejects.toMatchObject({code:'SAGE_COMPANY_SCOPE_INVALID'});
+});
+
+it('continues beyond5000 until a real short page and rejects unsafe offset arithmetic before HTTP',async()=>{
+ const full=Array.from({length:50},(_,id)=>({CompanyId:1,id:5000+id}));const f=provider(Response.json(full),Response.json([{CompanyId:1,id:5050}]));const r=new SageReader(credential,f);
+ expect(await r.read('Products',{},5000,50)).toMatchObject({nextOffset:5050,complete:false,limitReached:false});
+ expect(await r.read('Products',{},5050,50)).toMatchObject({nextOffset:null,complete:true,limitReached:false});
+ for(const skip of [-1,1.5,Number.MAX_SAFE_INTEGER,Number.MAX_SAFE_INTEGER+1]){const no=vi.fn();await expect(new SageReader(credential,no).read('Products',{},skip,50)).rejects.toMatchObject({code:'SAGE_ARGUMENTS_INVALID'});expect(no).not.toHaveBeenCalled();}
 });

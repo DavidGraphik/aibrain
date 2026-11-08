@@ -47,13 +47,17 @@ export async function collectSagePages(read: ReadPage, query: unknown, parameter
     const width = pages === 0 ? 1 : Math.min(2, MAX_PAGES - attempts);
     for (let index = 0; index < width; index++) {
       if (pages > 0 && bytes + envelopeBytes + previousPageBytes * (index + 1) > MAX_BYTES) break;
+      if (offset > Number.MAX_SAFE_INTEGER - effectiveTake - index * effectiveTake) {
+        if (index === 0) reason = 'offset_precision';
+        break;
+      }
       const predicted = offset + index * effectiveTake;
-      // Reuse the native offset guard; never speculate beyond its provider cap.
+      // Validate safe offset arithmetic before dispatching a speculative page.
       try { sageReadArguments(query, parameters, predicted, effectiveTake); }
       catch (error) { if (index === 0) throw error; break; }
       wave.push(launch(predicted, effectiveTake));
     }
-    if (!wave.length) { reason = 'response_budget'; break; }
+    if (!wave.length) { reason ??= 'response_budget'; break; }
     try {
       for (const pending of wave) {
         // A prior native take reduction invalidates the speculative offset.

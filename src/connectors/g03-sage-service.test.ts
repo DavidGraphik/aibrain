@@ -115,5 +115,5 @@ it('warms one reader before parallel pages and isolates every sibling session/ca
   return {source:'SAGE',companyCode:'1',companyName:'synthetic',query,items:[{id:offset}],skip:offset,take:Number(take),nextOffset:offset===5?null:offset+1,limitReached:false,complete:offset===5,checkedAt:new Date().toISOString()} as never;
  });
  const result=await g03SageReadBatchForIdentity('g03-production',user,{query:'Products',take:1});
- expect(result).toMatchObject({pages:6,complete:true});expect(new Set(readers).size).toBe(6);
+ expect(result).toMatchObject({pages:6,complete:true,coverage:{pageRequests:7}});expect(new Set(readers).size).toBe(readers.length);expect(readers.length).toBeGreaterThanOrEqual(6);expect(readers.length).toBeLessThanOrEqual(7);
 });

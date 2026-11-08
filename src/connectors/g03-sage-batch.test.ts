@@ -130,10 +130,13 @@ it('cancels both active sibling reads and releases no data after parent cancella
  const pending=collectSagePages(async(_q,_p,skip,_take,signal)=>{if(skip===0)return page(0,1,1,1);active++;return new Promise<Page>((_resolve,reject)=>signal.addEventListener('abort',()=>{active--;reject(new Error('mock cancelled'));},{once:true}));},'Products',{},0,1,stop.signal);
  const rejected=expect(pending).rejects.toBeDefined();await vi.waitFor(()=>expect(active).toBe(2));stop.abort();await rejected;expect(active).toBe(0);
 });
-it('does not speculate past the native maximum offset',async()=>{
- const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>page(skip,1,1,skip===5000?null:skip+1,skip===5000));
- const result=await collectSagePages(read,'Products',{},4999,1);
- expect(read.mock.calls.map(c=>c[2])).toEqual([4999,5000]);expect(result).toMatchObject({nextOffset:null,limitReached:true,complete:false,pages:2});
+it('crosses the former5000 cap preserving bounded prefix until real short page',async()=>{
+ const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>page(skip,50,skip===5050?7:50,skip===5050?null:skip+50));
+ const result=await collectSagePages(read,'Products',{},4900,50);
+ expect(result).toMatchObject({pages:4,nextOffset:null,complete:true,limitReached:false});
+ expect(result.items).toEqual(Array.from({length:157},(_,i)=>({id:4900+i})));
+ expect(read.mock.calls.map(c=>c[2])).toEqual([4900,4950,5000,5050,5100]);
+ expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(1048576);
 });
 
 it('charges retained line metadata and envelope before advancing a continuation',async()=>{
@@ -145,4 +148,11 @@ it('amortizes setup across twelve small pages within unchanged time/byte/concurr
  let active=0,peak=0;const result=await collectSagePages(async(_q,_p,skip)=>{active++;peak=Math.max(peak,active);await Promise.resolve();active--;return page(skip,25,25,skip+25);},'SalesOrders',range,0,25);
  expect(result).toMatchObject({pages:12,nextOffset:300,coverage:{pageRequests:12,maxParallelPages:2,maxBytes:1048576,maxMilliseconds:20000}});
  expect(peak).toBe(2);expect((result.items as {id:number}[]).map(x=>x.id)).toEqual(Array.from({length:300},(_,id)=>id));
+});
+
+it('preserves an unfinished prefix at numeric precision boundary without dispatching unsafe arithmetic',async()=>{
+ const start=Number.MAX_SAFE_INTEGER-2;const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>page(skip,1,1,skip+1));
+ const result=await collectSagePages(read,'Products',{},start,1);
+ expect(read.mock.calls.map(x=>x[2])).toEqual([start,start+1]);
+ expect(result).toMatchObject({pages:2,nextOffset:Number.MAX_SAFE_INTEGER,complete:false,limitReached:false,reason:'offset_precision'});
 });

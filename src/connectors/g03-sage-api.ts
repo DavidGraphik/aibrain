@@ -65,7 +65,7 @@ function validArticleCode(value: string): boolean {
 }
 export function sageReadArguments(query: unknown, parameters: unknown, skip: unknown, take: unknown) {
   if (typeof query !== "string" || !Object.hasOwn(SAGE_QUERIES, query) || !sageRecord(parameters)
-    || !Number.isSafeInteger(skip) || Number(skip) < 0 || Number(skip) > 5000 || !Number.isSafeInteger(take) || Number(take) < 1 || Number(take) > 50) return fail("SAGE_ARGUMENTS_INVALID");
+    || !Number.isSafeInteger(skip) || Number(skip) < 0 || Number(skip) > Number.MAX_SAFE_INTEGER - Number(take) || !Number.isSafeInteger(take) || Number(take) < 1 || Number(take) > 50) return fail("SAGE_ARGUMENTS_INVALID");
   const name = query as SageQuery, keys = SAGE_QUERIES[name].parameters;
   if (Object.keys(parameters).sort().join() !== [...keys].sort().join()) return fail("SAGE_ARGUMENTS_INVALID");
   for (const key of keys) {
@@ -178,8 +178,8 @@ export class SageReader {
             linesMissingRequestedFields:lines.filter(line=>requestedLineFields.some(field=>!Object.hasOwn(line,field))).length,
             linesWithNullRequestedFields:lines.filter(line=>requestedLineFields.some(field=>line[field]===null)).length,
             notice:"Campos nativos solicitados al proveedor, sin cálculos ni cambios. En pedidos, UnidadesPendientes es el pendiente de esa línea y Quantity lo pedido. En albaranes, Quantity es la cantidad del albarán y puede diferir de UnidadesServidas. Un campo ausente/nulo no equivale a cero. LineasPosicion es el UUID de la línea; LineaPedido referencia la línea origen, con EjercicioPedido/SeriePedido/NumeroPedido. UUID cero y pedido 0 no acreditan vínculo. No unir por artículo/cliente/Orden ni restar cantidades de albarán para inventar pendientes."}}:{}),
-          nextOffset: rows.length === pageTake && body.skip + pageTake <= 5000 ? body.skip + pageTake : null,
-          limitReached: rows.length === pageTake && body.skip + pageTake > 5000, complete: rows.length < pageTake, checkedAt: new Date().toISOString() };
+          nextOffset: rows.length === pageTake ? body.skip + pageTake : null,
+          limitReached: false, complete: rows.length < pageTake, checkedAt: new Date().toISOString() };
       } catch (error) {
         if (signal?.aborted) return fail("SAGE_READ_CANCELLED");
         if (error instanceof SageError && error.code === "SAGE_AUTH_REQUIRED" && !reauthenticated) {
@@ -240,6 +240,6 @@ export class SageReader {
     const session = await this.authenticated(signal);
     const queries = this.credential.allowedQueries.filter(name => session.catalog.has(name)).map(name => ({ name, ...SAGE_QUERIES[name] }));
     if (!queries.length) return fail("SAGE_QUERY_NOT_AVAILABLE");
-    return { source: "SAGE", companyCode: "1", companyName, readOnly: true, queries, companyVerifiedAt: session.verifiedAt, maxTake: 50, maxOffset: 5000 };
+    return { source: "SAGE", companyCode: "1", companyName, readOnly: true, queries, companyVerifiedAt: session.verifiedAt, maxTake: 50, maxOffset: null, offsetArithmetic: "safe-integer", totalRecordCap: null };
   }
 }
