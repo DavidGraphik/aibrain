@@ -277,6 +277,12 @@ describe('Trinalum runtime reads and argument checks',()=>{
   const saved=await handleTrinalumTool(params('execute_action',{actionId:body(result).actionId}),f.context);
   expect(saved.success).toBe(true);expect(f.phases).toEqual(['prepare','execute']);
  });
+ it('prepares title-only and explicitly undated native tasks without inventing deadlines',async()=>{
+  for(const request of [{content:'Synthetic task',assignees:[],linked_records:[]},{content:'Synthetic task',deadlineAt:null,assignees:[],linked_records:[]}]){
+   const f=await fixture();const result=await prepare(f,'attio_action',{type:'create_task',request});
+   expect(result.success).toBe(true);expect(f.phases).toEqual(['prepare']);expect(f.requests[0].input).toEqual({type:'create_task',request});
+  }
+ });
  it('validates task dates, deal links and draft schema before broker preparation',async()=>{
   const f=await fixture();for(const type of ['create_task','update_task'])for(const deadlineAt of ['2026-10-06','2026-02-30T09:00:00+01:00','2026-10-06T24:00:00+02:00'])expect(body(await prepare(f,'attio_action',{type,request:{deadlineAt}}))).toMatchObject({error:'INVALID_ARGUMENTS',field:'request.deadlineAt'});
   expect(body(await prepare(f,'attio_action',{type:'create_deal',request:{values:{name:'Follow-up',company_id:'wrong-field'}}}))).toMatchObject({error:'INVALID_ARGUMENTS',fields:expect.arrayContaining(['request.values.associated_company'])});

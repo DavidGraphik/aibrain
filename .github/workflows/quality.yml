@@ -32,7 +32,7 @@ jobs:
       - run: node .github/scripts/run-quality-tests.mjs
       - run: node --test --test-concurrency=1 scripts/verify-backend-acceptance.test.mjs scripts/package-standalone.test.mjs
       - run: npm ci --prefix deployments/trinalum/host/outlook --ignore-scripts --no-audit --no-fund
-      - run: node --test --test-concurrency=1 deployments/trinalum/host/outlook/test/*.test.mjs deployments/trinalum/host/sibema/test/*.test.mjs
+      - run: node --test --test-concurrency=1 deployments/trinalum/host/outlook/test/*.test.mjs deployments/trinalum/host/sibema/test/*.test.mjs deployments/trinalum/host/attio/test/*.test.mjs
       - run: npm run build -- --webpack
       - run: npm run build:automation-worker
       - name: Package the exact Linux standalone build

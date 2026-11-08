@@ -41,10 +41,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       );
       if (action.type === 'create_task') {
         const client = new AttioClient();
-        await client.get('/tasks?limit=1');
-        const members = (await client.get('/workspace_members')).data;
-        if (!members.some(m=>m.id?.workspace_member_id===action.request.assigneeId)) throw new Error('Task assignee is not a verified workspace member');
-        await client.get(`/objects/${action.request.parentObject??'companies'}/records/${action.request.recordId}`);
+        await verifyTaskTargets(client, action.request);
       }
       if(action.type==='update_task'||action.type==='delete_task') {
         const client=new AttioClient();
@@ -122,14 +119,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
           const operation = operationForStored(stored);
           let result;
           if(stored.action_type === "create_task") {
-            if ((stored.request.parentObject ?? "companies") === "deals") {
+            if ((stored.request.parentObject ?? "companies") === "deals" && Object.hasOwn(stored.request,'assigneeId')) {
               const deal = (await client.get(`/objects/deals/records/${stored.request.recordId}`)).data;
               const companyId = deal.values?.associated_company?.find(v => v.active_until === null)?.target_record_id;
               if (companyId) operation.body.data.linked_records.push({target_object:"companies",target_record_id:companyId});
             }
             const marker=`Registro Trinalum: ${stored.action_id}`;
             const tasks=await client.listTasks();
-            const existing=tasks.find(t=>t.linked_records?.some(x=>x.target_record_id===stored.request.recordId)&&((t.content_plaintext??'').split('\n').includes(marker)||(!t.is_completed&&taskText(t)===operation.body.data.content&&Date.parse(t.deadline_at)===Date.parse(stored.request.deadlineAt)&&t.assignees?.some(x=>x.referenced_actor_id===stored.request.assigneeId))));
+            const existing=tasks.find(t=>Object.hasOwn(stored.request,'recordId')&&Object.hasOwn(stored.request,'assigneeId')?t.linked_records?.some(x=>x.target_record_id===stored.request.recordId)&&((t.content_plaintext??'').split('\n').includes(marker)||(!t.is_completed&&taskText(t)===operation.body.data.content&&taskDeadlineMatches(t.deadline_at,stored.request.deadlineAt)&&t.assignees?.some(x=>x.referenced_actor_id===stored.request.assigneeId))) : !t.is_completed && taskText(t)===operation.body.data.content && taskDeadlineMatches(t.deadline_at,stored.request.deadlineAt) && taskTargetsMatch(stored.request,t));
             if(existing) result={data:existing};
             else {await store.markDispatched(actionId);result=await client.request(operation.method,operation.path,operation.body,{maxAttempts:1});}
           } else if(stored.action_type === "create_note") {
@@ -193,6 +190,43 @@ export function validateAction(action) {
   return { id, type: action.type, requestedBy, request };
 }
 
+export function taskTargets(request) {
+  if ((Object.hasOwn(request,'linked_records') || Object.hasOwn(request,'assignees')) && ['recordId','parentObject','assigneeId'].some(key=>Object.hasOwn(request,key))) throw new Error('Mixed Task target selectors');
+  const linked_records = Object.hasOwn(request,'linked_records') ? request.linked_records : (Object.hasOwn(request,'recordId') ? [{target_object:request.parentObject??'companies',target_record_id:request.recordId}] : []);
+  const assignees = Object.hasOwn(request,'assignees') ? request.assignees : (Object.hasOwn(request,'assigneeId') ? [{referenced_actor_type:'workspace-member',referenced_actor_id:request.assigneeId}] : []);
+  if (Object.hasOwn(request,'parentObject') && !Object.hasOwn(request,'recordId')) throw new Error('Task parent requires recordId');
+  if (!Array.isArray(linked_records) || linked_records.length>100 || !Array.isArray(assignees) || assignees.length>100) throw new Error('Invalid Task targets');
+  return {
+    linked_records:linked_records.map(link=>{
+      if (!link || Object.keys(link).sort().join(',')!=='target_object,target_record_id' || !['companies','people','deals'].includes(link.target_object)) throw new Error('Invalid Task linked record');
+      return {target_object:link.target_object,target_record_id:requiredId(link.target_record_id,'request.linked_records.target_record_id')};
+    }),
+    assignees:assignees.map(assignee=>{
+      if (!assignee || Object.keys(assignee).sort().join(',')!=='referenced_actor_id,referenced_actor_type' || assignee.referenced_actor_type!=='workspace-member') throw new Error('Invalid Task assignee');
+      return {referenced_actor_type:'workspace-member',referenced_actor_id:requiredId(assignee.referenced_actor_id,'request.assignees.referenced_actor_id')};
+    }),
+  };
+}
+
+function taskDeadlineMatches(actual, expected) {
+  return expected==null ? actual==null : Date.parse(actual)===Date.parse(expected);
+}
+
+export function taskTargetsMatch(request, task) {
+  const expected=taskTargets(request);
+  return Array.isArray(task.assignees) && task.assignees.length===expected.assignees.length && expected.assignees.every(a=>task.assignees.some(actual=>actual.referenced_actor_type==='workspace-member' && actual.referenced_actor_id===a.referenced_actor_id)) && Array.isArray(task.linked_records) && task.linked_records.length===expected.linked_records.length && expected.linked_records.every(link=>task.linked_records.some(actual=>actual.target_record_id===link.target_record_id));
+}
+
+export async function verifyTaskTargets(client, request) {
+  const targets=taskTargets(request);
+  await client.get('/tasks?limit=1');
+  if (targets.assignees.length) {
+    const members=(await client.get('/workspace_members')).data;
+    if (!targets.assignees.every(a=>members.some(m=>m.id?.workspace_member_id===a.referenced_actor_id))) throw new Error('Task assignee is not a verified workspace member');
+  }
+  for (const link of targets.linked_records) await client.get(`/objects/${link.target_object}/records/${link.target_record_id}`);
+}
+
 export function operationFor(action) {
   const request = action.request;
   if(action.type==='api_request')return validateApiRequest(request,{writeOnly:true});
@@ -224,8 +258,8 @@ export function operationFor(action) {
     if(!['companies','people','deals'].includes(parent))throw new Error('Unsupported task parent');
     const content=String(request.content??'').trim();
     if(!content || content.length>10000)throw new Error('Task content must contain 1-10000 characters');
-    if(typeof request.deadlineAt!=='string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(request.deadlineAt) || !Number.isFinite(Date.parse(request.deadlineAt)))throw new Error('Task deadline must be ISO-8601 with explicit timezone');
-    return {method:'POST',path:'/tasks',body:{data:{content,format:'plaintext',deadline_at:request.deadlineAt,is_completed:false,linked_records:[{target_object:parent,target_record_id:requiredId(request.recordId,'request.recordId')}],assignees:[{referenced_actor_type:'workspace-member',referenced_actor_id:requiredId(request.assigneeId,'request.assigneeId')}]}}};
+    if(request.deadlineAt!=null && (typeof request.deadlineAt!=='string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(request.deadlineAt) || !Number.isFinite(Date.parse(request.deadlineAt))))throw new Error('Task deadline must be ISO-8601 with explicit timezone');
+    return {method:'POST',path:'/tasks',body:{data:{content,format:'plaintext',deadline_at:request.deadlineAt??null,is_completed:false,...taskTargets(request)}}};
   }
   if(action.type === "create_note") {
     const parent = request.parentObject ?? "companies";
@@ -299,14 +333,14 @@ function operationForStored(stored) {
   return operationFor({ type: stored.action_type, request: stored.request });
 }
 
-async function readBack(client, stored, result) {
+export async function readBack(client, stored, result) {
   if(stored.action_type==='delete_task'){
     try{await client.get(`/tasks/${stored.request.taskId}`);}catch(error){if(error.status===404)return {taskId:stored.request.taskId,deleted:true};throw error;}
     throw new Error('Task still exists after deletion');
   }
   if(stored.action_type==='update_task'){
     const task=(await client.get(`/tasks/${stored.request.taskId}`)).data;
-    if(stored.request.deadlineAt!==undefined&&Date.parse(task.deadline_at)!==Date.parse(stored.request.deadlineAt))throw new Error('Task deadline readback mismatch');
+    if(stored.request.deadlineAt!==undefined&&!taskDeadlineMatches(task.deadline_at,stored.request.deadlineAt))throw new Error('Task deadline readback mismatch');
     if(stored.request.isCompleted!==undefined&&task.is_completed!==stored.request.isCompleted)throw new Error('Task completion readback mismatch');
     if(stored.request.assigneeId!==undefined&&!task.assignees?.some(a=>a.referenced_actor_id===stored.request.assigneeId))throw new Error('Task owner readback mismatch');
     if(stored.request.linkedRecords!==undefined){
@@ -333,7 +367,8 @@ async function readBack(client, stored, result) {
   if(stored.action_type==='create_task') {
     const id=result.data?.id?.task_id;if(!id)throw new Error('Task id missing for readback');
     const task=(await client.get(`/tasks/${encodeURIComponent(id)}`)).data;
-    if(taskText(task)!==String(stored.request.content).trim() || !task.assignees?.some(x=>x.referenced_actor_id===stored.request.assigneeId) || !task.linked_records?.some(x=>x.target_record_id===stored.request.recordId) || Date.parse(task.deadline_at)!==Date.parse(stored.request.deadlineAt))throw new Error('Task readback does not match approved content, owner, record or deadline');
+    const targetsMatch=Object.hasOwn(stored.request,'recordId')&&Object.hasOwn(stored.request,'assigneeId') ? task.assignees?.some(x=>x.referenced_actor_id===stored.request.assigneeId)&&task.linked_records?.some(x=>x.target_record_id===stored.request.recordId) : taskTargetsMatch(stored.request,task);
+    if(taskText(task)!==String(stored.request.content).trim() || !targetsMatch || !taskDeadlineMatches(task.deadline_at,stored.request.deadlineAt))throw new Error('Task readback does not match approved content, owner, record or deadline');
     return task;
   }
   if(stored.action_type === "create_note") {

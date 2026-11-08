@@ -350,10 +350,10 @@ async function approvedWrite(params:DynamicToolCallParams,context:TrinalumBridge
   if(params.tool==='attio_action'&&['create_task','update_task'].includes(String(input.type))){
     const request=input.request;
     if(!request||typeof request!=='object'||Array.isArray(request))return response(false,{error:'INVALID_ARGUMENTS'});
-    if(input.type==='create_task'||request.deadlineAt!==undefined){
+    if(request.deadlineAt!==undefined && (request.deadlineAt!==null || input.type==='update_task')){
       const deadline=request.deadlineAt;
       if(!validTaskDeadline(deadline)){
-        return response(false,{error:'INVALID_ARGUMENTS',field:'request.deadlineAt',hint:'Attio Tasks require a complete ISO-8601 timestamp including timezone, not a date alone. Preserve a supplied time. If no time was supplied, propose 09:00 Europe/Madrid explicitly for approval, using the date-specific UTC offset; do not claim it was requested or saved.'});
+        return response(false,{error:'INVALID_ARGUMENTS',field:'request.deadlineAt',hint:'When supplied, an Attio Task deadline requires a complete ISO-8601 timestamp including timezone, not a date alone. Omit it or use null when no deadline was requested. Preserve a supplied time. If no time was supplied, propose 09:00 Europe/Madrid explicitly for approval, using the date-specific UTC offset; do not claim it was requested or saved.'});
       }
     }
   }
