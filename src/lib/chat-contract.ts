@@ -353,7 +353,9 @@ export function isToolResult(value: unknown): value is ToolResult {
     !/\p{C}/u.test(value.title) &&
     (value.status === "running" || value.status === "complete" || value.status === "failed" || value.status === "stopped") &&
     isSafeNullableText(value.summary, 4_000) &&
-    isSafeNullableText(value.output, 64_000) &&
+    // Presentation limits belong to the producer. Persisted tool output stays
+    // lossless; the enclosing transport/file reader bounds the whole payload.
+    isSafeNullableText(value.output, Infinity) &&
     Array.isArray(value.sourceIds) && value.sourceIds.length <= 100 &&
     value.sourceIds.every((id) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(id)) &&
     new Set(value.sourceIds).size === value.sourceIds.length &&

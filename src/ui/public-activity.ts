@@ -71,7 +71,7 @@ export function publicActivityText(value: unknown, maximum = 12_000, evidence: P
 
 /** Keeps useful command output reviewable without exposing its host/runtime. */
 export function publicToolOutput(value: unknown, maximum = 64_000, evidence: PublicReferenceEvidence = {}) {
-  const output = withoutMarkdown(publicAssistantText(value, "el asistente", maximum, evidence)).trim();
+  const output = withoutMarkdown(publicAssistantText(value, "el asistente", maximum, evidence)).trim().slice(0, maximum);
   return output || null;
 }
 

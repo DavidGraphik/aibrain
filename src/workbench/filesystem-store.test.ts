@@ -62,6 +62,22 @@ afterEach(async () => {
 });
 
 describe("FileWorkbenchStore", () => {
+  it("round-trips previously persisted tool output beyond the presentation limit without changing history", async () => {
+    const { store, usersRoot } = await fixture();
+    const project = await store.createProject(USER_A, "Preserved tool history");
+    const thread = await store.createThread(USER_A, project.id, "Complete output");
+    const prompt = message("user", "complete");
+    const output = "x".repeat(64_191);
+    const reply: ChatMessage = { ...message("assistant", "complete"), content: "Original answer", toolResults: [{
+      id: "original-tool-result", kind: "app", title: "Original result", status: "complete", summary: null,
+      output, sourceIds: [], createdAt: new Date().toISOString(),
+    }] };
+    await store.beginThreadTurn(USER_A, thread.id, prompt, reply);
+    const reopened = new FileWorkbenchStore({ installationId: INSTALLATION_ID, usersRoot });
+    expect((await reopened.getThread(USER_A, thread.id)).messages).toEqual([prompt, reply]);
+    await reopened.updateThread(USER_A, thread.id, { status: "archived" });
+    expect((await new FileWorkbenchStore({ installationId: INSTALLATION_ID, usersRoot }).getThread(USER_A, thread.id)).messages).toEqual([prompt, reply]);
+  });
   it("retains only the requested history in access snapshots while keeping the full durable workbench", async () => {
     const { store } = await fixture();
     const project = await store.createProject(USER_A, "Access metadata");

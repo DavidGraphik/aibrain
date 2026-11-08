@@ -153,3 +153,33 @@ it.runIf(Object.values(nativeTools).every(Boolean))('extracts and renders actual
  const projected=await handleTrinalumTool({namespace:'trinalum_business',tool:'read_private_file',arguments:{artifactId:f.artifact.id,renderPage:2},threadId:'runtime-thread',turnId:'runtime-turn',callId:'render'}, {installationId:'trinalum-production',userId:owner,runtimeThreadId:'runtime-thread',runtimeTurnId:'runtime-turn',admitOperation:async()=>true,configPath:bridge,readPrivateFile:async()=>second});expect(projected.success).toBe(true);expect(projected.contentItems[1]).toMatchObject({type:'inputImage',imageUrl:expect.stringMatching(/^data:image\/png;base64,iVBOR/)});expect((projected.contentItems[0] as {text:string}).text).not.toContain('"type":"Buffer"');
  const location=await resourceLocationIndexForInstallation(f.context.installation).binding('generated-document',f.artifact.id);expect(await readFile(path.join(f.context.installation.paths.dataRoot,location!.relativePath!))).toEqual(f.original);expect((await resolveTrinalumArtifactAttachment(f.artifact.id,f.context)).contentBytes).toBe(f.original.toString('base64'));
 });
+
+describe('private connector workbook reading',()=>{
+ it('reads a real XLSX original through the existing paginated parser and tool with unchanged bytes and explicit complete coverage',async()=>{
+  const {generateLocalDocument}=await import('./documents/local-document-generator');
+  const workbook=await generateLocalDocument({format:'xlsx',title:'Synthetic workbook',content:'Synthetic saved values',rows:[['Grade','EUR/t'],['SYNTHETIC-A',1234],['SYNTHETIC-B',2345]]});
+  const f=await fixture();const artifact=await persistTrinalumFile({filename:'prices.xlsx',mimeType:'application/vnd.ms-excel',content_base64:workbook.data.toString('base64')},f.context);
+  const native:DocumentToolRunner={run:vi.fn(async(command,args,options)=>{
+   expect(command).toBe('/usr/local/bin/aibrain-g03-paged-spreadsheet');expect(args[0]).toBe('.xlsx');
+   const source=await readFile(path.join(options.cwd,'source.xlsx'));expect(source.equals(workbook.data)).toBe(true);
+   return {stdout:JSON.stringify({ok:true,sourceSha256:workbook.sha256,page:Number(args[1]),parts:2,text:Number(args[1])===1?'Sheet1 A1:B2: Grade EUR/t SYNTHETIC-A 1234':'Sheet1 A3:B3: SYNTHETIC-B 2345'}),stderr:''};
+  })};
+  const gate={run:async<T>(fn:()=>T|Promise<T>)=>fn()};
+  const bridge=path.join(f.context.installation.paths.dataRoot,'bridge.json');await writeFile(bridge,JSON.stringify({installationId:'trinalum-production',url:'http://127.0.0.1:18931/read',users:{[owner]:{status:'active',token:'a'.repeat(64)}}}),{mode:0o600});
+  const readPrivateFile=(input:PrivateFileRead)=>readTrinalumPrivateFile(input,f.context,{tools,runner:native,conversionGate:gate});
+  const result=await handleTrinalumTool({namespace:'trinalum_business',tool:'read_private_file',arguments:{artifactId:artifact.id,startPage:1,pageCount:1,output:'text'},threadId:'runtime-thread',turnId:'runtime-turn',callId:'workbook'}, {installationId:'trinalum-production',userId:owner,runtimeThreadId:'runtime-thread',runtimeTurnId:'runtime-turn',admitOperation:async()=>true,configPath:bridge,readPrivateFile});
+  expect(result.success).toBe(true);expect(JSON.parse((result.contentItems[0] as {text:string}).text)).toMatchObject({status:'read',formatVerification:'spreadsheet_container_verified',pages:2,nextPage:2,complete:false});
+  const rest=await readPrivateFile({artifactId:artifact.id,startPage:2,pageCount:1});expect(rest).toMatchObject({nextPage:null,complete:false});expect("text" in rest ? rest.text : null).toContain('SYNTHETIC-B');
+  const all=await readPrivateFile({artifactId:artifact.id});expect(all).toMatchObject({complete:true,nextPage:null});expect("text" in all ? all.text : null).toContain('EUR/t');
+  expect((await resolveTrinalumArtifactAttachment(artifact.id,f.context)).contentBytes).toBe(workbook.data.toString('base64'));
+  await expect(readTrinalumPrivateFile({artifactId:artifact.id},{...f.context,threadId:'foreign'},{tools,runner:native,conversionGate:gate})).rejects.toThrow('PRIVATE_FILE_ACCESS_DENIED');
+  await expect(readPrivateFile({artifactId:artifact.id,renderPage:1})).rejects.toThrow('PRIVATE_FILE_RENDER_UNAVAILABLE');
+ });
+ it('keeps malformed or non-workbook ZIP originals intact and does not claim successful parsing',async()=>{
+  const f=await fixture();const bytes=Buffer.concat([Buffer.from('504b0304','hex'),Buffer.from('not a workbook')]);
+  const artifact=await persistTrinalumFile({filename:'broken.xlsx',content_base64:bytes.toString('base64')},f.context);
+  const native:DocumentToolRunner={run:vi.fn(async()=>({stdout:JSON.stringify({ok:false,reason:'INVALID_WORKBOOK'}),stderr:''}))};
+  await expect(readTrinalumPrivateFile({artifactId:artifact.id},f.context,{tools,runner:native,conversionGate:{run:async fn=>fn()}})).rejects.toThrow('SERVER_SPREADSHEET_UNAVAILABLE');
+  expect((await resolveTrinalumArtifactAttachment(artifact.id,f.context)).contentBytes).toBe(bytes.toString('base64'));
+ });
+});

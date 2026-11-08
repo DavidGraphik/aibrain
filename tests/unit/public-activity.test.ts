@@ -14,6 +14,11 @@ import {
 const internalPath = "/var/lib/aibrain/data/users/fc71a2c4-0db0-4914-af82-9564038ea964/runtime/codex-home/skills/web/SKILL.md";
 
 describe("employee-facing activity sanitization", () => {
+  it("bounds the final tool presentation after short code fences expand during Markdown normalization", () => {
+    const output = publicToolOutput("```x```".repeat(15_000));
+    expect(output).toHaveLength(64_000);
+    expect(output).toContain("Comprobación interna");
+  });
   it("publishes complete words in every burst while withholding split internal tokens", () => {
     const chunks = ["Primera palabra", " segunda", " fc71a2c4-0db0-", "4914-af82-9564038ea964 texto"];
     let raw = "";
