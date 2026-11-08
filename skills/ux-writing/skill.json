@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "ux-writing",
+  "label": "ux-writing",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "Bundled from installed ux-writing skill on 2026-09-10; whitespace normalized; ux-writing supporting documents relocated under resources. AiBrain routing and editorial constraints take precedence.",
+  "files": [
+    "SKILL.md",
+    "resources/LICENSE.txt",
+    "resources/docs/figma-integration.md",
+    "resources/examples/real-world-improvements.md",
+    "resources/references/accessibility-guidelines.md",
+    "resources/references/content-usability-checklist.md",
+    "resources/references/patterns-detailed.md",
+    "resources/references/voice-chart-template.md",
+    "resources/templates/empty-state-template.md",
+    "resources/templates/error-message-template.md",
+    "resources/templates/onboarding-flow-template.md"
+  ]
+}

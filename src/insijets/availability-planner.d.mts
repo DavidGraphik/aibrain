@@ -1,0 +1,4 @@
+export type Candidate = {operatorId:string;operator:string;baseId:string;airport:string;country:string;city:string;tier:number;reason:string;emails:string[];aircraft:{id:string;model:string;seats:number;sourceURL:string;checkedAt:string}[];availability:string;routeFeasibility:string};
+export function parseFlightEnquiry(text:string):{originAirport:string|null;destinationAirport:string|null;passengers:number|null;originCity:string|null;suggestedAirports:string[];missingInputs:string[]};
+export function shortlistAircraft(dataset:unknown,request:Record<string,unknown>,options?:{limit?:unknown}):Candidate[];
+export function prepareAvailabilityDrafts(shortlist:Candidate[],request:Record<string,unknown>):{request:unknown;missingInputs:string[];sendEnabled:false;blockers:string[];drafts:{operatorId:string;sender:string|null;to:string[];cc:string[];bcc:string[];subject:string;body:string;attachments:unknown[];status:string;requiresDavidApproval:true;approval:null}[]};

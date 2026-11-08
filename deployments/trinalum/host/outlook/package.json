@@ -1,0 +1,17 @@
+{
+  "name": "aibrain-mail-adapter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "imapflow": "^1.6.5",
+    "mailparser": "^3.9.14",
+    "nodemailer": "^9.0.3"
+  }
+}

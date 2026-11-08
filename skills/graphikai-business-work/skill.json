@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "graphikai-business-work",
+  "label": "Trabajo empresarial GraphikAI",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "GraphikAI operating context versioned with AiBrain; confirmed 2026-08-30.",
+  "files": ["SKILL.md", "resources/confirmed-context.md"]
+}

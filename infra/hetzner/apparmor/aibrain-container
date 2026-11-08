@@ -1,0 +1,24 @@
+#include <tunables/global>
+
+# AiBrain runs without Linux capabilities, with a read-only root filesystem and
+# a fail-closed seccomp allowlist. This AppArmor profile exists to permit the
+# nested user and mount namespaces that Bubblewrap needs for per-employee
+# workers, document conversion and browser isolation on Ubuntu hosts where
+# unprivileged user namespaces are AppArmor-restricted.
+profile aibrain-container flags=(attach_disconnected,mediate_deleted) {
+  capability,
+  network,
+  unix,
+  signal,
+  ptrace,
+  mqueue,
+  io_uring,
+  dbus,
+  userns,
+  mount,
+  umount,
+  pivot_root,
+
+  file rwlkm /{**,},
+  /** ix,
+}

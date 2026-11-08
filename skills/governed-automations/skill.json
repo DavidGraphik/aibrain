@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "governed-automations",
+  "label": "Automatizaciones gobernadas",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "GraphikAI generic baseline for governed automation design and operation; versioned 2026-08-30.",
+  "files": ["SKILL.md"]
+}

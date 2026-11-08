@@ -1,0 +1,33 @@
+import { chromium,expect } from '@playwright/test';
+import { readFile,writeFile } from 'node:fs/promises';
+const root='/tmp/g03-products-local-qa',origin='http://localhost:3199';
+const browser=await chromium.launch({headless:true});
+const results=[];let debugPage;const marker=`Comentari QA ${Date.now()}`;const equipment=`Equip QA ${Date.now()}`;
+try {
+ const a=await browser.newContext({storageState:`${root}/storage-0.json`,viewport:{width:1920,height:1080}}),page=await a.newPage();debugPage=page;page.setDefaultNavigationTimeout(120000);page.setDefaultTimeout(60000);
+ page.on('pageerror',e=>results.push({pageError:e.message}));page.on('framenavigated',f=>{if(f===page.mainFrame())console.log('Main navigation:',f.url())});page.on('console',m=>{if(m.text().includes('Fast Refresh'))console.log(m.text())});
+ await page.goto(origin,{waitUntil:'load',timeout:120000});
+ await page.getByRole('button',{name:'Producción',exact:true}).last().click({timeout:60000});
+ await page.getByRole('main',{name:'G03 OS Producció'}).waitFor({timeout:60000});await page.getByLabel('Client OF OF-QA-1',{exact:true}).waitFor({timeout:60000});
+ const menu=await page.locator('nav').first().innerText();if(menu.indexOf('Producción')<Math.max(menu.indexOf('Automatizaciones'),menu.indexOf('Automations')))throw Error('Wrong menu order');
+ await page.getByLabel('Comentari OF OF-QA-1',{exact:true}).fill(marker);await page.getByLabel('Comentari OF OF-QA-1',{exact:true}).press('Tab');
+ await page.getByText('Canvi desat i verificat al servidor.',{exact:true}).waitFor();
+ await page.reload();await page.getByRole('button',{name:'Producción',exact:true}).last().click();
+ await page.getByLabel('Comentari OF OF-QA-1',{exact:true}).waitFor();if(await page.getByLabel('Comentari OF OF-QA-1',{exact:true}).inputValue()!==marker)throw Error('Edit not durable');
+ const dims=await page.evaluate(()=>{const table=document.querySelector('table');return {pageOverflow:document.documentElement.scrollWidth>innerWidth,tableWidth:table.getBoundingClientRect().width,containerWidth:table.parentElement.clientWidth}});
+ if(dims.pageOverflow||dims.tableWidth>dims.containerWidth+1)throw Error('Desktop horizontal overflow');
+ await page.screenshot({path:'output/g03-products-qa/production-desktop.png',fullPage:false});results.push({case:'production-menu-edit-refresh-desktop',status:'PASS',...dims});
+ await page.getByRole('button',{name:'Càrrega maquinària',exact:true}).click();await page.getByRole('heading',{name:/MORI NV4000/}).waitFor();results.push({case:'machine-queue-visible',status:'PASS'});
+ await page.getByRole('button',{name:'Aplicacions',exact:true}).first().click();await page.getByLabel('Aplicació',{exact:true}).waitFor();const id=(await readFile(`${root}/app-id.txt`,'utf8')).trim();await page.getByLabel('Aplicació',{exact:true}).selectOption(id);
+ const frame=page.frameLocator('iframe[title="Registre de revisions · QA"]');await frame.getByRole('heading',{name:'Registre de revisions · QA'}).waitFor({timeout:60000});
+ await frame.getByLabel('Equip').fill(equipment);await frame.getByRole('button',{name:'Desar revisió'}).click();await frame.getByText('Desat al servidor',{exact:true}).waitFor();await frame.getByText(equipment,{exact:true}).waitFor();
+ await page.screenshot({path:'output/g03-products-qa/apps-desktop.png',fullPage:false});results.push({case:'app-inline-execution-and-durable-record',status:'PASS'});
+ const b=await browser.newContext({storageState:`${root}/storage-1.json`,viewport:{width:1440,height:900}}),other=await b.newPage();await other.goto(`${origin}/g03/apps?id=${id}&published=1`);const otherFrame=other.frameLocator('iframe');await otherFrame.getByText(equipment,{exact:true}).waitFor({timeout:60000});results.push({case:'second-user-shared-publication-readback',status:'PASS'});
+ const sandbox=await page.locator('iframe').getAttribute('sandbox');if(sandbox!=='allow-scripts allow-forms')throw Error('Unsafe sandbox');
+ const response=await a.request.get(`${origin}/api/g03/apps/preview?id=${id}`);if(!response.headers()['content-security-policy']?.includes("connect-src 'none'"))throw Error('Network boundary missing');
+ const unauthorized=await browser.newContext();const responseDenied=await unauthorized.request.get(`${origin}/api/g03/production`);if(responseDenied.status()!==401)throw Error('Unauthenticated access allowed');
+ const csrf=await a.request.post(`${origin}/api/g03/apps`,{headers:{Origin:'https://foreign.example'},data:{action:'publish',id,revision:999,version:1,shared:true}});if(csrf.status()!==403)throw Error('Cross-origin write allowed');
+ results.push({case:'opaque-sandbox-network-csp-auth-csrf',status:'PASS'});
+ await page.getByRole('button',{name:'Modificar per chat',exact:true}).click();await expect(page.locator('iframe')).toHaveCount(0);await expect(page.locator('textarea').last()).toHaveValue(new RegExp(id));results.push({case:'return-to-chat-from-app',status:'PASS'});
+ await writeFile('output/g03-products-qa/browser-results.json',JSON.stringify({kind:'synthetic-local-not-client-acceptance',at:new Date().toISOString(),results},null,2));console.log(JSON.stringify(results,null,2));
+} catch(e) {if(debugPage){await debugPage.screenshot({path:'output/g03-products-qa/failure.png'}).catch(()=>{});await writeFile('output/g03-products-qa/failure-dom.txt',await debugPage.content());}results.push({failure:String(e)});await writeFile('output/g03-products-qa/browser-results.json',JSON.stringify({results},null,2));throw e;} finally {await browser.close();}

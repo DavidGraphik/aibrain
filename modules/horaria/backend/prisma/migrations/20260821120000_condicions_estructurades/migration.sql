@@ -1,0 +1,13 @@
+-- Les condicions fixes d'un treballador, com a dades i no com a frase.
+--
+-- `condicionesFijas` es queda EXACTAMENT com està i no es toca: segueix sent el
+-- que es llegeix i s'escriu a la fitxa, i el que va al prompt. Aquesta columna
+-- nova és la traducció d'aquella frase a una forma que el motor pugui garantir
+-- amb passades deterministes, en comptes de només suggerir-la a la IA.
+--
+-- Les dues han de conviure una temporada. La traducció la farà una IA i la
+-- validarà el responsable abans de desar-se; fins que una fitxa no hagi passat
+-- per aquí, aquesta columna serà NULL i tot seguirà funcionant com abans.
+--
+-- NULL vol dir «encara no traduïda», no «sense condicions».
+ALTER TABLE "employees" ADD COLUMN "condicionesEstructuradas" JSONB;

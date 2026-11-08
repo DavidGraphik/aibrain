@@ -1,0 +1,13 @@
+{
+  "multipleTools": [
+    "activity:summary-start",
+    "tool:web-one",
+    "tool:command-one",
+    "activity:summary-finish"
+  ],
+  "errorRecovery": [
+    "tool:first-attempt",
+    "activity:recovery-summary",
+    "tool:recovery-read"
+  ]
+}

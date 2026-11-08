@@ -1,0 +1,51 @@
+name: Public source quality
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: public-quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24.18.1'
+          cache: npm
+      - run: node .github/scripts/check-public-source.mjs
+      - run: node --test .github/scripts/run-quality-tests.test.mjs
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck -- --incremental false
+      - run: node .github/scripts/run-quality-tests.mjs
+      - run: node --test --test-concurrency=1 scripts/verify-backend-acceptance.test.mjs scripts/package-standalone.test.mjs
+      - run: npm ci --prefix deployments/trinalum/host/outlook --ignore-scripts --no-audit --no-fund
+      - run: node --test --test-concurrency=1 deployments/trinalum/host/outlook/test/*.test.mjs deployments/trinalum/host/sibema/test/*.test.mjs deployments/trinalum/host/attio/test/*.test.mjs
+      - run: npm run build -- --webpack
+      - run: npm run build:automation-worker
+      - name: Package the exact Linux standalone build
+        run: node scripts/package-standalone.mjs --sha "$CANDIDATE_SHA" --output "$RUNNER_TEMP/aibrain-standalone"
+      - name: Retain the package and manifest for one day
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: standalone-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/aibrain-standalone/*.tar.gz
+            ${{ runner.temp }}/aibrain-standalone/*-manifest.json
+            ${{ runner.temp }}/aibrain-standalone/SHA256SUMS
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: false

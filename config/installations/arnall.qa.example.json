@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "installationId": "company-qa",
+  "companyName": "Example Retail Company",
+  "companySlug": "arnall",
+  "publicUrl": "https://brain.example.com",
+  "branding": {
+    "productName": "Northwind AI",
+    "logoPath": "/branding/northwind-qa/logo.svg",
+    "faviconPath": "/branding/northwind-qa/favicon.svg",
+    "accentColor": "#0f766e"
+  },
+  "paths": {
+    "dataRoot": "/srv/aibrain-northwind-qa/data",
+    "companyContextRoot": "/srv/aibrain-northwind-qa/data/company-context",
+    "usersRoot": "/srv/aibrain-northwind-qa/data/employees",
+    "sourceReadRoot": "/mnt/aibrain-northwind-qa/source-ro",
+    "publishWriteRoot": "/mnt/aibrain-northwind-qa/publish-rw",
+    "backupsRoot": "/srv/aibrain-northwind-qa/data/backup-snapshots"
+  }
+}

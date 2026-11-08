@@ -1,0 +1,3 @@
+# Preserve the exact reviewed bytes of the Windows installer and its manifest.
+# Automatic CRLF conversion would invalidate the package's SHA256 verification.
+deployments/g03/outlook-desktop/** text eol=lf

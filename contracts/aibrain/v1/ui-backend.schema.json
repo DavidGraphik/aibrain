@@ -1,0 +1,1599 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://graphikai.com/aibrain/contracts/v1/ui-backend.schema.json",
+  "title": "AiBrain UI/backend contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {},
+  "$defs": {
+    "G03AppsResponse": {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object", "required": ["id", "title", "owner", "revision", "latestVersion", "publishedVersion", "shared"], "properties": {"id": {"type": "string", "format": "uuid"}, "title": {"type": "string"}, "owner": {"type": "string"}, "revision": {"type": "integer", "minimum": 1}, "latestVersion": {"type": "integer", "minimum": 1}, "publishedVersion": {"type": ["integer", "null"]}, "shared": {"type": "boolean"}}, "additionalProperties": false}}]},
+    "CompanyMailConnectionResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "accountEmail", "connectionVersion"],
+      "properties": {
+        "status": { "const": "connected" },
+        "accountEmail": { "type": "string", "minLength": 3, "maxLength": 254 },
+        "connectionVersion": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "CompanyMailDisconnectResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "localCredentialDeleted"],
+      "properties": { "status": { "const": "revoked" }, "localCredentialDeleted": { "const": true } }
+    },
+    "JsonObject": { "type": "object" },
+    "Uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "IsoDate": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["error"],
+      "properties": {
+        "error": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "retryAfterMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "RedirectResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "location"],
+      "properties": {
+        "status": { "enum": [302, 303, 307, 308] },
+        "location": { "type": "string", "minLength": 1 }
+      }
+    },
+    "AuthSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "user", "tenant", "expiresAt"],
+      "properties": {
+        "provider": { "enum": ["demo", "local"] },
+        "user": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "email"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "email": { "type": "string", "minLength": 3 },
+            "avatarUrl": {
+              "oneOf": [
+                { "type": "string", "pattern": "^https://" },
+                { "type": "null" }
+              ]
+            }
+          }
+        },
+        "tenant": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        },
+        "expiresAt": { "$ref": "#/$defs/IsoDate" },
+        "support": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["actorEmail", "expiresAt"],
+          "properties": {
+            "actorEmail": { "type": "string", "minLength": 3, "maxLength": 320 },
+            "expiresAt": { "$ref": "#/$defs/IsoDate" }
+          }
+        }
+      }
+    },
+    "AuthSessionResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session"],
+      "properties": { "session": { "$ref": "#/$defs/AuthSession" } }
+    },
+    "PublicInstallationBranding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["installationId", "companyName", "companySlug", "publicUrl", "productName", "logoPath", "faviconPath", "accentColor"],
+      "properties": {
+        "installationId": { "type": "string", "minLength": 1 },
+        "companyName": { "type": "string", "minLength": 1 },
+        "companySlug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "publicUrl": { "type": "string", "pattern": "^https?://" },
+        "productName": { "type": "string", "minLength": 1 },
+        "logoPath": { "type": "string", "pattern": "^/" },
+        "faviconPath": { "type": "string", "pattern": "^/" },
+        "accentColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+      }
+    },
+    "ActivityItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "label", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["system", "reasoning", "plan", "command", "file", "tool", "web", "agent"] },
+        "label": { "type": "string" },
+        "detail": { "type": "string" },
+        "output": { "type": "string" },
+        "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "status": { "enum": ["pending", "running", "waiting", "complete", "failed", "stopped"] }
+      }
+    },
+    "TurnSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "url", "domain", "snippet", "publishedAt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" },
+        "kind": { "enum": ["web", "file", "app"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "url": { "type": ["string", "null"], "pattern": "^https?://", "maxLength": 2048 },
+        "domain": { "type": ["string", "null"], "maxLength": 255 },
+        "snippet": { "type": ["string", "null"], "maxLength": 2000 },
+        "publishedAt": { "oneOf": [{ "$ref": "#/$defs/IsoDate" }, { "type": "null" }] }
+      }
+    },
+    "ToolResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "status", "summary", "output", "sourceIds", "createdAt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" },
+        "kind": { "enum": ["command", "file", "web", "app", "browser"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "status": { "enum": ["running", "complete", "failed", "stopped"] },
+        "summary": { "type": ["string", "null"], "maxLength": 4000 },
+        "output": { "type": ["string", "null"], "maxLength": 64000 },
+        "sourceIds": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" } },
+        "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "createdAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "PlanStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step", "status"],
+      "properties": {
+        "step": { "type": "string" },
+        "status": { "enum": ["pending", "in_progress", "completed"] }
+      }
+    },
+    "ApprovalItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "threadId", "turnId", "itemId", "kind", "title", "detail", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "threadId": { "type": "string", "minLength": 1 },
+        "turnId": { "type": "string", "minLength": 1 },
+        "itemId": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["command", "file", "browser"] },
+        "title": { "type": "string" },
+        "detail": { "type": "string" },
+        "command": { "type": "string" },
+        "cwd": { "type": "string" },
+        "permissionFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "fileReview": {
+          "type": "object", "additionalProperties": false, "required": ["filename", "changes"],
+          "properties": {
+            "filename": { "type": "string", "minLength": 1, "maxLength": 180 },
+            "changes": { "type": "array", "minItems": 1, "maxItems": 40, "items": {
+              "type": "object", "additionalProperties": false, "required": ["before", "after"],
+              "properties": { "before": { "type": "string", "maxLength": 32000 }, "after": { "type": "string", "maxLength": 32000 } }
+            } }
+          }
+        },
+        "status": { "enum": ["pending", "accepted", "accepted_session", "declined"] }
+      }
+    },
+    "ConnectorCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connectorId", "label", "status", "statusCode", "checkedAt", "effectiveOperations", "approvalRequiredOperations"],
+      "properties": {
+        "connectorId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "status": { "enum": ["connected", "degraded", "reauth_required", "revoked", "not_configured"] },
+        "statusCode": { "type": ["string", "null"], "maxLength": 160 },
+        "checkedAt": { "oneOf": [{ "$ref": "#/$defs/IsoDate" }, { "type": "null" }] },
+        "effectiveOperations": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 160 } },
+        "approvalRequiredOperations": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 160 } }
+      }
+    },
+    "PersonalConnectorSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "status", "statusCode", "statusDetail", "accountEmail", "scopes", "connectUrl", "disconnectUrl", "connectionVersion"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "status": { "enum": ["connected", "requires_login", "admin_setup_required", "unavailable"] },
+        "statusCode": { "type": ["string", "null"], "maxLength": 160 },
+        "statusDetail": { "type": "string", "maxLength": 8000 },
+        "accountEmail": { "type": ["string", "null"], "minLength": 3, "maxLength": 320 },
+        "scopes": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+        "connectUrl": { "type": ["string", "null"], "minLength": 1 },
+        "disconnectUrl": { "type": ["string", "null"], "minLength": 1 },
+        "connectionVersion": { "type": ["integer", "null"], "minimum": 1 },
+        "connectionMethod": { "const": "password" }
+      }
+    },
+    "MailErrorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "error": { "type": "string", "minLength": 1, "maxLength": 8000 }
+      }
+    },
+    "MailConnectionCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connectorId", "label", "status", "statusCode", "checkedAt", "effectiveOperations", "approvalRequiredOperations", "accountEmail", "connectUrl", "disconnectUrl", "connectionVersion"],
+      "properties": {
+        "connectorId": { "const": "mail" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "status": { "enum": ["connected", "degraded", "reauth_required", "revoked", "not_configured"] },
+        "statusCode": { "type": ["string", "null"], "maxLength": 160 },
+        "checkedAt": { "oneOf": [{ "$ref": "#/$defs/IsoDate" }, { "type": "null" }] },
+        "effectiveOperations": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "enum": ["folders", "list", "search", "read", "attachment", "draft", "prepare_send", "send", "flags", "move"] } },
+        "approvalRequiredOperations": { "type": "array", "const": [] },
+        "accountEmail": { "type": "string", "minLength": 3, "maxLength": 320 },
+        "connectUrl": { "const": "/api/connectors/mail/connect" },
+        "disconnectUrl": { "enum": ["/api/connectors/mail/disconnect", null] },
+        "connectionVersion": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "MailCapabilityResponse": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/MailConnectionCapability" }, { "$ref": "#/$defs/MailErrorResponse" }]
+    },
+    "MailConnectResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["connected", "accountEmail", "connectionVersion"],
+          "properties": {
+            "connected": { "const": true },
+            "accountEmail": { "type": "string", "minLength": 3, "maxLength": 320 },
+            "connectionVersion": { "type": "integer", "minimum": 1 }
+          }
+        },
+        { "$ref": "#/$defs/MailErrorResponse" }
+      ]
+    },
+    "MailDisconnectResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": { "status": { "const": "revoked" } }
+        },
+        { "$ref": "#/$defs/MailErrorResponse" }
+      ]
+    },
+    "ConnectorCapabilitiesResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "connectors"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "connectors": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/ConnectorCapability" } }
+      }
+    },
+    "ConnectorMention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "kind", "status", "statusCode", "canRead", "requiresApprovalForWrites"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[-.:][a-z0-9]+)*$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "kind": { "enum": ["app", "connector", "mcp"] },
+        "status": { "enum": ["connected", "requires_login", "admin_setup_required", "unavailable"] },
+        "statusCode": { "type": ["string", "null"], "maxLength": 160 },
+        "canRead": { "type": "boolean" },
+        "requiresApprovalForWrites": { "type": "boolean" }
+      }
+    },
+    "ConnectorMentionsResponse": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/ConnectorMention" }
+    },
+    "ConnectorActionLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["threadId", "turnId", "itemId", "approvalId"],
+      "properties": {
+        "threadId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" },
+        "turnId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" },
+        "itemId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" },
+        "approvalId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" }
+      }
+    },
+    "ConnectorActionDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "locator", "authorizationFingerprint", "approval"],
+      "properties": {
+        "operation": { "const": "execute-allowlisted-action" },
+        "locator": { "$ref": "#/$defs/ConnectorActionLocator" },
+        "authorizationFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "approval": { "$ref": "#/$defs/ApprovalItem" }
+      }
+    },
+    "ConnectorActionResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "descriptor"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "descriptor": { "$ref": "#/$defs/ConnectorActionDescriptor" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "outcome"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "outcome": { "enum": ["executed", "replayed", "indeterminate"] }
+          }
+        }
+      ]
+    },
+    "ServerReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "name", "kind", "modifiedAt", "size"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "kind": { "enum": ["file", "directory"] },
+        "modifiedAt": { "anyOf": [{ "$ref": "#/$defs/IsoDate" }, { "type": "null" }] },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ChatAttachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "mimeType", "size"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "size": { "type": "integer", "minimum": 1, "maximum": 52428800 }
+      }
+    },
+    "GeneratedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "name", "url", "prompt"],
+      "dependentRequired": { "width": ["height"], "height": ["width"] },
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "type": { "const": "image" },
+        "name": { "type": "string", "maxLength": 120 },
+        "url": { "type": "string", "pattern": "^/api/projects/" },
+        "prompt": { "type": ["string", "null"] },
+        "width": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 8192 }
+      }
+    },
+    "ChatMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "content", "createdAt", "status", "activity", "plan", "approvals", "diff", "attachments", "artifacts"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "role": { "enum": ["user", "assistant"] },
+        "content": { "type": "string" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "status": { "enum": ["complete", "streaming", "error", "stopped"] },
+        "activity": { "type": "array", "items": { "$ref": "#/$defs/ActivityItem" } },
+        "plan": { "type": "array", "items": { "$ref": "#/$defs/PlanStep" } },
+        "approvals": { "type": "array", "items": { "$ref": "#/$defs/ApprovalItem" } },
+        "diff": { "type": "string" },
+        "connectorMentions": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[-.:][a-z0-9]+)*$" } },
+        "serverReferences": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/ServerReference" } },
+        "attachments": { "type": "array", "items": { "$ref": "#/$defs/ChatAttachment" } },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/GeneratedArtifact" } },
+        "sources": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/TurnSource" } },
+        "toolResults": { "type": "array", "items": { "$ref": "#/$defs/ToolResult" } }
+      }
+    },
+    "WorkbenchWorkspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "hostType", "status", "isPrimary"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "hostType": { "const": "managed" },
+        "status": { "enum": ["ready", "pending", "unavailable"] },
+        "isPrimary": { "type": "boolean" }
+      }
+    },
+    "ProjectSourceUploadResponse": {
+      "type": "object", "additionalProperties": false, "required": ["source"],
+      "properties": { "source": { "$ref": "#/$defs/ProjectSource" } }
+    },
+    "ProjectSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "name", "url", "mimeType", "size", "excerpt", "status", "createdAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "kind": { "enum": ["file", "link", "note"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "url": { "type": ["string", "null"], "pattern": "^https?://", "maxLength": 2048 },
+        "mimeType": { "type": ["string", "null"], "maxLength": 120 },
+        "size": { "type": ["integer", "null"], "minimum": 0, "maximum": 20000000 },
+        "excerpt": { "type": ["string", "null"], "maxLength": 32000 },
+        "status": { "enum": ["ready", "pending-index"] },
+        "createdAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "ProjectMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "email", "name", "role", "status", "addedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "email": { "type": "string", "minLength": 3, "maxLength": 254 },
+        "name": { "type": ["string", "null"], "minLength": 1, "maxLength": 100 },
+        "role": { "enum": ["owner", "editor", "viewer"] },
+        "status": { "enum": ["active", "invited-local"] },
+        "addedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "ProjectMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "notes", "updatedAt"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 16000 },
+        "updatedAt": { "oneOf": [{ "$ref": "#/$defs/IsoDate" }, { "type": "null" }] }
+      }
+    },
+    "ProjectSharing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["visibility", "members"],
+      "properties": {
+        "visibility": { "enum": ["private", "shared"] },
+        "members": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/ProjectMember" } }
+      }
+    },
+    "ProjectAccess": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "canEdit", "canManage"],
+          "properties": {
+            "role": { "const": "owner" },
+            "canEdit": { "const": true },
+            "canManage": { "const": true }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "canEdit", "canManage"],
+          "properties": {
+            "role": { "const": "editor" },
+            "canEdit": { "const": true },
+            "canManage": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "canEdit", "canManage"],
+          "properties": {
+            "role": { "const": "viewer" },
+            "canEdit": { "const": false },
+            "canManage": { "const": false }
+          }
+        }
+      ]
+    },
+    "WorkbenchProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "slug", "status", "pinned", "instructions", "sources", "memory", "sharing", "workspace", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "status": { "enum": ["active", "archived"] },
+        "pinned": { "type": "boolean" },
+        "instructions": { "type": "string", "maxLength": 16000 },
+        "sources": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/ProjectSource" } },
+        "memory": { "$ref": "#/$defs/ProjectMemory" },
+        "sharing": { "$ref": "#/$defs/ProjectSharing" },
+        "access": { "$ref": "#/$defs/ProjectAccess" },
+        "workspace": { "$ref": "#/$defs/WorkbenchWorkspace" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "updatedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "WorkbenchThread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "projectId", "title", "status", "pinned", "createdAt", "updatedAt", "messages"],
+      "properties": {
+        "access": { "$ref": "#/$defs/ProjectAccess" },
+        "id": { "$ref": "#/$defs/Uuid" },
+        "projectId": { "$ref": "#/$defs/Uuid" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "status": { "enum": ["active", "archived"] },
+        "pinned": { "type": "boolean" },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "updatedAt": { "$ref": "#/$defs/IsoDate" },
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/ChatMessage" } }
+      }
+    },
+    "WorkbenchResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workbench"],
+      "properties": {
+        "workbench": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["persistence", "projects", "threads"],
+          "properties": {
+            "persistence": { "enum": ["filesystem", "filesystem-demo", "browser-preview"] },
+            "projects": { "type": "array", "items": { "$ref": "#/$defs/WorkbenchProject" } },
+            "threads": { "type": "array", "items": { "$ref": "#/$defs/WorkbenchThread" } }
+          }
+        }
+      }
+    },
+    "TaskCenterResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tasks", "readTaskIds", "preferences", "continuity"],
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "threadId", "projectId", "threadTitle", "projectName", "status", "title", "detail", "createdAt", "updatedAt", "unread"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[0-9a-f-]{36}\\.[0-9a-f-]{36}$" },
+              "threadId": { "$ref": "#/$defs/Uuid" },
+              "projectId": { "$ref": "#/$defs/Uuid" },
+              "threadTitle": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "projectName": { "type": ["string", "null"] },
+              "status": { "enum": ["running", "needs_attention", "completed", "failed"] },
+              "title": { "type": "string", "minLength": 1, "maxLength": 92 },
+              "detail": { "type": "string" },
+              "createdAt": { "$ref": "#/$defs/IsoDate" },
+              "updatedAt": { "$ref": "#/$defs/IsoDate" },
+              "unread": { "type": "boolean" }
+            }
+          }
+        },
+        "readTaskIds": {
+          "type": "array",
+          "maxItems": 5000,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[0-9a-f-]{36}\\.[0-9a-f-]{36}$" }
+        },
+        "preferences": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["inApp", "desktop"],
+          "properties": {
+            "inApp": { "type": "boolean" },
+            "desktop": { "type": "boolean" }
+          }
+        },
+        "continuity": { "const": "worker_required" }
+      }
+    },
+    "RuntimeStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenantId", "projectId", "projectName", "mode", "codex", "isolated", "ready", "authMode", "planType", "processWarm", "rateLimit", "usage", "workspaceName", "model", "approvalPolicy", "sandbox", "models", "skills", "capabilities"],
+      "properties": {
+        "tenantId": { "type": "string" },
+        "projectId": { "type": ["string", "null"] },
+        "projectName": { "type": "string" },
+        "mode": { "enum": ["demo", "codex"] },
+        "codex": { "enum": ["checking", "connected", "unavailable", "disabled"] },
+        "authenticationRequired": { "type": "boolean" },
+        "isolated": { "type": "boolean" },
+        "ready": { "type": "boolean" },
+        "authMode": { "enum": ["chatgpt", "apiKey", "amazonBedrock", null] },
+        "planType": { "type": ["string", "null"] },
+        "processWarm": { "type": "boolean" },
+        "rateLimit": { "type": ["object", "null"] },
+        "usage": { "type": ["object", "null"] },
+        "workspaceName": { "type": "string" },
+        "model": { "type": ["string", "null"] },
+        "approvalPolicy": { "enum": ["never", "on-request"] },
+        "sandbox": { "enum": ["read-only", "workspace-write"] },
+        "models": { "type": "array", "items": { "type": "object" } },
+        "skills": { "type": "array", "items": { "type": "object" } },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["webSearch", "imageInput", "imageGeneration"],
+          "properties": {
+            "webSearch": { "type": "boolean" },
+            "imageInput": { "type": "boolean" },
+            "imageGeneration": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "ChatStreamEvent": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["type", "message"], "properties": { "type": { "const": "snapshot" }, "message": { "$ref": "#/$defs/ChatMessage" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "enum": ["content", "diff", "delta"] }, "value": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "item"], "properties": { "type": { "const": "activity" }, "item": { "$ref": "#/$defs/ActivityItem" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "item"], "properties": { "type": { "const": "approval" }, "item": { "$ref": "#/$defs/ApprovalItem" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "item"], "properties": { "type": { "const": "artifact" }, "item": { "$ref": "#/$defs/GeneratedArtifact" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "item"], "properties": { "type": { "const": "source" }, "item": { "$ref": "#/$defs/TurnSource" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "item"], "properties": { "type": { "const": "toolResult" }, "item": { "$ref": "#/$defs/ToolResult" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "explanation", "steps"], "properties": { "type": { "const": "plan" }, "explanation": { "type": ["string", "null"] }, "steps": { "type": "array", "items": { "$ref": "#/$defs/PlanStep" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "enum": ["done", "stopped"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "message"], "properties": { "type": { "const": "error" }, "message": { "type": "string" } } }
+      ]
+    },
+    "LegacyExcelProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "originalFileName",
+        "originalSha256",
+        "originalSize",
+        "sheetCount",
+        "cellCount",
+        "formulaCount",
+        "missingFormulaCaches",
+        "undecodedFormulas",
+        "omittedSheets",
+        "omittedStreams"
+      ],
+      "properties": {
+        "policy": {
+          "const": "values-only-v1"
+        },
+        "originalFileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "originalSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "originalSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 52428800
+        },
+        "sheetCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "cellCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500000
+        },
+        "formulaCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500000
+        },
+        "missingFormulaCaches": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500000
+        },
+        "undecodedFormulas": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500000
+        },
+        "omittedSheets": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "omittedStreams": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000
+        }
+      }
+    },
+    "StoredLegacyExcelReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "originalFileName", "originalSha256", "originalSize"],
+      "properties": {
+        "status": { "const": "unavailable" },
+        "originalFileName": { "type": "string", "minLength": 5, "maxLength": 120 },
+        "originalSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "originalSize": { "type": "integer", "minimum": 1, "maximum": 16777216 }
+      }
+    },
+    "DocumentUploadResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document", "preview"],
+      "allOf": [{
+        "if": { "properties": { "preview": { "type": "object", "properties": { "status": { "const": "unavailable" } } } } },
+        "then": { "properties": { "originalStored": { "const": true } }, "required": ["originalStored"] }
+      }],
+      "properties": {
+        "originalStored": { "const": true },
+        "document": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "uploadId", "threadId", "fileName", "relativePath", "kind", "mediaType", "size", "sha256", "status", "createdAt"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "uploadId": { "$ref": "#/$defs/Uuid" },
+            "threadId": { "$ref": "#/$defs/Uuid" },
+            "fileName": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "relativePath": { "type": "string", "pattern": "^threads/" },
+            "kind": { "enum": ["docx", "xlsx", "xls", "pptx", "pdf", "text", "image", "audio"] },
+            "mediaType": { "type": "string", "minLength": 1, "maxLength": 180 },
+            "size": { "type": "integer", "minimum": 1, "maximum": 52428800 },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "status": { "const": "staged" },
+            "createdAt": { "$ref": "#/$defs/IsoDate" },
+            "legacyExcel": { "$ref": "#/$defs/LegacyExcelProvenance" },
+            "storedLegacyExcel": { "$ref": "#/$defs/StoredLegacyExcelReceipt" }
+          }
+        },
+        "preview": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "uploadId", "threadId", "sourceSha256", "status", "kind", "files", "artifacts", "pages", "createdAt"],
+          "allOf": [{
+            "if": { "properties": { "status": { "const": "ready" } } },
+            "then": { "properties": { "files": { "type": "array", "minItems": 1 }, "artifacts": { "type": "array", "minItems": 1 } } },
+            "else": { "properties": { "files": { "type": "array", "maxItems": 0 }, "artifacts": { "type": "array", "maxItems": 0 }, "pages": { "type": "null" } } }
+          }],
+          "properties": {
+            "schemaVersion": { "const": 2 },
+            "uploadId": { "$ref": "#/$defs/Uuid" },
+            "threadId": { "$ref": "#/$defs/Uuid" },
+            "sourceSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "status": { "enum": ["ready", "unavailable"] },
+            "kind": { "enum": ["docx", "xlsx", "xls", "pptx", "pdf", "text", "image", "audio"] },
+            "files": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "url"],
+                "properties": {
+                  "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+                  "url": { "type": "string", "pattern": "^/api/threads/" }
+                }
+              }
+            },
+            "artifacts": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["fileName", "size", "sha256"],
+                "properties": {
+                  "fileName": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+                  "size": { "type": "integer", "minimum": 1, "maximum": 104857600 },
+                  "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+                }
+              }
+            },
+            "pages": { "type": ["integer", "null"], "minimum": 1, "maximum": 500 },
+            "createdAt": { "$ref": "#/$defs/IsoDate" }
+          }
+        }
+      }
+    },
+    "PublicationOperation": {
+      "type": "object",
+      "required": ["schemaVersion", "operationId", "installationId", "userId", "threadId", "turnId", "targetRelativePath", "status", "candidate", "preview", "original", "confirmationExpiresAt", "version", "result", "createdAt", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "operationId": { "$ref": "#/$defs/Uuid" },
+        "installationId": { "type": "string" },
+        "userId": { "type": "string" },
+        "threadId": { "$ref": "#/$defs/Uuid" },
+        "turnId": { "$ref": "#/$defs/Uuid" },
+        "targetRelativePath": { "type": "string" },
+        "status": { "enum": ["awaiting_confirmation", "publishing", "published", "declined", "expired", "conflict"] },
+        "candidate": { "type": "object" },
+        "preview": { "type": "object" },
+        "original": { "type": "object" },
+        "confirmationExpiresAt": { "$ref": "#/$defs/IsoDate" },
+        "version": { "type": ["object", "null"] },
+        "result": { "type": ["object", "null"] },
+        "createdAt": { "$ref": "#/$defs/IsoDate" },
+        "updatedAt": { "$ref": "#/$defs/IsoDate" }
+      }
+    },
+    "PublicationRecoveryResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publications"],
+      "properties": {
+        "publications": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operation", "confirmationToken"],
+            "properties": {
+              "operation": { "$ref": "#/$defs/PublicationOperation" },
+              "confirmationToken": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        }
+      }
+    },
+    "PublicationFreezeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "confirmationToken", "permissionFingerprint"],
+      "properties": {
+        "operation": { "$ref": "#/$defs/PublicationOperation" },
+        "confirmationToken": { "type": "string", "minLength": 1 },
+        "permissionFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "PublicationDecisionResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "permissionFingerprint"],
+      "properties": {
+        "operation": { "$ref": "#/$defs/PublicationOperation" },
+        "permissionFingerprint": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "WeeklyTokenBudgetStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["weekStart", "resetAt", "remainingPercent", "threshold", "initialized"],
+      "properties": {
+        "weekStart": { "$ref": "#/$defs/IsoDate" },
+        "resetAt": { "$ref": "#/$defs/IsoDate" },
+        "remainingPercent": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+        "threshold": { "enum": [0, 25, 50, 75, 100] },
+        "initialized": { "type": "boolean" }
+      },
+      "if": { "properties": { "initialized": { "const": true } } },
+      "then": { "properties": { "remainingPercent": { "type": "integer" } } },
+      "else": {
+        "properties": {
+          "remainingPercent": { "type": "null" },
+          "threshold": { "const": 0 }
+        }
+      }
+    },
+    "WeeklyTokenBudgetResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["budget"],
+      "properties": {
+        "budget": {
+          "oneOf": [
+            { "$ref": "#/$defs/WeeklyTokenBudgetStatus" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "EmployeePersonalUsageResponse": {
+      "oneOf": [
+        { "$ref": "#/$defs/PersonalUsageResponse" },
+        { "$ref": "#/$defs/WeeklyTokenBudgetResponse" }
+      ]
+    },
+    "EmployeeCompanyUsageResponse": {
+      "oneOf": [
+        { "$ref": "#/$defs/CompanyUsageResponse" },
+        { "$ref": "#/$defs/WeeklyTokenBudgetResponse" }
+      ]
+    },
+    "TokenUsageBreakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["totalTokens", "inputTokens", "cachedInputTokens", "cacheWriteInputTokens", "outputTokens", "reasoningOutputTokens"],
+      "properties": {
+        "totalTokens": { "type": "integer", "minimum": 0 },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "cachedInputTokens": { "type": "integer", "minimum": 0 },
+        "cacheWriteInputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "reasoningOutputTokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "UsageAggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turns", "completedTurns", "errorTurns", "stoppedTurns", "activeDays", "totalDurationMs", "averageDurationMs", "p95DurationMs", "averageFirstTextMs", "p95FirstTextMs", "turnsWithTokenData", "tokens"],
+      "properties": {
+        "turns": { "type": "integer", "minimum": 0 },
+        "completedTurns": { "type": "integer", "minimum": 0 },
+        "errorTurns": { "type": "integer", "minimum": 0 },
+        "stoppedTurns": { "type": "integer", "minimum": 0 },
+        "activeDays": { "type": "integer", "minimum": 0 },
+        "totalDurationMs": { "type": "integer", "minimum": 0 },
+        "averageDurationMs": { "type": ["integer", "null"], "minimum": 0 },
+        "p95DurationMs": { "type": ["integer", "null"], "minimum": 0 },
+        "averageFirstTextMs": { "type": ["integer", "null"], "minimum": 0 },
+        "p95FirstTextMs": { "type": ["integer", "null"], "minimum": 0 },
+        "turnsWithTokenData": { "type": "integer", "minimum": 0 },
+        "tokens": { "$ref": "#/$defs/TokenUsageBreakdown" }
+      }
+    },
+    "SharedSubscriptionSnapshot": {
+      "type": ["object", "null"],
+      "required": ["schemaVersion", "installationId", "observedAt", "scope", "planType", "rateLimitsAvailable", "accountTokenUsageAvailable", "rateLimits", "accountTokenUsage"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "installationId": { "type": "string", "minLength": 1 },
+        "observedAt": { "$ref": "#/$defs/IsoDate" },
+        "scope": { "const": "shared_chatgpt_account" },
+        "planType": { "type": ["string", "null"] },
+        "rateLimitsAvailable": { "type": "boolean" },
+        "accountTokenUsageAvailable": { "type": "boolean" },
+        "rateLimits": { "type": "array", "items": { "type": "object" } },
+        "accountTokenUsage": { "type": ["object", "null"] }
+      }
+    },
+    "PersonalUsageResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "scope", "generatedAt", "userId", "internal", "sharedSubscription", "notices"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "scope": { "const": "personal" },
+        "generatedAt": { "$ref": "#/$defs/IsoDate" },
+        "userId": { "$ref": "#/$defs/Uuid" },
+        "internal": { "$ref": "#/$defs/UsageAggregate" },
+        "sharedSubscription": { "$ref": "#/$defs/SharedSubscriptionSnapshot" },
+        "notices": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "CompanyUsageResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "scope", "generatedAt", "installationId", "internal", "members", "sharedSubscription", "notices"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "scope": { "const": "company" },
+        "generatedAt": { "$ref": "#/$defs/IsoDate" },
+        "installationId": { "type": "string", "minLength": 1 },
+        "internal": { "$ref": "#/$defs/UsageAggregate" },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["userId", "displayName", "email", "usage"],
+            "properties": {
+              "userId": { "$ref": "#/$defs/Uuid" },
+              "displayName": { "type": "string", "minLength": 1 },
+              "email": { "type": "string", "minLength": 3 },
+              "usage": { "$ref": "#/$defs/UsageAggregate" }
+            }
+          }
+        },
+        "sharedSubscription": { "$ref": "#/$defs/SharedSubscriptionSnapshot" },
+        "notices": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "TeamResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "members"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["userId", "displayName", "email", "workerId"],
+            "properties": {
+              "userId": { "$ref": "#/$defs/Uuid" },
+              "displayName": { "type": "string", "minLength": 1 },
+              "email": { "type": "string", "minLength": 3 },
+              "workerId": { "type": "string", "minLength": 2 }
+            }
+          }
+        }
+      }
+    },
+    "KnowledgeReviewScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "scopeId",
+        "label",
+        "canReview"
+      ],
+      "properties": {
+        "scope": {
+          "enum": [
+            "company",
+            "department",
+            "project",
+            "private"
+          ]
+        },
+        "scopeId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Uuid"
+            }
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "canReview": {
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "scope": {
+              "const": "company"
+            },
+            "scopeId": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "scope": {
+              "enum": [
+                "department",
+                "project",
+                "private"
+              ]
+            },
+            "scopeId": {
+              "$ref": "#/$defs/Uuid"
+            }
+          }
+        }
+      ]
+    },
+    "KnowledgeReviewCitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "sha256",
+        "locator",
+        "quote",
+        "path"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^knowledge-[a-z0-9-]+/[a-f0-9]{32}/[A-Z]/.+\\?sha256=[a-f0-9]{64}&part=[1-9][0-9]{0,3}(?:&table=[0-9]{1,4}&offset=[0-9]{1,7})?$"
+        }
+      }
+    },
+    "KnowledgeReviewRecord": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "topic",
+        "content",
+        "status",
+        "revision",
+        "citations",
+        "conflicts",
+        "events"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "kind": {
+          "enum": [
+            "fact",
+            "summary",
+            "insight",
+            "decision"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "topic": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "status": {
+          "enum": [
+            "proposed",
+            "confirmed",
+            "rejected",
+            "deleted"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/KnowledgeReviewCitation"
+          }
+        },
+        "conflicts": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/Uuid"
+          }
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "action",
+              "actor",
+              "recorded",
+              "revision"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8000
+              },
+              "actor": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8000
+              },
+              "recorded": {
+                "$ref": "#/$defs/IsoDate"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "correction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "previousRecordId",
+            "previousRevision",
+            "previousContent",
+            "reason"
+          ],
+          "properties": {
+            "previousRecordId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "previousRevision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "previousContent": {
+              "type": "string",
+              "maxLength": 8000
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          }
+        }
+      }
+    },
+    "KnowledgeReviewGetResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scopes"
+          ],
+          "properties": {
+            "scopes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/KnowledgeReviewScope"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "available",
+            "connectionId",
+            "records",
+            "nextCursor",
+            "scopes"
+          ],
+          "properties": {
+            "available": {
+              "const": true
+            },
+            "connectionId": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+            },
+            "records": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/$defs/KnowledgeReviewRecord"
+              }
+            },
+            "nextCursor": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "scopes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/KnowledgeReviewScope"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "available",
+            "error",
+            "scopes"
+          ],
+          "properties": {
+            "available": {
+              "const": false
+            },
+            "error": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            },
+            "scopes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/KnowledgeReviewScope"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "error",
+            "code"
+          ],
+          "properties": {
+            "error": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            },
+            "code": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            }
+          }
+        }
+      ]
+    },
+    "KnowledgeReviewPostResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "available",
+            "connectionId",
+            "record"
+          ],
+          "properties": {
+            "available": {
+              "const": true
+            },
+            "connectionId": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+            },
+            "record": {
+              "$ref": "#/$defs/KnowledgeReviewRecord"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "error",
+            "code"
+          ],
+          "properties": {
+            "error": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            },
+            "code": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            }
+          }
+        }
+      ]
+    }
+  },
+  "x-examples": [
+    { "schema": "MailCapabilityResponse", "value": null },
+    { "schema": "MailCapabilityResponse", "value": { "connectorId": "mail", "label": "Correo Nominalia", "status": "connected", "statusCode": null, "checkedAt": null, "effectiveOperations": ["folders", "list", "search", "read", "attachment", "draft", "prepare_send", "send", "flags", "move"], "approvalRequiredOperations": [], "accountEmail": "employee@example.test", "connectUrl": "/api/connectors/mail/connect", "disconnectUrl": "/api/connectors/mail/disconnect", "connectionVersion": 1 } },
+    { "schema": "MailCapabilityResponse", "value": { "connectorId": "mail", "label": "Correo Nominalia", "status": "reauth_required", "statusCode": "MAIL_LOGIN_REQUIRED", "checkedAt": null, "effectiveOperations": [], "approvalRequiredOperations": [], "accountEmail": "employee@example.test", "connectUrl": "/api/connectors/mail/connect", "disconnectUrl": null, "connectionVersion": null } },
+    { "schema": "MailConnectResponse", "value": { "connected": true, "accountEmail": "employee@example.test", "connectionVersion": 1 } },
+    { "schema": "MailConnectResponse", "value": { "error": "No se ha podido conectar el correo.", "code": "MAIL_AUTH_FAILED" } },
+    { "schema": "MailConnectResponse", "value": { "code": "MAIL_RATE_LIMITED" } },
+    { "schema": "MailDisconnectResponse", "value": { "status": "revoked" } },
+    { "schema": "MailDisconnectResponse", "value": { "code": "ORIGIN_REQUIRED" } },
+    { "schema": "PersonalConnectorSettings", "value": { "id": "mail", "label": "Correo Nominalia", "status": "requires_login", "statusCode": "MAIL_LOGIN_REQUIRED", "statusDetail": "Conecta tu cuenta de correo.", "accountEmail": "employee@example.test", "scopes": ["mail.read", "mail.write", "mail.send"], "connectUrl": "/api/connectors/mail/connect", "disconnectUrl": null, "connectionVersion": null, "connectionMethod": "password" } },
+    { "schema": "PersonalConnectorSettings", "value": { "id": "gmail", "label": "Google", "status": "requires_login", "statusCode": "GMAIL_LOGIN_REQUIRED", "statusDetail": "Conecta tu cuenta de Google.", "accountEmail": null, "scopes": ["https://www.googleapis.com/auth/gmail.readonly"], "connectUrl": "/api/connectors/gmail/oauth/start", "disconnectUrl": null, "connectionVersion": null } },
+    { "schema": "PublicationRecoveryResponse", "value": { "publications": [] } },
+    { "schema": "CompanyMailConnectionResponse", "value": { "status": "connected", "accountEmail": "invoices@example.test", "connectionVersion": 1 } },
+    { "schema": "CompanyMailDisconnectResponse", "value": { "status": "revoked", "localCredentialDeleted": true } },
+    {
+      "schema": "WeeklyTokenBudgetResponse",
+      "value": { "budget": { "weekStart": "2026-09-20T22:00:00.000Z", "resetAt": "2026-09-27T22:00:00.000Z", "remainingPercent": 75, "threshold": 25, "initialized": true } }
+    },
+    {
+      "schema": "WeeklyTokenBudgetResponse",
+      "value": { "budget": null }
+    },
+    {
+      "schema": "WeeklyTokenBudgetResponse",
+      "value": { "budget": { "weekStart": "2026-09-20T22:00:00.000Z", "resetAt": "2026-09-27T22:00:00.000Z", "remainingPercent": null, "threshold": 0, "initialized": false } }
+    },
+    {
+      "schema": "WeeklyTokenBudgetResponse",
+      "value": { "budget": { "weekStart": "2026-09-20T22:00:00.000Z", "resetAt": "2026-09-27T22:00:00.000Z", "remainingPercent": 75, "threshold": 25, "initialized": true } }
+    },
+    {
+      "schema": "WeeklyTokenBudgetResponse",
+      "value": { "budget": null }
+    },
+    {
+      "schema": "WeeklyTokenBudgetResponse",
+      "value": { "budget": { "weekStart": "2026-09-20T22:00:00.000Z", "resetAt": "2026-09-27T22:00:00.000Z", "remainingPercent": null, "threshold": 0, "initialized": false } }
+    },
+    {
+      "schema": "AuthSessionResponse",
+      "value": {
+        "session": {
+          "provider": "local",
+          "user": { "id": "0198b9f0-6631-7000-8000-000000000010", "name": "Example Employee", "email": "employee@example.test" },
+          "tenant": { "id": "example-lab-dev", "name": "Example Laboratory" },
+          "expiresAt": "2026-08-28T10:00:00.000Z"
+        }
+      }
+    },
+    {
+      "schema": "WorkbenchResponse",
+      "value": { "workbench": { "persistence": "filesystem", "projects": [], "threads": [] } }
+    },
+    {
+      "schema": "TaskCenterResponse",
+      "value": { "tasks": [], "readTaskIds": [], "preferences": { "inApp": true, "desktop": false }, "continuity": "worker_required" }
+    },
+    {
+      "schema": "RuntimeStatus",
+      "value": {
+        "tenantId": "example-lab-dev", "projectId": null, "projectName": "Example Laboratory", "mode": "codex", "codex": "unavailable", "isolated": true, "ready": false, "authMode": null, "planType": null, "processWarm": false, "rateLimit": null, "usage": null, "workspaceName": "Example Laboratory / workspace", "model": null, "approvalPolicy": "on-request", "sandbox": "workspace-write", "models": [], "skills": [], "capabilities": { "webSearch": false, "imageInput": false, "imageGeneration": false }
+      }
+    },
+    { "schema": "ChatStreamEvent", "value": { "type": "delta", "value": "Validated stream chunk" } },
+    { "schema": "ChatStreamEvent", "value": { "type": "source", "item": { "id": "source-official", "kind": "web", "title": "Official report", "url": "https://example.com/report", "domain": "example.com", "snippet": "Runtime-provided excerpt", "publishedAt": null } } },
+    { "schema": "ErrorResponse", "value": { "error": "Servei temporalment no disponible.", "code": "DEGRADED", "retryable": true } },
+    {
+      "schema": "PublicInstallationBranding",
+      "value": { "installationId": "example-lab-dev", "companyName": "Example Laboratory", "companySlug": "example-laboratory", "publicUrl": "https://brain.example.test", "productName": "Example Brain", "logoPath": "/branding/example/logo.svg", "faviconPath": "/branding/example/favicon.svg", "accentColor": "#0f766e" }
+    },
+    {
+      "schema": "KnowledgeReviewGetResponse",
+      "value": {
+        "scopes": [
+          {
+            "scope": "company",
+            "scopeId": null,
+            "label": "Empresa",
+            "canReview": true
+          }
+        ]
+      }
+    },
+    {
+      "schema": "KnowledgeReviewGetResponse",
+      "value": {
+        "available": true,
+        "connectionId": "arnall",
+        "records": [
+          {
+            "id": "10000000-0000-4000-8000-000000000001",
+            "kind": "fact",
+            "label": "Proyecto de ejemplo",
+            "topic": "Revisión",
+            "content": "La revisión del proyecto es semanal.",
+            "status": "confirmed",
+            "revision": 1,
+            "citations": [
+              {
+                "source": "Y:\\example.txt",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "locator": "line:1",
+                "quote": "La revisión del proyecto es semanal.",
+                "path": "knowledge-arnall/f168ccdd91548c5a8c871bd4b9b757c5/Y/example.txt?sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&part=1"
+              }
+            ],
+            "conflicts": [],
+            "events": []
+          }
+        ],
+        "nextCursor": null,
+        "scopes": [
+          {
+            "scope": "company",
+            "scopeId": null,
+            "label": "Empresa",
+            "canReview": true
+          }
+        ]
+      }
+    },
+    {
+      "schema": "KnowledgeReviewGetResponse",
+      "value": {
+        "available": false,
+        "error": "KNOWLEDGE_UNAVAILABLE",
+        "scopes": [
+          {
+            "scope": "company",
+            "scopeId": null,
+            "label": "Empresa",
+            "canReview": true
+          }
+        ]
+      }
+    },
+    {
+      "schema": "KnowledgeReviewPostResponse",
+      "value": {
+        "available": true,
+        "connectionId": "arnall",
+        "record": {
+          "id": "10000000-0000-4000-8000-000000000001",
+          "kind": "fact",
+          "label": "Proyecto de ejemplo",
+          "topic": "Revisión",
+          "content": "La revisión del proyecto es semanal.",
+          "status": "confirmed",
+          "revision": 1,
+          "citations": [
+            {
+              "source": "Y:\\example.txt",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "locator": "line:1",
+              "quote": "La revisión del proyecto es semanal.",
+              "path": "knowledge-arnall/f168ccdd91548c5a8c871bd4b9b757c5/Y/example.txt?sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&part=1"
+            }
+          ],
+          "conflicts": [],
+          "events": []
+        }
+      }
+    },
+    {
+      "schema": "KnowledgeReviewPostResponse",
+      "value": {
+        "error": "El registro ha cambiado.",
+        "code": "REVISION_CONFLICT"
+      }
+    }
+  ]
+}

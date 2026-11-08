@@ -1,0 +1,23 @@
+{
+  "AIBRAIN_INSIJETS_CRM_ENABLED": "false",
+  "AIBRAIN_INSIJETS_CRM_LIVE_ACCEPTED": "false",
+  "AIBRAIN_INSIJETS_CRM_CONTROL_FILE": null,
+  "AIBRAIN_INSIJETS_CRM_CONTROL_SHA256": null,
+  "callerHmacLocation": "trusted application-server secret, never this file or AI/browser",
+  "clientSelectionLocation": "client-owned read-only private mount outside execution-worker roots",
+  "controlBindingTemplate": {
+    "version": 1,
+    "tenantId": "insijets-demo",
+    "clientId": "insijets-outreach",
+    "gatewayOrigin": null,
+    "acceptanceEvidenceRef": null,
+    "authorizedUserIds": [],
+    "metadata": {
+      "campaignRef": null,
+      "approvalRef": null,
+      "authorityRef": null,
+      "icp": "historical",
+      "tier": null
+    }
+  }
+}

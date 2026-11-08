@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "emil-design-eng",
+  "label": "emil-design-eng",
+  "version": "1.0.0",
+  "category": "graphikai",
+  "provenance": "Bundled from installed emil-design-eng skill on 2026-09-10; whitespace normalized; ux-writing supporting documents relocated under resources. AiBrain routing and editorial constraints take precedence.",
+  "files": [
+    "SKILL.md"
+  ]
+}

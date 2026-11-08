@@ -1,0 +1,519 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// ESTABLISHMENT (Establecimiento)
+// ─────────────────────────────────────────────
+model Establishment {
+  id        Int     @id @default(autoincrement())
+  nombre    String
+  direccion String?
+  activo    Boolean @default(true)
+
+  // Horario del establecimiento
+  horarioApertura      String  @default("08:00") // hora de apertura
+  horarioCierre        String  @default("21:00") // hora de cierre
+  cierraMediodia       Boolean @default(false) // ¿cierra al mediodía?
+  inicioCierreMediodia String? // hora inicio cierre mediodía, ej: "14:00"
+  finCierreMediodia    String? // hora fin cierre mediodía, ej: "17:00"
+  // Días de la semana en que abre (JSON array, ej: '["LUNES",...,"SABADO"]').
+  // null = abre todos los días. Días no incluidos = cerrado (todos los empleados LIBRE).
+  diasApertura         String?
+  // ¿Cierra los días festivos? true = en festivos todos LIBRE; false = abre con normalidad.
+  cierraFestivos       Boolean @default(true)
+  // Comunidad autónoma en código ISO 3166-2 (ej: "ES-CT" para Cataluña).
+  // Se usa para importar automáticamente los festivos nacionales + autonómicos del año.
+  comunidadAutonoma    String?
+  // Municipio (o núcleo) donde está la tienda, según el calendario oficial de
+  // fiestas locales de la Generalitat. `municipiCodi` es el "codi municipal" de
+  // 8 dígitos de ese calendario — municipio + pedanía —, que es la clave por la
+  // que se consultan las dos fiestas locales del año.
+  //
+  // No se puede deducir del nombre de la tienda: S'Agaró no es un municipio,
+  // pertenece a Castell-Platja d'Aro. Se elige una vez, a mano.
+  municipiCodi         String?
+  municipiNom          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  managerLocal   Employee? @relation("ManagerLocal", fields: [managerLocalId], references: [id])
+  managerLocalId Int?
+
+  empleados           Employee[]              @relation("EstablecimientoPrincipal")
+  empleadosPermitidos EmployeeEstablishment[]
+  horarios            Schedule[]
+  reglas              EstablishmentRules[]
+  reglasLibres        FreeTextRule[]
+  edicionesHorario    ScheduleEdit[]
+  motivosCorreccion   CorreccionMotivo[]
+  ajustes             Ajuste[]
+  ausencias           Absence[]
+
+  @@map("establishments")
+}
+
+// ─────────────────────────────────────────────
+// EMPLOYEE (Empleado)
+// ─────────────────────────────────────────────
+model Employee {
+  id                       Int      @id @default(autoincrement())
+  nombre                   String
+  apellidos                String
+  email                    String?  @unique
+  passwordHash             String? // solo managers
+  telefonoWhatsapp         String?  @unique
+  rol                      Rol      @default(EMPLEADO)
+  funcion                  Funcion  @default(DEPENDIENTA) // función dentro del establecimiento
+  activo                   Boolean  @default(true)
+  flexible                 Boolean  @default(false)
+  maxHorasSemana           Int      @default(40) // máximo de horas semanales permitidas
+  // Jornada reducida: duración fija de cada turno para este empleado (ej. 4h de
+  // 8:00 a 12:00 con contrato de 20h). Null = turnos estándar (7h mañana, 6h
+  // tarde, 10h partido). Quien la tiene NUNCA hace PARTIDO: un turno partido
+  // duplicaría su jornada, que es justo lo contrario de un contrato reducido.
+  horasPorTurno            Int?
+  horaEntradaManana        String? // ej. "08:00" — null = 07:30
+  horaEntradaTarde         String? // ej. "16:00" — null = 14:45
+  // Disponibilidad fija semanal (JSON): { "LUNES": {"M": true, "T": true}, ... }
+  // false = NUNCA trabaja ese turno ese día. null = totalmente disponible.
+  disponibilidad           String?
+  // Condiciones fijas en texto libre (ej: compensaciones recurrentes) leídas por la IA cada semana.
+  condicionesFijas         String?
+  /// La traducció de `condicionesFijas` a dades, perquè el motor la pugui
+  /// garantir en comptes de només suggerir-la. La forma és a
+  /// src/utils/condicions.js. NULL = encara no traduïda.
+  condicionesEstructuradas Json?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  establecimiento   Establishment? @relation("EstablecimientoPrincipal", fields: [establecimientoId], references: [id])
+  establecimientoId Int?
+
+  establecimientosPermitidos EmployeeEstablishment[]
+  establecimientoGestionado  Establishment[]         @relation("ManagerLocal")
+  preferencias               ShiftPreference[]
+  horarios                   Schedule[]
+  edicionesRecibidas         ScheduleEdit[]
+  edicionesRealizadas        ScheduleEdit[]          @relation("EditedBy")
+  motivosRecibidos           CorreccionMotivo[]
+  motivosRegistrados         CorreccionMotivo[]      @relation("MotivoRegistradoPor")
+  ausencias                  Absence[]
+
+  @@map("employees")
+}
+
+enum Rol {
+  EMPLEADO
+  MANAGER_LOCAL
+  MANAGER_GENERAL
+}
+
+enum Funcion {
+  DEPENDIENTA // atención al cliente
+  ELABORACION // producción / trabajo interno
+}
+
+// ─────────────────────────────────────────────
+// EMPLOYEE ↔ ESTABLISHMENT (many-to-many)
+// ─────────────────────────────────────────────
+model EmployeeEstablishment {
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employeeId      Int
+  establishment   Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishmentId Int
+  asignadoPor     Int?
+  createdAt       DateTime      @default(now())
+
+  @@id([employeeId, establishmentId])
+  @@map("employee_establishments")
+}
+
+// ─────────────────────────────────────────────
+// SHIFT PREFERENCE (Preferencias del empleado)
+// ─────────────────────────────────────────────
+model ShiftPreference {
+  id               Int               @id @default(autoincrement())
+  semana           String // "2025-W20"
+  turnoPreferido   TurnoTipo?
+  diasNoDisponible String[] // ["LUNES", "MIERCOLES"]
+  // Per-day shift restrictions: {"MIERCOLES":"TARDE","JUEVES":"MANANA"}.
+  // "only afternoon on Wednesday" used to land in notasAdicionales as prose,
+  // which the engine could not enforce — it assigned PARTIDO (both halves) and
+  // considered the request met. These are hard constraints instead.
+  turnosPorDia     Json?
+  notasAdicionales String?
+  recogidoVia      OrigenPreferencia @default(WHATSAPP)
+  activa           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  empleado   Employee @relation(fields: [empleadoId], references: [id], onDelete: Cascade)
+  empleadoId Int
+
+  @@map("shift_preferences")
+}
+
+enum TurnoTipo {
+  MANANA
+  TARDE
+  PARTIDO
+  LIBRE
+}
+
+enum OrigenPreferencia {
+  WHATSAPP
+  MANUAL
+  PAPEL // hoja de papel leída por IA (fase transicional)
+}
+
+// ─────────────────────────────────────────────
+// ESTABLISHMENT RULES (Reglas permanentes por establecimiento)
+// No son por semana — se guardan una vez y se reutilizan siempre
+// ─────────────────────────────────────────────
+model EstablishmentRules {
+  id          Int     @id @default(autoincrement())
+  nombre      String // nombre descriptivo de la regla
+  descripcion String? // explicación adicional
+
+  // Rango por función y turno (mín – máx)
+  minDependientasManana Int @default(1)
+  maxDependientasManana Int @default(99)
+  minDependientasTarde  Int @default(1)
+  maxDependientasTarde  Int @default(99)
+  minElaboracionManana  Int @default(1)
+  maxElaboracionManana  Int @default(99)
+  minElaboracionTarde   Int @default(1)
+  maxElaboracionTarde   Int @default(99)
+
+  // Mínimo de personas durante el descanso del turno partido (13:00–15:00)
+  minPersonasDescansoPartido Int @default(2)
+
+  // Días en los que aplica esta regla (JSON array, ej: ["LUNES","MARTES"...])
+  // Si es null, aplica a todos los días
+  diasAplica String? // stored as JSON string like '["VIERNES","SABADO","DOMINGO"]'
+
+  activa    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  establecimiento   Establishment @relation(fields: [establecimientoId], references: [id])
+  establecimientoId Int
+
+  @@map("establishment_rules")
+}
+
+// ─────────────────────────────────────────────
+// FREE TEXT RULES (Reglas adicionales en texto libre)
+// El manager escribe cualquier regla en español.
+// La IA las lee al generar el horario.
+// ─────────────────────────────────────────────
+model FreeTextRule {
+  id        Int      @id @default(autoincrement())
+  texto     String // la regla escrita por el manager
+  activa    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  establecimiento   Establishment @relation(fields: [establecimientoId], references: [id])
+  establecimientoId Int
+
+  @@map("free_text_rules")
+}
+
+// ─────────────────────────────────────────────
+// SCHEDULE (Horario)
+// ─────────────────────────────────────────────
+model Schedule {
+  id                 Int        @id @default(autoincrement())
+  semana             String // "2025-W20"
+  dia                DiaSemana
+  turno              TurnoTipo
+  // What the generator put here, kept untouched forever after. The difference
+  // between this and `turno` IS the correction — so trying something and
+  // putting it back leaves no trace, because there is nothing left to see.
+  // The click log said otherwise: two thirds of what it stored were undos made
+  // within twenty seconds, taught to the model as if they were preferences.
+  turnoIa            TurnoTipo?
+  horaEntrada        String? // hora de entrada personalizada, ej: "07:30"
+  horaDescanso       String? // hora de inicio del descanso (solo turnos PARTIDO), ej: "13:30"
+  generadoPorIa      Boolean    @default(false)
+  ajustadoPorManager Boolean    @default(false)
+  publicado          Boolean    @default(false)
+  conflicto          Boolean    @default(false)
+  notaConflicto      String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  empleado          Employee      @relation(fields: [empleadoId], references: [id])
+  empleadoId        Int
+  establecimiento   Establishment @relation(fields: [establecimientoId], references: [id])
+  establecimientoId Int
+
+  @@map("schedules")
+}
+
+// Informe de la generación de un horario, para que el manager lo revise.
+// Intensitat d'una setmana concreta per establiment: quin percentatge de les
+// hores de contracte s'espera fer (100 = setmana normal, 115 = agost, 85 = fluix).
+// El manager la fixa segons l'època. Si no n'hi ha cap, s'assumeix 100.
+model SemanaIntensidad {
+  id                Int      @id @default(autoincrement())
+  establecimientoId Int
+  semana            String
+  porcentaje        Int      @default(100) // 60–130
+  nota              String? // ex: "Agost — temporada alta"
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([establecimientoId, semana])
+  @@map("semana_intensidad")
+}
+
+model HorarioInforme {
+  id                Int      @id @default(autoincrement())
+  establecimientoId Int
+  semana            String
+  resumen           String? // frase breve
+  conflictos        String? // JSON array de strings
+  informeCanvis     String? // JSON array de { empleadoId, peticion, cambio, motivo }
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([establecimientoId, semana])
+  @@map("horario_informes")
+}
+
+enum DiaSemana {
+  LUNES
+  MARTES
+  MIERCOLES
+  JUEVES
+  VIERNES
+  SABADO
+  DOMINGO
+}
+
+// ─────────────────────────────────────────────
+// SCHEDULE EDIT LOG (tracks manual changes after AI generation)
+// ─────────────────────────────────────────────
+model ScheduleEdit {
+  id               Int       @id @default(autoincrement())
+  semana           String // "2025-W20"
+  dia              DiaSemana
+  turnoAnterior    TurnoTipo // what the AI (or previous state) assigned
+  turnoNuevo       TurnoTipo // what the manager changed it to
+  fueGeneradoPorIa Boolean   @default(false) // was the original shift AI-generated?
+  createdAt        DateTime  @default(now())
+
+  empleado          Employee      @relation(fields: [empleadoId], references: [id])
+  empleadoId        Int
+  establecimiento   Establishment @relation(fields: [establecimientoId], references: [id])
+  establecimientoId Int
+  editadoPor        Employee?     @relation("EditedBy", fields: [editadoPorId], references: [id])
+  editadoPorId      Int? // the manager who made the edit
+
+  @@map("schedule_edits")
+}
+
+// Configuració que fins ara vivia repartida entre variables del Render i
+// constants clavades al codi, i que per tant només es podia canviar tocant el
+// servidor. El catàleg del que és un ajust vàlid és a utils/ajustos.js: aquí
+// només s'hi guarda el que s'ha canviat respecte del valor per defecte.
+//
+// establecimientoId null = val per a tota l'empresa.
+model Ajuste {
+  id                Int            @id @default(autoincrement())
+  clave             String
+  valor             String // JSON
+  establecimiento   Establishment? @relation(fields: [establecimientoId], references: [id], onDelete: Cascade)
+  establecimientoId Int?
+  updatedAt         DateTime       @updatedAt
+
+  @@map("ajustes")
+}
+
+// Per què el responsable va corregir el que havíem generat.
+//
+// Amb una correcció i mitja per setmana, esperar que un patró es repeteixi prou
+// vegades per ser fiable vol dir esperar anys. Amb el motiu, UNA sola correcció
+// ja diu prou. Sense ell, la mateixa correcció — moure-li la festa de dijous a
+// dilluns — pot voler dir que ella ho prefereix, que el dijous hi ha massa
+// feina, que ho havia demanat i no li vam fer cas, o que faltava cobertura. Les
+// tres últimes no s'han d'aprendre: s'han d'arreglar. Imitar-les és ensenyar
+// al sistema a repetir un error nostre.
+//
+// Es desa el canvi sencer, no una referència a la fila: regenerar una setmana
+// esborra les files i el motiu ha de sobreviure-hi.
+model CorreccionMotivo {
+  id           Int        @id @default(autoincrement())
+  semana       String
+  tipo         String // MOU_FESTA | CANVIA_TORN
+  dia          DiaSemana? // el dia que va rebre la festa, o el dia del canvi
+  diaOrigen    DiaSemana? // d'on venia la festa (només MOU_FESTA)
+  turnoIa      TurnoTipo? // què havíem posat
+  turnoManager TurnoTipo? // què hi va posar ella
+  motivo       String // PREFERENCIA | DIA_FEINA | PETICION | COBERTURA | ALTRE
+  nota         String?
+  createdAt    DateTime   @default(now())
+
+  empleado          Employee      @relation(fields: [empleadoId], references: [id])
+  empleadoId        Int
+  establecimiento   Establishment @relation(fields: [establecimientoId], references: [id])
+  establecimientoId Int
+  registradoPor     Employee?     @relation("MotivoRegistradoPor", fields: [registradoPorId], references: [id])
+  registradoPorId   Int?
+
+  @@index([establecimientoId, semana])
+  @@map("correccion_motivos")
+}
+
+// ─────────────────────────────────────────────
+// ABSENCES (Ausencias)
+// ─────────────────────────────────────────────
+model Absence {
+  id          Int            @id @default(autoincrement())
+  tipo        TipoAusencia
+  fechaInicio DateTime       @db.Date
+  fechaFin    DateTime       @db.Date
+  estado      EstadoAusencia @default(APROBADO)
+  notas       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // For VACACIONES and BAJA_MEDICA → specific employee
+  empleado   Employee? @relation(fields: [empleadoId], references: [id], onDelete: Cascade)
+  empleadoId Int?
+
+  // For FESTIVO → applies to all employees of this establishment
+  establecimiento   Establishment @relation(fields: [establecimientoId], references: [id], onDelete: Cascade)
+  establecimientoId Int
+
+  @@map("absences")
+}
+
+enum TipoAusencia {
+  VACACIONES
+  BAJA_MEDICA
+  FESTIVO
+}
+
+enum EstadoAusencia {
+  PENDIENTE
+  APROBADO
+  RECHAZADO
+}
+
+// ─────────────────────────────────────────────
+// WHATSAPP
+// ─────────────────────────────────────────────
+model WhatsappConversation {
+  id                   Int                @id @default(autoincrement())
+  telefono             String             @unique
+  semana               String
+  estado               EstadoConversacion @default(PENDIENTE)
+  paso                 Int                @default(0)
+  intentosIrrelevantes Int                @default(0) // 0–3, 3 means locked for trolling
+  bloqueada            Boolean            @default(false) // true → bot ignores all messages until reset
+  completedAt          DateTime? // when preferences were saved (for 10-min edit window)
+  fechaApertura        DateTime? // Non-null for employee-initiated collection; preserve opening boundary.
+  fechaLimite          DateTime? // deadline to submit preferences; after it the bot locks
+  // Quan se li va recordar per última vegada. El broadcast ja tenia guarda
+  // contra la doble execució; els recordatoris no, i un cron que es dispari
+  // dues vegades li enviava dos cops el mateix «encara no has contestat».
+  ultimoRecordatorio   DateTime?
+  /// El torn de dissabte que ha demanat i que trenca l'alternança, mentre
+  /// s'espera que confirmi si el vol igualment. NULL = no s'espera res. A la
+  /// base de dades i no a la memòria perquè el servei es reinicia sovint.
+  /// El dissabte que va demanar i va retirar en dir-li que trencava
+  /// l'alternança. `pendentAlternanca` es buida en contestar; això es queda,
+  /// perquè la setmana de referència encara pot canviar després.
+  dissabteRetirat   String?
+  pendentAlternanca    String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  mensajes WhatsappMessage[]
+
+  @@map("whatsapp_conversations")
+}
+
+enum EstadoConversacion {
+  PENDIENTE
+  EN_PROGRESO
+  COMPLETADO
+}
+
+// ─────────────────────────────────────────────
+// PAPER SHEETS
+//
+// The photo of a weekly preference sheet, kept alongside the preferences it
+// produced. The model reads handwriting off an image, and the mistakes it can
+// make there are the quiet kind: a mark read one column across, or a row
+// skipped. Nothing downstream can catch either, because the output is
+// structurally perfect either way.
+//
+// Without the image there is no original to check against — the machine's
+// reading becomes the only record of what the paper said, and a fortnight later
+// "I asked for Tuesday afternoon" is unanswerable. WhatsApp compresses photos
+// before they arrive, so these are small, and they are purged on the same
+// schedule as the preferences they belong to.
+// ─────────────────────────────────────────────
+model PaperSheet {
+  id                Int      @id @default(autoincrement())
+  establecimientoId Int
+  semana            String
+  enviadoPorId      Int?
+  telefono          String?
+  mimeType          String
+  imagen            Bytes
+  lectura           Json? // exactly what the model reported reading
+  createdAt         DateTime @default(now())
+
+  @@index([establecimientoId, semana])
+  @@map("paper_sheets")
+}
+
+model WhatsappMessage {
+  id        Int      @id @default(autoincrement())
+  direccion String // "entrante" | "saliente"
+  contenido String
+  // De quina setmana és aquest missatge. Abans no calia perquè el broadcast de
+  // la setmana nova els esborrava tots; ara es queden, i el model només ha de
+  // veure els de la setmana que s'està demanant — si no, llegiria la conversa
+  // de la setmana passada com si fos la d'ara.
+  semana    String?
+  createdAt DateTime @default(now())
+
+  conversacion   WhatsappConversation @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  conversacionId Int
+
+  @@index([conversacionId, semana])
+  @@map("whatsapp_messages")
+}
+
+// ─────────────────────────────────────────────
+// ERRORS DEL NAVEGADOR
+// ─────────────────────────────────────────────
+/// El que peta a la pantalla de qui fa servir l'app. Sense això, una pantalla
+/// en blanc un dimarts al matí no deixa cap rastre en cap lloc.
+model ClientError {
+  id         Int      @id @default(autoincrement())
+  missatge   String
+  pila       String?
+  pantalla   String?
+  navegador  String?
+  /// Sense relació a posta: és diagnòstic, i no ha d'impedir esborrar ningú.
+  empleadoId Int?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("client_errors")
+}

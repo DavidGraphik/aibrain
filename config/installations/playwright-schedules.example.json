@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "installationId": "arnall",
+  "companyName": "Synthetic Schedule Team",
+  "companySlug": "synthetic-schedule-team",
+  "publicUrl": "http://127.0.0.1:3100",
+  "branding": {
+    "productName": "Synthetic Schedule AI",
+    "logoPath": "/branding/example-lab/logo.svg",
+    "faviconPath": "/branding/example-lab/favicon.svg",
+    "accentColor": "#315ee7"
+  },
+  "paths": {
+    "dataRoot": "/tmp/aibrain-schedules-playwright/data",
+    "companyContextRoot": "/tmp/aibrain-schedules-playwright/data/company",
+    "usersRoot": "/tmp/aibrain-schedules-playwright/data/users",
+    "sourceReadRoot": "/tmp/aibrain-schedules-playwright/documents/source-ro",
+    "publishWriteRoot": "/tmp/aibrain-schedules-playwright/documents/publish-rw",
+    "backupsRoot": "/tmp/aibrain-schedules-playwright/data/backups"
+  }
+}
