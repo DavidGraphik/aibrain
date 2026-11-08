@@ -17,12 +17,24 @@ describe('bounded Sage read batches',()=>{
   const last=await collectSagePages(async(_q,_p,skip)=>page(skip,2,1,null),'SalesOrders',range,first.nextOffset,50);
   expect(last).toMatchObject({fromOffset:12,pages:1,nextOffset:null,complete:true,items:[{id:12}]});
  });
- it('never drops a page that does not fit the response budget',async()=>{
+ it('yields before a likely oversized fetch and resumes without losing records',async()=>{
   const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(90_000)}]}));
   const result=await collectSagePages(read,'SalesOrders',range,0,1);
   expect(result).toMatchObject({pages:1,nextOffset:1,complete:false,reason:'response_budget'});
   expect(result.items).toHaveLength(1);
+  expect(read.mock.calls.map(call=>call[2])).toEqual([0]);
+  const resumed=await collectSagePages(read,'SalesOrders',range,result.nextOffset,1);
+  expect(resumed).toMatchObject({pages:1,fromOffset:1,nextOffset:2,complete:false,reason:'response_budget'});
+  expect([...result.items,...resumed.items].map(item=>(item as {id:number}).id)).toEqual([0,1]);
   expect(read.mock.calls.map(call=>call[2])).toEqual([0,1]);
+ });
+ it('retains the first unread offset when a later page grows unexpectedly',async()=>{
+  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(skip===0?30_000:140_000)}]}));
+  const result=await collectSagePages(read,'SalesOrders',range,0,1);
+  expect(result).toMatchObject({pages:1,nextOffset:1,complete:false,reason:'response_budget'});
+  const resumed=await collectSagePages(read,'SalesOrders',range,result.nextOffset,1);
+  expect(resumed).toMatchObject({pages:1,fromOffset:1,nextOffset:2,complete:false});
+  expect([...result.items,...resumed.items].map(item=>(item as {id:number}).id)).toEqual([0,1]);
  });
  it('reports provider limits and partial recoverable errors without calling them complete',async()=>{
   const limited=await collectSagePages(async()=>page(5000,1,1,null,true),'SalesOrders',range,5000,1);

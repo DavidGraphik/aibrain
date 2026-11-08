@@ -10,10 +10,13 @@ const MAX_MS = 20_000;
 export async function collectSagePages(read: ReadPage, query: unknown, parameters: unknown, skip: unknown, take: unknown, signal?: AbortSignal) {
   const request = sageReadArguments(query, parameters, skip, take);
   let offset = request.skip, nextOffset: number | null = offset, pages = 0, bytes = 0, limitReached = false;
-  let last: Page | null = null, reason: string | null = null;
+  let last: Page | null = null, reason: string | null = null, previousPageBytes = 0;
   const items: unknown[] = [], pageMetadata: Array<{skip:number;take:number;nativeLineFields:unknown}> = [], started = Date.now();
   while (pages < MAX_PAGES && nextOffset !== null) {
     signal?.throwIfAborted();
+    // Yield the exact continuation before fetching another page that is likely
+    // to be discarded. The byte estimate is scheduling, never completeness.
+    if (pages > 0 && bytes + previousPageBytes > MAX_BYTES) { reason = 'response_budget'; break; }
     const remaining = MAX_MS - (Date.now() - started);
     if (remaining <= 0) { reason = 'time_budget'; break; }
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -41,7 +44,7 @@ export async function collectSagePages(read: ReadPage, query: unknown, parameter
       page.complete !== (page.nextOffset === null && !page.limitReached)) throw new SageError('SAGE_PROVIDER_RESPONSE_INVALID');
     const pageBytes = Buffer.byteLength(JSON.stringify(page.items));
     if (bytes + pageBytes > MAX_BYTES) { reason = 'response_budget'; break; }
-    items.push(...page.items); pageMetadata.push({skip:page.skip,take:page.take,nativeLineFields:sageRecord(page.nativeLineFields) ? page.nativeLineFields : null}); bytes += pageBytes; pages++; last = page;
+    items.push(...page.items); pageMetadata.push({skip:page.skip,take:page.take,nativeLineFields:sageRecord(page.nativeLineFields) ? page.nativeLineFields : null}); bytes += pageBytes; previousPageBytes = pageBytes; pages++; last = page;
     nextOffset = page.nextOffset; limitReached = page.limitReached;
     if (nextOffset !== null) offset = nextOffset;
   }

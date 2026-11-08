@@ -14,10 +14,25 @@ import {
 const internalPath = "/var/lib/aibrain/data/users/fc71a2c4-0db0-4914-af82-9564038ea964/runtime/codex-home/skills/web/SKILL.md";
 
 describe("employee-facing activity sanitization", () => {
-  it("bounds the final tool presentation after short code fences expand during Markdown normalization", () => {
-    const output = publicToolOutput("```x```".repeat(15_000));
-    expect(output).toHaveLength(64_000);
-    expect(output).toContain("Comprobación interna");
+  it("bounds tool output after redaction expands short private paths", () => {
+    const source = "x /tmp/a\n".repeat(7_000);
+    expect(source.length).toBeLessThan(64_000);
+    const output = publicToolOutput(source);
+    expect(output!.length).toBeGreaterThan(source.length);
+    expect(output!.length).toBeLessThanOrEqual(64_000);
+    expect(output).toContain("archivo interno");
+    expect(output).not.toContain("/tmp/a");
+  });
+
+  it("preserves literal Markdown punctuation in JSON tool data and preformatted rendering", () => {
+    const source = JSON.stringify({ subject: "RV: *** NOU SERVIDOR ***", reference: "__URGENT__", note: "~~literal~~ `value`", path: internalPath });
+    const output = publicToolOutput(source);
+    expect(JSON.parse(output!)).toEqual({ subject: "RV: *** NOU SERVIDOR ***", reference: "__URGENT__", note: "~~literal~~ `value`", path: "archivo interno" });
+    expect(publicToolOutput(output)).toBe(output);
+    const html = renderToStaticMarkup(createElement(ToolCall, { result: { id: "read", kind: "app", title: "Correo", summary: null, status: "complete", output, sourceIds: [], createdAt: "2026-11-08T00:00:00Z" } }));
+    expect(html).toContain("*** NOU SERVIDOR ***");
+    expect(html).toContain("__URGENT__");
+    expect(html).not.toContain("/var/lib");
   });
   it("publishes complete words in every burst while withholding split internal tokens", () => {
     const chunks = ["Primera palabra", " segunda", " fc71a2c4-0db0-", "4914-af82-9564038ea964 texto"];
