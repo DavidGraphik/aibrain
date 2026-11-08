@@ -11,12 +11,12 @@ describe('bounded Sage read batches',()=>{
  it('follows the effective provider take without gaps and returns a resumable offset',async()=>{
   const read=vi.fn(async(_q:unknown,_p:unknown,skip:number,_take:number)=>page(skip,2,2,skip+2));
   const first=await collectSagePages(read,'SalesOrders',range,0,50);
-  expect(first).toMatchObject({pages:6,fromOffset:0,nextOffset:12,complete:false,reason:'page_budget'});
-  expect(first.items).toEqual(Array.from({length:12},(_,id)=>({id})));
-  expect(read.mock.calls.map(call=>call[2])).toEqual([0,2,4,6,8,10]);
-  expect(read.mock.calls.map(call=>call[3])).toEqual([50,2,2,2,2,2]);
+  expect(first).toMatchObject({pages:12,fromOffset:0,nextOffset:24,complete:false,reason:'page_budget'});
+  expect(first.items).toEqual(Array.from({length:24},(_,id)=>({id})));
+  expect(read.mock.calls.map(call=>call[2])).toEqual(Array.from({length:12},(_,i)=>i*2));
+  expect(read.mock.calls.map(call=>call[3])).toEqual([50,...Array(11).fill(2)]);
   const last=await collectSagePages(async(_q,_p,skip)=>page(skip,2,1,null),'SalesOrders',range,first.nextOffset,50);
-  expect(last).toMatchObject({fromOffset:12,pages:1,nextOffset:null,complete:true,items:[{id:12}]});
+  expect(last).toMatchObject({fromOffset:24,pages:1,nextOffset:null,complete:true,items:[{id:24}]});
  });
  it('yields before a likely oversized fetch and resumes without losing records',async()=>{
   const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(600_000)}]}));
@@ -30,7 +30,7 @@ describe('bounded Sage read batches',()=>{
   expect(read.mock.calls.map(call=>call[2])).toEqual([0,1]);
  });
  it('retains the first unread offset when a later page grows unexpectedly',async()=>{
-  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(skip===0?30_000:1_040_000)}]}));
+  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(skip===0?50_000:1_000_000)}]}));
   const result=await collectSagePages(read,'SalesOrders',range,0,1);
   expect(result).toMatchObject({pages:1,nextOffset:1,complete:false,reason:'response_budget'});
   const resumed=await collectSagePages(read,'SalesOrders',range,result.nextOffset,1);
@@ -94,18 +94,18 @@ it('propagates explicit stop to the active provider page',async()=>{
  stop.abort();await expect(pending).rejects.toBeDefined();expect(observed).toBe(true);
 });
 
-it('fits six maximum-sized native pages plus actual metadata below1MiB without changing native page limits',async()=>{
+it('retains a serialized prefix including metadata below1MiB before twelve maximum-size pages',async()=>{
  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number,_take:number)=>({...page(skip,25,25,skip+25),items:Array.from({length:25},(_,i)=>({id:skip+i,text:'x'.repeat(Math.floor((128*1024-1000)/25))})),nativeLineFields:{subquery:'Lines',requested:['LineasPosicion','UnidadesPendientes','UnidadesServidas'],returnedLineCount:25,documentsMissingLines:0,linesMissingRequestedFields:0,linesWithNullRequestedFields:0,notice:'Native source line metadata'}}));
  const result=await collectSagePages(read,'SalesOrders',range,0,50);
- expect(result).toMatchObject({pages:6,nextOffset:150,reason:'page_budget',complete:false,coverage:{maxBytes:1024*1024,atMostPages:6,maxMilliseconds:20000}});
- expect(read.mock.calls.map(call=>call[3])).toEqual([50,25,25,25,25,25]);
+ expect(result).toMatchObject({pages:7,nextOffset:175,reason:'response_budget',complete:false,coverage:{maxBytes:1024*1024,atMostPages:12,maxMilliseconds:20000}});
+ expect(read.mock.calls.map(call=>call[3])).toEqual([50,...Array(6).fill(25)]);
  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(1024*1024);
 });
 it('retains further effective take reductions and rejects a page exceeding its requested take',async()=>{
  const takes:number[]=[];const result=await collectSagePages(async(_q,_p,skip,take)=>{takes.push(take);const effective=skip===0?25:12;return page(skip,effective,effective,skip+effective);},'SalesOrders',range,0,50);
- expect(takes).toEqual([50,25,25,12,12,12]);expect(result.nextOffset).toBe(73);
- expect(result).toMatchObject({pages:5,coverage:{pageRequests:6}});
- expect((result.items as {id:number}[]).map(x=>x.id)).toEqual(Array.from({length:73},(_,id)=>id));
+ expect(takes).toEqual([50,25,25,...Array(9).fill(12)]);expect(result.nextOffset).toBe(145);
+ expect(result).toMatchObject({pages:11,coverage:{pageRequests:12}});
+ expect((result.items as {id:number}[]).map(x=>x.id)).toEqual(Array.from({length:145},(_,id)=>id));
  await expect(collectSagePages(async()=>page(0,50,50,50),'SalesOrders',range,0,25)).rejects.toMatchObject({code:'SAGE_PROVIDER_RESPONSE_INVALID'});
 });
 
@@ -114,7 +114,7 @@ it('keeps an exact ordered prefix with only two reads active when later pages fi
  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>{active++;peak=Math.max(peak,active);await new Promise(resolve=>setTimeout(resolve,skip===1?20:1));active--;finished.push(skip);return page(skip,1,1,skip+1);});
  const result=await collectSagePages(read,'Products',{},0,1);
  expect(peak).toBe(2);expect(active).toBe(0);expect(finished.indexOf(2)).toBeLessThan(finished.indexOf(1));
- expect(result.items).toEqual(Array.from({length:6},(_,id)=>({id})));expect(result).toMatchObject({nextOffset:6,pages:6,complete:false,coverage:{pageRequests:6,maxParallelPages:2}});
+ expect(result.items).toEqual(Array.from({length:12},(_,id)=>({id})));expect(result).toMatchObject({nextOffset:12,pages:12,complete:false,coverage:{pageRequests:12,maxParallelPages:2}});
 });
 it('discards an unused tail error when an earlier short page proves the end',async()=>{
  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>{if(skip===2)throw new SageError('SAGE_PROVIDER_UNAVAILABLE');if(skip===1){await new Promise(resolve=>setTimeout(resolve,2));return page(1,1,1,null);}return page(0,1,1,1);});
@@ -134,4 +134,15 @@ it('does not speculate past the native maximum offset',async()=>{
  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>page(skip,1,1,skip===5000?null:skip+1,skip===5000));
  const result=await collectSagePages(read,'Products',{},4999,1);
  expect(read.mock.calls.map(c=>c[2])).toEqual([4999,5000]);expect(result).toMatchObject({nextOffset:null,limitReached:true,complete:false,pages:2});
+});
+
+it('charges retained line metadata and envelope before advancing a continuation',async()=>{
+ const result=await collectSagePages(async(_q,_p,skip)=>({...page(skip,1,1,skip+1),nativeLineFields:{subquery:'Lines',requested:[],returnedLineCount:0,documentsMissingLines:0,linesMissingRequestedFields:0,linesWithNullRequestedFields:0,notice:'x'.repeat(550_000)}}),'Products',{},0,1);
+ expect(result).toMatchObject({pages:1,nextOffset:1,reason:'response_budget',complete:false});
+ expect(Buffer.byteLength(JSON.stringify({success:true,data:result}))).toBeLessThan(1024*1024);
+});
+it('amortizes setup across twelve small pages within unchanged time/byte/concurrency limits',async()=>{
+ let active=0,peak=0;const result=await collectSagePages(async(_q,_p,skip)=>{active++;peak=Math.max(peak,active);await Promise.resolve();active--;return page(skip,25,25,skip+25);},'SalesOrders',range,0,25);
+ expect(result).toMatchObject({pages:12,nextOffset:300,coverage:{pageRequests:12,maxParallelPages:2,maxBytes:1048576,maxMilliseconds:20000}});
+ expect(peak).toBe(2);expect((result.items as {id:number}[]).map(x=>x.id)).toEqual(Array.from({length:300},(_,id)=>id));
 });
