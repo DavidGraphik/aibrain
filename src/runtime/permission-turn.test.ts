@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseInstallationConfig, type InstallationConfig } from "@/config/installation-schema";
 import type { ChatRequest } from "@/lib/chat-contract";
+import { localUserSchema } from "@/auth/local-user-store";
+import { atomicWriteJson } from "@/storage/atomic-file";
 import { FilePermissionResolutionAuditSink } from "@/runtime/permission-audit-sink";
 import {
   assertCodexTurnPermissionBinding,
@@ -90,6 +92,10 @@ describe("server turn permission preflight", () => {
     await chmod(companyContextRoot, 0o700);
     await chmod(usersRoot, 0o700);
     await chmod(userRoot, 0o700);
+    await atomicWriteJson(path.join(userRoot, "user.json"), {
+      schemaVersion: 1, userId: USER_ID, email: "employee@northwind.test",
+      displayName: "Synthetic employee", enabled: true, workerId: "synthetic-worker",
+    }, localUserSchema, { mode: 0o600 });
 
     const installation = parseInstallationConfig({
       schemaVersion: 1,

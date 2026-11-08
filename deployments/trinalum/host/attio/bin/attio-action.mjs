@@ -56,7 +56,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       print({
         status: stored.status,
         action: preview(stored),
-        next: `Show and approve the exact action before executing ${stored.action_id}`,
       });
     } else if (command === "status-proof") {
       // Operator/broker only: hold the existing action AND effect locks through
