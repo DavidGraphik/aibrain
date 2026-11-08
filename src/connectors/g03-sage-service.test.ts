@@ -80,7 +80,7 @@ it('uses the Madrid day as the default order end date and keeps the actual inter
  const read=vi.spyOn(SageReader.prototype,'read').mockResolvedValue({source:'SAGE',companyCode:'1',companyName:'synthetic',query:'SalesOrders',items:[],skip:0,take:50,nextOffset:null,limitReached:false,complete:true,checkedAt:'2026-11-05T23:30:00Z'} as never);
  const result=await g03SageReadBatchForIdentity('g03-production',user,{query:'SalesOrders'});
  expect(result).toMatchObject({parameters:{FechaInicial:'1900-01-01',FechaFinal:'2026-11-06'},complete:true,coverage:{globalComplete:false,reachedEndOfQuery:true,completeFromBeginning:true}});
- expect(read).toHaveBeenCalledWith('SalesOrders',{FechaInicial:'1900-01-01',FechaFinal:'2026-11-06'},0,50,expect.any(AbortSignal));
+ expect(read).toHaveBeenCalledWith('SalesOrders',{FechaInicial:'1900-01-01',FechaFinal:'2026-11-06'},0,100,expect.any(AbortSignal));
 });
 it('suppresses all batched results when a user grant is revoked mid-query',async()=>{
  await setup();const {SageReader}=await import('./g03-sage-api');

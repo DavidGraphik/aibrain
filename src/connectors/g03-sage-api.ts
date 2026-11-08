@@ -65,7 +65,7 @@ function validArticleCode(value: string): boolean {
 }
 export function sageReadArguments(query: unknown, parameters: unknown, skip: unknown, take: unknown) {
   if (typeof query !== "string" || !Object.hasOwn(SAGE_QUERIES, query) || !sageRecord(parameters)
-    || !Number.isSafeInteger(skip) || Number(skip) < 0 || Number(skip) > Number.MAX_SAFE_INTEGER - Number(take) || !Number.isSafeInteger(take) || Number(take) < 1 || Number(take) > 50) return fail("SAGE_ARGUMENTS_INVALID");
+    || !Number.isSafeInteger(skip) || Number(skip) < 0 || Number(skip) > Number.MAX_SAFE_INTEGER - Number(take) || !Number.isSafeInteger(take) || Number(take) < 1 || Number(take) > 100) return fail("SAGE_ARGUMENTS_INVALID");
   const name = query as SageQuery, keys = SAGE_QUERIES[name].parameters;
   if (Object.keys(parameters).sort().join() !== [...keys].sort().join()) return fail("SAGE_ARGUMENTS_INVALID");
   for (const key of keys) {
@@ -169,7 +169,7 @@ export class SageReader {
         if (rows.length > pageTake || rows.some(row => !Object.hasOwn(row,"CompanyId") && !Object.hasOwn(row,"CodigoEmpresa")
           || foreignCompany(row))) return fail("SAGE_COMPANY_SCOPE_INVALID");
         const items = publicData(rows);
-        if (Buffer.byteLength(JSON.stringify(items)) > 256 * 1024) return fail("SAGE_RESPONSE_TOO_LARGE");
+        if (Buffer.byteLength(JSON.stringify(items)) > 512 * 1024) return fail("SAGE_RESPONSE_TOO_LARGE");
         const requestedLineFields=NATIVE_LINE_FIELDS[body.queryName]?.split(",");
         const lines=rows.flatMap(row=>Array.isArray(row.Lines)?row.Lines.filter(sageRecord):[]);
         return { source: "SAGE", companyCode: "1", companyName, query: body.queryName, items, skip: body.skip, take: pageTake,
@@ -240,6 +240,6 @@ export class SageReader {
     const session = await this.authenticated(signal);
     const queries = this.credential.allowedQueries.filter(name => session.catalog.has(name)).map(name => ({ name, ...SAGE_QUERIES[name] }));
     if (!queries.length) return fail("SAGE_QUERY_NOT_AVAILABLE");
-    return { source: "SAGE", companyCode: "1", companyName, readOnly: true, queries, companyVerifiedAt: session.verifiedAt, maxTake: 50, maxOffset: null, offsetArithmetic: "safe-integer", totalRecordCap: null };
+    return { source: "SAGE", companyCode: "1", companyName, readOnly: true, queries, companyVerifiedAt: session.verifiedAt, maxTake: 100, maxOffset: null, offsetArithmetic: "safe-integer", totalRecordCap: null };
   }
 }

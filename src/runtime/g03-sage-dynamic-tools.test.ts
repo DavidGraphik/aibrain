@@ -160,8 +160,8 @@ it("rejects an expired or malformed session before provider access", async () =>
 
 it('advertises safe-integer offsets and dispatches continuation beyond5000 with unchanged actor binding',async()=>{
  const namespace=G03_SAGE_DYNAMIC_TOOLS[0];if(namespace.type!=='namespace')throw new Error('Expected Sage namespace');const definition=namespace.tools.find(x=>x.name==='read_batch')!;
- expect(JSON.stringify(definition)).toContain(String(Number.MAX_SAFE_INTEGER));
- const args={query:'SalesOrders',parameters:{FechaInicial:'1900-01-01',FechaFinal:'2026-11-08'},skip:5050,take:50};
+ expect(JSON.stringify(definition)).toContain(String(Number.MAX_SAFE_INTEGER));expect(definition).toMatchObject({inputSchema:{properties:{take:{maximum:100}}}});
+ const args={query:'SalesOrders',parameters:{FechaInicial:'1900-01-01',FechaFinal:'2026-11-08'},skip:5050,take:100};
  batch.mockClear();expect(await handleG03SageTool({...params,tool:'read_batch',arguments:args},context)).toMatchObject({success:true});
  expect(batch).toHaveBeenCalledWith('g03-production','actor',args,expect.any(AbortSignal));
 });

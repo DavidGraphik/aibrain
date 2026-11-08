@@ -91,7 +91,7 @@ export async function g03SageReadBatchForIdentity(installationId: string, userId
     const pageReader = firstPage ? reader : reader.forkForRead();
     firstPage = false;
     return pageReader.read(query, pageParameters, skip, take, pageSignal);
-  }, args.query, parameters, args.skip ?? 0, args.take ?? 50, signal);
+  }, args.query, parameters, args.skip ?? 0, args.take ?? 100, signal);
   signal?.throwIfAborted();
   const fresh = await g03SageAccess(installationId, userId);
   if (fresh.key !== initial.key) throw new SageError("SAGE_CONNECTION_CHANGED");

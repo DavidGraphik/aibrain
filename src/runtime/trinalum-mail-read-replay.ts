@@ -71,7 +71,7 @@ function cacheableSnapshot(result:DynamicToolCallResponse,kind:'search'|'latest_
     if(kind==='folders')return Array.isArray(data.folders)?JSON.stringify(result):null;
     if(kind==='latest_read')return data.operation==='latest_read'&&typeof data.complete==='boolean'&&(data.cursor===null||typeof data.cursor==='string')&&
       (data.candidate===null||object(data.candidate))&&(data.original===null||object(data.original))&&object(data.coverage)&&
-      Array.isArray(data.coverage.errors)&&data.coverage.errors.length===0&&!data.coverage.originalError&&data.coverage.stopped!=='time_budget'?JSON.stringify(result):null;
+      Array.isArray(data.coverage.errors)&&data.coverage.errors.length===0&&!data.coverage.originalError&&(data.coverage.stopped!=='time_budget'||typeof data.cursor==='string'&&data.cursor.length>0&&object(data.original)&&data.original.originalVerified===true&&data.coverage.originalBytesVerified===true)?JSON.stringify(result):null;
     if(!Array.isArray(data.messages)||typeof data.complete!=='boolean'||!(data.cursor===null||typeof data.cursor==='string')||!object(data.coverage)||!Array.isArray(data.coverage.errors)||data.coverage.errors.length)return null;
     return JSON.stringify(result);
   }catch{return null;}

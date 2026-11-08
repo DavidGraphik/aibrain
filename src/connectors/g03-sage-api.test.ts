@@ -29,7 +29,7 @@ describe("SAGE predefined company1 reads",()=>{
  it.each([
   ["Companies",{},0,10],["ExecuteScript",{},0,10],["Products",{CodigoEmpresa:"2"},0,10],["Products",{sql:"SELECT *"},0,10],
   ["SalesOrders",{FechaInicial:"2026-02-30",FechaFinal:"2026-03-01"},0,10],["SalesOrders",{FechaInicial:"2026-03-02",FechaFinal:"2026-03-01"},0,10],
-  ["Products",{},0,51],["Products",{},Number.MAX_SAFE_INTEGER,2],["Products",{},0,-1],
+  ["Products",{},0,101],["Products",{},Number.MAX_SAFE_INTEGER,2],["Products",{},0,-1],
  ])("rejects query/parameter/scope/pagination overrides before HTTP (%s)",async(q,p,s,t)=>{
   const f=vi.fn<typeof fetch>();await expect(new SageReader(credential,f).read(q,p,s,t)).rejects.toMatchObject({code:"SAGE_ARGUMENTS_INVALID"});expect(f).not.toHaveBeenCalled();
  });
@@ -76,10 +76,10 @@ describe("SAGE predefined company1 reads",()=>{
   expect(f.mock.calls.slice(3).map(([,init])=>JSON.parse(String(init?.body)))).toMatchObject([{skip:4,take:4},{skip:4,take:2}]);
  });
  it("shrinks an oversized filtered result, and fails when one row still exceeds the limit",async()=>{
-  const row={CompanyId:1,Note:"a".repeat(140_000)};
+  const row={CompanyId:1,Note:"a".repeat(270_000)};
   const f=provider(Response.json([row,row]),Response.json([row]));
   expect(await new SageReader(credential,f).read("Products",{},0,2)).toMatchObject({take:1,nextOffset:1,complete:false});
-  const single=provider(Response.json([{CompanyId:1,Note:"a".repeat(270_000)}]));
+  const single=provider(Response.json([{CompanyId:1,Note:"a".repeat(530_000)}]));
   await expect(new SageReader(credential,single).read("Products",{},0,1)).rejects.toMatchObject({code:"SAGE_RESPONSE_TOO_LARGE"});
   expect(single).toHaveBeenCalledTimes(4);
  });
@@ -330,8 +330,8 @@ it('keeps fifty128–256KiB sanitized rows in one data request without halving',
  expect(f).toHaveBeenCalledTimes(4);expect(result.items).toHaveLength(50);
  const bytes=Buffer.byteLength(JSON.stringify(result.items));expect(bytes).toBeGreaterThan(128*1024);expect(bytes).toBeLessThan(256*1024);
 });
-it('halves above256KiB at exact skip while preserving foreign-company rejection',async()=>{
- const rows=Array.from({length:50},(_,i)=>({CompanyId:1,id:100+i,Note:'x'.repeat(6000)}));
+it('halves above512KiB at exact skip while preserving foreign-company rejection',async()=>{
+ const rows=Array.from({length:50},(_,i)=>({CompanyId:1,id:100+i,Note:'x'.repeat(11000)}));
  const f=provider(Response.json(rows),Response.json(rows.slice(0,25)));
  const result=await new SageReader(credential,f).read('Products',{},100,50);
  expect(result).toMatchObject({skip:100,take:25,nextOffset:125,complete:false});
@@ -345,4 +345,9 @@ it('continues beyond5000 until a real short page and rejects unsafe offset arith
  expect(await r.read('Products',{},5000,50)).toMatchObject({nextOffset:5050,complete:false,limitReached:false});
  expect(await r.read('Products',{},5050,50)).toMatchObject({nextOffset:null,complete:true,limitReached:false});
  for(const skip of [-1,1.5,Number.MAX_SAFE_INTEGER,Number.MAX_SAFE_INTEGER+1]){const no=vi.fn();await expect(new SageReader(credential,no).read('Products',{},skip,50)).rejects.toMatchObject({code:'SAGE_ARGUMENTS_INVALID'});expect(no).not.toHaveBeenCalled();}
+});
+
+it('reads100rows between256and512KiB in one HTTP and advertises the actual maximum',async()=>{
+ const rows=Array.from({length:100},(_,id)=>({CompanyId:1,id,Note:'x'.repeat(4000)}));const f=provider(Response.json(rows));const r=new SageReader(credential,f);
+ const x=await r.read('Products',{},0,100);expect(x).toMatchObject({take:100,nextOffset:100,complete:false});expect(f).toHaveBeenCalledTimes(4);const bytes=Buffer.byteLength(JSON.stringify(x.items));expect(bytes).toBeGreaterThan(256*1024);expect(bytes).toBeLessThan(512*1024);expect(await r.discover()).toMatchObject({maxTake:100});
 });

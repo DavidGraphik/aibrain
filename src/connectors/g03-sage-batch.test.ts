@@ -156,3 +156,8 @@ it('preserves an unfinished prefix at numeric precision boundary without dispatc
  expect(read.mock.calls.map(x=>x[2])).toEqual([start,start+1]);
  expect(result).toMatchObject({pages:2,nextOffset:Number.MAX_SAFE_INTEGER,complete:false,limitReached:false,reason:'offset_precision'});
 });
+
+it('retains only the exact serialized prefix of100-row512KiB pages',async()=>{
+ const result=await collectSagePages(async(_q,_p,skip)=>({...page(skip,100,100,skip+100),items:Array.from({length:100},(_,i)=>({id:skip+i,text:'x'.repeat(4900)}))}),'Products',{},0,100);
+ expect(result).toMatchObject({pages:2,nextOffset:200,complete:false,reason:'response_budget'});expect(Buffer.byteLength(JSON.stringify({success:true,data:result}))).toBeLessThan(1048576);
+});

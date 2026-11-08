@@ -216,6 +216,7 @@ describe('Trinalum runtime reads and argument checks',()=>{
   expect(guides[0]).toContain('historical, not new sender statements or authorization');
   expect(guides[0]).toContain('IMAP TEXT/BODY substring matches can include HTML/CID identifiers');
   expect(guides[0]).toContain('body:"VALUE UNIT"');
+  expect(guides[0]).toContain('NOT messageid:"<exact-original-Message-ID>"');
   expect(guides[0]).not.toContain('Use ordinary search when no attachment type is requested');
  });
  it('keeps namespace metadata within the live thread/start protocol limit',()=>{
@@ -723,6 +724,18 @@ describe('foreground Trinalum exact mail read replay',()=>{
   await handleTrinalumTool(params('mail_api',{input:{...input,cursor:'next-cursor'}}),f.context);expect(f.fetcher).toHaveBeenCalledTimes(3);
   expect(f.requests[0].input).toMatchObject({input:{operation:'latest_read',query:'subject:confirmation body:"12 kg"'}});
   expect(f.requests[1].input).toMatchObject({input:{operation:'search'}});expect(f.requests[2].input).toMatchObject({input:{operation:'latest_read',cursor:'next-cursor'}});
+ });
+ it('replays a verified time-budget latest page and follows only its explicit continuation',async()=>{
+  const f=await replayFixture(),input={operation:'latest_read',query:'subject:confirmation',attachmentMime:'application/pdf'};
+  f.fetcher.mockImplementation(async()=>Response.json({data:{operation:'latest_read',candidate:{id:'imap:owned:7:19'},original:{messageId:'imap:owned:7:19',originalVerified:true},complete:false,cursor:'remaining-three-folders',coverage:{stopped:'time_budget',completedFolders:868,totalFolders:871,globalLatestVerified:false,originalBytesVerified:true,originalError:null,errors:[]}}}));
+  const first=body(await handleTrinalumTool(params('mail_api',{input}),f.context));
+  const repeated=body(await handleTrinalumTool(params('mail_api',{input}),f.context));expect(f.fetcher).toHaveBeenCalledTimes(1);expect(f.revalidateReadReplay).toHaveBeenCalledTimes(1);expect(repeated.data).toEqual(first.data);expect(repeated.mailReadReplay).toMatchObject({providerReadPerformed:false,cursorUnchanged:true});
+  await handleTrinalumTool(params('mail_api',{input:{...input,cursor:first.data.cursor}}),f.context);expect(f.fetcher).toHaveBeenCalledTimes(2);
+ });
+ it.each(['no-cursor','unverified-original','provider-error'])('does not replay an unusable latest time-budget result: %s',async reason=>{
+  const f=await replayFixture(),input={operation:'latest_read',query:'subject:confirmation'};
+  f.fetcher.mockImplementation(async()=>Response.json({data:{operation:'latest_read',candidate:{id:'imap:owned:7:19'},original:{originalVerified:reason!=='unverified-original'},complete:false,cursor:reason==='no-cursor'?null:'remaining',coverage:{stopped:'time_budget',originalBytesVerified:true,originalError:null,errors:reason==='provider-error'?[{code:'MAIL_SEARCH_PROVIDER_FAILED'}]:[]}}}));
+  await handleTrinalumTool(params('mail_api',{input}),f.context);await handleTrinalumTool(params('mail_api',{input}),f.context);expect(f.fetcher).toHaveBeenCalledTimes(2);
  });
  it('does not retain latest_read original-read failures as valid cached results',async()=>{
   const f=await replayFixture();f.fetcher.mockImplementation(async()=>Response.json({data:{operation:'latest_read',candidate:{id:'imap:owned:7:19'},original:null,complete:false,cursor:'continue',coverage:{errors:[],originalError:'MAIL_LATEST_READ_BUDGET'}}}));
