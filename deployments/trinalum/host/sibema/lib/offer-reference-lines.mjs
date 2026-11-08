@@ -18,7 +18,7 @@ export function validateLineReferences(action) {
   return references;
 }
 
-async function requestNative(client, path, body) {
+export async function requestNative(client, path, body) {
   if (client.host !== origin || !/^\/rest\/(?:customerofferdetail\/(?:[1-9]\d*|update|getAll)|(?:product|movementunit|vendor)\/getAll|getByQuery)$/.test(path)) fail('unexpected provider or route');
   const queryRead = path === '/rest/getByQuery';
   if (queryRead && (body?.clazz !== 'saleorderdetail' || body.items?.length !== 1 || Object.keys(body).some(key => !['clazz', 'items'].includes(key)) || body.items[0].field !== 'saleorderdetail' || body.items[0].operator !== 'OPERATOR_LIKE' || typeof body.items[0].value !== 'string' || Object.keys(body.items[0]).some(key => !['field', 'operator', 'value'].includes(key)))) fail('unexpected historical read query');
@@ -30,7 +30,12 @@ async function requestNative(client, path, body) {
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   // Never propagate raw provider errors or nested customer/account objects.
-  if (!response.ok) fail(`native ${writing ? 'update' : 'read'} failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(`SIBEMA_LINE_REFERENCES: native ${writing ? 'update' : 'read'} failed (${response.status})`);
+    error.status = response.status;
+    if (writing) error.definitiveRejection = [400,401,403,404,409,422].includes(response.status);
+    throw error;
+  }
   if (writing) return null;
   const maximum = 16 * 1024 * 1024;
   if (Number(response.headers.get('content-length')) > maximum) { await response.body?.cancel(); fail('native response exceeds 16MiB'); }
@@ -49,7 +54,7 @@ async function requestNative(client, path, body) {
   try { return JSON.parse(Buffer.concat(chunks, size).toString('utf8')); }
   catch { fail('native response is not JSON'); }
 }
-function safeLine(value) {
+export function safeLine(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('native line response missing');
   return {
     line_id: value.customerofferdetailid, reference: value.customerofferdetail,

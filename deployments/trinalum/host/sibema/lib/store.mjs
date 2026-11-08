@@ -466,6 +466,36 @@ export class SibemaStore {
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
 
+  claimOfferMutation(offerId, actionId, expectedAfter) {
+    if(!Number.isSafeInteger(offerId)||offerId<1||typeof actionId!=='string'||actionId.length<8||!expectedAfter?.snapshot?.header||!Number.isSafeInteger(expectedAfter.line_id)||typeof expectedAfter.changed!=='boolean')throw Error('Invalid offer mutation identity/state');
+    this.db.exec('CREATE TABLE IF NOT EXISTS offer_mutation_fences (offer_id INTEGER PRIMARY KEY, action_id TEXT NOT NULL, expected_after_json TEXT NOT NULL, claimed_at TEXT NOT NULL)');
+    if(this.db.prepare('INSERT OR IGNORE INTO offer_mutation_fences(offer_id,action_id,expected_after_json,claimed_at) VALUES(?,?,?,?)').run(offerId,actionId,JSON.stringify(expectedAfter),new Date().toISOString()).changes!==1)throw Error('Offer line mutation already in progress or uncertain; read the existing line to reconcile without repeating writes');
+  }
+  releaseOfferMutation(offerId, actionId) {
+    // A concurrent authoritative read may already have reconciled this exact action.
+    this.db.prepare('DELETE FROM offer_mutation_fences WHERE offer_id=? AND action_id=?').run(offerId,actionId);
+  }
+  reconcileOfferMutation(offerId, observedSnapshot) {
+    if(!this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='offer_mutation_fences'").get())return null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      const saved=this.db.prepare('SELECT * FROM offer_mutation_fences WHERE offer_id=?').get(offerId);
+      if(!saved){this.db.exec('COMMIT');return null;}
+      const expected=JSON.parse(saved.expected_after_json),action=this.approvedAction(saved.action_id);
+      if(JSON.stringify(expected.snapshot)!==JSON.stringify(observedSnapshot)){this.db.exec('COMMIT');return {status:'unresolved',writeRepeated:false};}
+      let request;try{request=JSON.parse(action?.request_json??'null');}catch{}
+      const path=`/offers/${offerId}/lines/${expected.line_id}`;
+      const matches=action?.action_type==='api_request'&&request?.method==='PATCH'&&request.path===path||action?.action_type==='update_offer_line'&&request?.offerId===offerId&&request.lineId===expected.line_id;
+      if(!matches||!['executing','uncertain'].includes(action.status)||action.approved_by!==action.requested_by||createHash('sha256').update(action.request_json).digest('hex')!==action.request_hash){this.db.exec('COMMIT');return {status:'unresolved',writeRepeated:false};}
+      const row=observedSnapshot.lines.find(x=>x.line_id===expected.line_id);if(!row)throw Error('Reconciled line identity unavailable');
+      const result={offer_id:offerId,line_id:expected.line_id,changed:expected.changed,reconciled_by_read:true};
+      const readback={offer_id:offerId,line_id:expected.line_id,line:{...row,offer_id:offerId,reference:row.description},expectedSnapshotSha256:createHash('sha256').update(JSON.stringify(observedSnapshot)).digest('hex'),independent_readback:true,line_identity_preserved:true,header_preserved:true,siblings_preserved:true,relationships_preserved:true,reconciled_by_read:true};
+      this.db.prepare("UPDATE approved_actions SET status='completed',executed_at=?,result_json=?,readback_json=?,last_error=NULL WHERE action_id=? AND status IN ('executing','uncertain')").run(new Date().toISOString(),JSON.stringify(result),JSON.stringify(action.action_type==='api_request'?{data:readback,verification:{independent_readback:true,specific_adapter:true}}:readback),saved.action_id);
+      this.db.prepare('DELETE FROM offer_mutation_fences WHERE offer_id=? AND action_id=? AND expected_after_json=?').run(offerId,saved.action_id,saved.expected_after_json);
+      this.db.exec('COMMIT');return {status:'completed',independent_readback:true,writeRepeated:false};
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+
   claimOrderPdfResource(orderId, filename, actionId) {
     if (!Number.isSafeInteger(orderId) || orderId < 1 || typeof filename !== "string" || !filename || typeof actionId !== "string" || !actionId) throw Error("Invalid order PDF resource");
     const key = createHash("sha256").update(JSON.stringify(["trinalum-production", orderId, filename])).digest("hex");

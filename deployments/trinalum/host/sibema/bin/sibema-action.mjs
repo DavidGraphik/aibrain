@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {executeOfferLineUpdate,validateOfferLineUpdate} from '../lib/offer-line-update.mjs';
 
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -19,6 +20,7 @@ import {nativeApiAction,preparedApiRequest,assertProviderContract,stableApiKey,v
 
 const ACTION_TYPES = new Set([
   "api_request",
+  "update_offer_line",
   "create_customer",
   "append_customer_note",
   "create_customer_tariff",
@@ -179,6 +181,9 @@ export function operationFor(action) {
   const body = requiredObject(request.body, "request.body");
   contractorScope(body);
   switch (action.type) {
+    case "update_offer_line": {
+      validateOfferLineUpdate(request);return {method:"PATCH",path:`/offers/${request.offerId}/lines/${request.lineId}`,body};
+    }
     case "delete_customer_tariff":
     case "delete_offer": {
       const kind=action.type==='delete_offer'?'offer':'tariff';validateDeletionRequest(kind,request);
@@ -428,6 +433,10 @@ export async function executeAction(sibema, storedAction,{deletionFence,pdfDispa
   const action=storedAction.type==="api_request"?nativeApiAction(storedAction).native:storedAction;
   const operation=operationFor(action);
   if(storedAction.type==="api_request") await assertProviderContract(sibema,storedAction);
+  if(action.type==='update_offer_line'){
+    const value=await executeOfferLineUpdate(sibema,action.request,{fence:deletionFence,actionId:action.id});
+    return storedAction.type==='api_request'?{result:value.result,readback:{data:value.readback,verification:{independent_readback:true,specific_adapter:true}}}:value;
+  }
   if(['delete_customer_tariff','delete_offer'].includes(action.type))return executeDeletion(sibema,action.type==='delete_offer'?'offer':'tariff',action.request,action.requestedBy,{fence:deletionFence,actionId:action.id});
   if(["create_customer_tariff","update_customer_tariff"].includes(action.type)) return saveCustomerTariff(sibema,action.request,{update:action.type==="update_customer_tariff"});
   if(action.type==="append_customer_note") return appendCustomerNote(sibema,action.request);

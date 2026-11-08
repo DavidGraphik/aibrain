@@ -1,3 +1,4 @@
+import {readOfferLine,offerLineRoute} from './offer-line-update.mjs';
 import {previewDeletion} from './guarded-deletes.mjs';
 import {readCustomerTariffs} from './customer-tariffs.mjs';
 import {readCustomerNotes} from './customer-notes.mjs';
@@ -15,6 +16,7 @@ export function nativeApiAction(action){
  if(action.request.contractHash!==undefined&&action.request.contractHash!==hash)throw Error('SIBEMA_CONTRACT_CHANGED: prepare and approve the current schema again');
  const {method,path,body,expectedOrder}=validated;
  const routes=[
+  ['PATCH',/^\/offers\/(\d+)\/lines\/(\d+)$/,'update_offer_line',m=>({offerId:Number(m[1]),lineId:Number(m[2]),body})],
   ['POST',/^\/customers$/,'create_customer',()=>({body})],
   ['POST',/^\/offers$/,'create_offer',()=>({body})],
   ['PUT',/^\/offers\/(\d+)$/,'update_offer',m=>({offerId:Number(m[1]),body})],
@@ -34,6 +36,7 @@ export function nativeApiAction(action){
 export function preparedApiRequest(action){const {validated,contractHash}=nativeApiAction(action);return {method:validated.method,path:validated.path,...(Object.keys(validated.query).length?{query:validated.query}:{}),body:validated.body,...(validated.expectedOrder?{expectedOrder:validated.expectedOrder}:{}),contractHash};}
 export async function assertProviderContract(client,action){
  const {validated,contractHash}=nativeApiAction(action);
+ if(offerLineRoute(validated.method,validated.path))return; // Native integration schema; actual origin/parent are checked by its fixed UI primitive.
  const current=await client.getContract();
  if(contractFingerprint(validated.method,validated.path,current)!==contractHash)throw Error('SIBEMA_CONTRACT_CHANGED: provider schema changed; no write performed');
 }
@@ -60,7 +63,8 @@ export async function accountingReadback(client,action,result){
  const readback=ids.map((id,i)=>{const row=entries.find(e=>e.entry_id===id);if(!row||row.contractor_id!==1||!includesFields(row,requested[i]))throw Error('Imported accounting entry independent readback mismatch');return row;});
  return {imported:readback.length,entry_ids:ids,entries:readback,independent_readback:true};
 }
-export async function readApi(client,input,{actor}={}){
+export async function readApi(client,input,{actor,fence}={}){
+ if(offerLineRoute(input?.method??'GET',input?.path)&& (input.method??'GET')==='GET'){const r=validateApiRequest(input,{readOnly:true});const m=/^\/offers\/(\d+)\/lines\/(\d+)$/.exec(r.path);return {source:'SIBEMA',method:'GET',path:r.path,data:await readOfferLine(client,Number(m[1]),Number(m[2]),{fence}),integrationProjection:true,untrustedSourceContent:true};}
  const deletion=/^\/customers\/([1-9]\d*)\/(tariffs|offers)\/([1-9]\d*)\/deletion-preview$/.exec(input?.path??'');
  if(deletion){
   if((input.method??'GET')!=='GET'||Object.keys(input).some(k=>!['method','path','query'].includes(k))||(input.query!==undefined&&(!input.query||typeof input.query!=='object'||Array.isArray(input.query)||Object.keys(input.query).length)))throw Error('SIBEMA_API_CONTRACT: deletion preview is GET-only without query');

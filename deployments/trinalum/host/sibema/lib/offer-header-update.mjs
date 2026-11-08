@@ -94,3 +94,11 @@ export async function executeOfferHeaderUpdate(client, action) {
     failure.outcomeUncertain = true; failure.cause = cause; throw failure;
   }
 }
+
+/** Shared sanitized mutation baseline; no provider objects or account fields escape. */
+export async function offerMutationSnapshot(client, offerId) {
+  if (!id(offerId)) error("invalid offer identity");
+  const current = header(await native(client, `/rest/customeroffer/${offerId}`));
+  if (current.customerofferid !== offerId) error("offer identity mismatch");
+  return { header: current, lines: await lineSnapshot(client, offerId) };
+}

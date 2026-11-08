@@ -1209,7 +1209,8 @@ async function runWorkerCodexTurnAttempt(
   });
   const developerInstructions = [
     buildCodexDeveloperInstructions(chatRequest, permissions, assistantName, internalAgentContext),
-    ...(runtimeConfig.codeMode ? ["Native code mode is enabled. For paginated reports, use exec to loop the authorized tools through their returned continuations until coverage is complete. Filter and aggregate in JavaScript before emitting results with text(), rather than filling the model context with raw pages. Respect provider limits and errors; if coverage remains partial, report it explicitly. Code mode does not expand tool permissions."] : []),
+    ...(runtimeConfig.codeMode ? ["Native code mode is enabled. For paginated reports, use exec to loop the authorized tools through their returned continuations until coverage is complete. Filter and aggregate in JavaScript before emitting results with text(), rather than filling the model context with raw pages. Respect provider limits and errors. Never loop an empty page with an unchanged cursor or offset: reduce the page size only for an explicit response-size budget, otherwise stop and explain the cause. If coverage remains partial, report it explicitly. Code mode does not expand tool permissions."] : []),
+    "When reproducing permitted source values such as email subjects, names and business references, preserve their characters and punctuation exactly. Use code formatting for Markdown-sensitive literals instead of changing their content.",
     localDocumentDeveloperInstructions(installationId),
     ...turnTools.developerInstructions,
     readableFilesDeveloperInstructions(enterpriseDocumentRoots),
