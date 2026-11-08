@@ -201,6 +201,18 @@ describe('Trinalum runtime reads and argument checks',()=>{
   expect(action?.description).toContain('Company/person Tasks do not require a Deal');
   expect(action?.description).not.toContain('Reminders must use native Tasks linked to Deals');
  });
+ it('keeps native and legacy mail contracts consistent for optional-MIME latest reads',()=>{
+  const namespace=TRINALUM_DYNAMIC_TOOLS.find(spec=>spec.type==='namespace');
+  if(!namespace||namespace.type!=='namespace')throw Error('missing namespace');
+  const guides=['mail_api','mail_search'].map(name=>{
+   const description=namespace.tools.find(spec=>spec.name===name)!.description;
+   return description.slice(description.indexOf('For the latest received'));
+  });
+  expect(guides[0]).toBe(guides[1]);
+  expect(guides[0]).toContain('attachmentMime is optional');
+  expect(guides[0]).toContain('When a PDF is requested');
+  expect(guides[0]).not.toContain('Use ordinary search when no attachment type is requested');
+ });
  it('keeps namespace metadata within the live thread/start protocol limit',()=>{
   for(const spec of TRINALUM_DYNAMIC_TOOLS){
    if(spec.type!=='namespace')continue;

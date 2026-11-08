@@ -66,6 +66,7 @@ export async function persistImmutableDocument(
   root: Awaited<ReturnType<typeof secureDocumentRoot>>,
   fileName: string,
   contents: Buffer,
+  maximumBytes = MAXIMUM_DOCUMENT_BYTES,
 ) {
   const temporaryName = `.${fileName}.${randomUUID()}.tmp`;
   const temporary = path.join(root.path, temporaryName);
@@ -86,11 +87,11 @@ export async function persistImmutableDocument(
       await link(temporary, target);
     } catch (error) {
       if (!isRecord(error) || error.code !== "EEXIST") throw error;
-      const current = await readRegularFileWithin(root.path, fileName, MAXIMUM_DOCUMENT_BYTES);
+      const current = await readRegularFileWithin(root.path, fileName, maximumBytes);
       if (!current.equals(contents)) throw new Error("Generated document content changed for a stable id.");
       return;
     }
-    const published = await readRegularFileWithin(root.path, fileName, MAXIMUM_DOCUMENT_BYTES);
+    const published = await readRegularFileWithin(root.path, fileName, maximumBytes);
     if (!published.equals(contents)) throw new Error("Generated document immutable publication failed.");
     const directory = await open(root.path, constants.O_RDONLY | ("O_DIRECTORY" in constants ? constants.O_DIRECTORY : 0) | noFollow);
     try { await directory.sync(); } finally { await directory.close(); }
