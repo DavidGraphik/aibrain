@@ -734,6 +734,9 @@ describe("worker Codex turn", () => {
     expect(threads[1].params).toMatchObject({ permissions: policy.readOnlyId, approvalPolicy: "never", config: { web_search: isHost ? "disabled" : "live" } });
     for (const thread of threads) expect(thread.params).not.toHaveProperty("sandbox");
     for (const thread of threads) {
+      // Assert guidance reaches actual fresh/resumed RPC payloads alongside
+      // the independently checked per-turn permissions; this is not a model eval.
+      expect(thread.params.developerInstructions).toContain("Check every material requested constraint against source evidence");
       if (codeMode) {
         expect(thread.params.config).toMatchObject({ "features.code_mode": true, "features.code_mode_only": true });
         expect(thread.params.developerInstructions).toContain("Filter and aggregate in JavaScript");

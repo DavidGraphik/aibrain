@@ -57,6 +57,7 @@ class ConnectorRequestError extends Error {
   constructor(readonly code:string,readonly status:number){super(code);}
 }
 function connectorFailureStatus(body:Record<string,unknown>,status:number):number{
+  if(status===502&&['ATTIO_API_INVALID_ARGUMENTS','SIBEMA_API_INVALID_ARGUMENTS','MAIL_API_INVALID','MAIL_SEARCH_QUERY_INVALID'].includes(String(body.error)))return 400;
   return status===502&&body.error==='PROVIDER_REQUEST_REJECTED'&&typeof body.providerStatus==='number'&&[400,404,409,422].includes(body.providerStatus)?body.providerStatus:status;
 }
 async function rejectedRequest(result:Response):Promise<never>{

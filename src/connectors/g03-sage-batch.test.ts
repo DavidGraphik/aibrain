@@ -103,6 +103,35 @@ it('fits six maximum-sized native pages plus actual metadata below1MiB without c
 });
 it('retains further effective take reductions and rejects a page exceeding its requested take',async()=>{
  const takes:number[]=[];const result=await collectSagePages(async(_q,_p,skip,take)=>{takes.push(take);const effective=skip===0?25:12;return page(skip,effective,effective,skip+effective);},'SalesOrders',range,0,50);
- expect(takes).toEqual([50,25,12,12,12,12]);expect(result.nextOffset).toBe(85);
+ expect(takes).toEqual([50,25,25,12,12,12]);expect(result.nextOffset).toBe(73);
+ expect(result).toMatchObject({pages:5,coverage:{pageRequests:6}});
+ expect((result.items as {id:number}[]).map(x=>x.id)).toEqual(Array.from({length:73},(_,id)=>id));
  await expect(collectSagePages(async()=>page(0,50,50,50),'SalesOrders',range,0,25)).rejects.toMatchObject({code:'SAGE_PROVIDER_RESPONSE_INVALID'});
+});
+
+it('keeps an exact ordered prefix with only two reads active when later pages finish first',async()=>{
+ let active=0,peak=0;const finished:number[]=[];
+ const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>{active++;peak=Math.max(peak,active);await new Promise(resolve=>setTimeout(resolve,skip===1?20:1));active--;finished.push(skip);return page(skip,1,1,skip+1);});
+ const result=await collectSagePages(read,'Products',{},0,1);
+ expect(peak).toBe(2);expect(active).toBe(0);expect(finished.indexOf(2)).toBeLessThan(finished.indexOf(1));
+ expect(result.items).toEqual(Array.from({length:6},(_,id)=>({id})));expect(result).toMatchObject({nextOffset:6,pages:6,complete:false,coverage:{pageRequests:6,maxParallelPages:2}});
+});
+it('discards an unused tail error when an earlier short page proves the end',async()=>{
+ const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>{if(skip===2)throw new SageError('SAGE_PROVIDER_UNAVAILABLE');if(skip===1){await new Promise(resolve=>setTimeout(resolve,2));return page(1,1,1,null);}return page(0,1,1,1);});
+ const result=await collectSagePages(read,'Products',{},0,1);
+ expect(result).toMatchObject({complete:true,nextOffset:null,pages:2,items:[{id:0},{id:1}],coverage:{pageRequests:3}});
+});
+it('never commits a speculative success beyond the first needed failed page',async()=>{
+ const result=await collectSagePages(async(_q,_p,skip)=>{if(skip===1){await new Promise(resolve=>setTimeout(resolve,2));throw new SageError('SAGE_PROVIDER_UNAVAILABLE');}return page(skip,1,1,skip+1);},'Products',{},0,1);
+ expect(result).toMatchObject({items:[{id:0}],nextOffset:1,pages:1,complete:false,reason:'SAGE_PROVIDER_UNAVAILABLE',coverage:{pageRequests:3}});
+});
+it('cancels both active sibling reads and releases no data after parent cancellation',async()=>{
+ const stop=new AbortController();let active=0;
+ const pending=collectSagePages(async(_q,_p,skip,_take,signal)=>{if(skip===0)return page(0,1,1,1);active++;return new Promise<Page>((_resolve,reject)=>signal.addEventListener('abort',()=>{active--;reject(new Error('mock cancelled'));},{once:true}));},'Products',{},0,1,stop.signal);
+ const rejected=expect(pending).rejects.toBeDefined();await vi.waitFor(()=>expect(active).toBe(2));stop.abort();await rejected;expect(active).toBe(0);
+});
+it('does not speculate past the native maximum offset',async()=>{
+ const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>page(skip,1,1,skip===5000?null:skip+1,skip===5000));
+ const result=await collectSagePages(read,'Products',{},4999,1);
+ expect(read.mock.calls.map(c=>c[2])).toEqual([4999,5000]);expect(result).toMatchObject({nextOffset:null,limitReached:true,complete:false,pages:2});
 });

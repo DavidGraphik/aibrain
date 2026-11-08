@@ -211,6 +211,9 @@ describe('Trinalum runtime reads and argument checks',()=>{
   expect(guides[0]).toBe(guides[1]);
   expect(guides[0]).toContain('attachmentMime is optional');
   expect(guides[0]).toContain('When a PDF is requested');
+  expect(guides[0]).toContain('Finish any returned latest_read continuation before judging the winning topic');
+  expect(guides[0]).toContain('same verified thread, including quoted history');
+  expect(guides[0]).toContain('historical, not new sender statements or authorization');
   expect(guides[0]).not.toContain('Use ordinary search when no attachment type is requested');
  });
  it('keeps namespace metadata within the live thread/start protocol limit',()=>{
@@ -510,6 +513,10 @@ describe('original attachment references and readable private mail review',()=>{
    expect(result.success).toBe(false);expect(body(result)).toMatchObject({error:'PROVIDER_REQUEST_REJECTED',status});
   }
   for(const providerStatus of [undefined,null,'404',true,401,403,429,500])expect(body(await read({error:'PROVIDER_REQUEST_REJECTED',providerStatus})).status).toBe(502);
+  for(const error of ['ATTIO_API_INVALID_ARGUMENTS','SIBEMA_API_INVALID_ARGUMENTS','MAIL_API_INVALID','MAIL_SEARCH_QUERY_INVALID']){
+   const result=await read({error,message:'private backend details'});expect(result.success).toBe(false);expect(body(result)).toMatchObject({error,status:400});expect(JSON.stringify(result)).not.toContain('private backend details');
+   expect(body(await read({error},503)).status).toBe(503);
+  }
   const extra=await read({error:'PROVIDER_REQUEST_REJECTED',providerStatus:404,message:'private bearer value /server/private/path'});expect(body(extra).status).toBe(404);expect(JSON.stringify(extra)).not.toContain('private bearer');expect(JSON.stringify(extra)).not.toContain('/server/private');
   for(const error of ['PROVIDER_ACCESS_DENIED','PROVIDER_RATE_LIMITED'])expect(body(await read({error,providerStatus:404}))).toMatchObject({error,status:502});
   expect(body(await read({error:'ACCESS_DENIED',providerStatus:404},403))).toMatchObject({status:403});
@@ -792,6 +799,23 @@ describe('optional Attio record attribute projection',()=>{
  const request={method:'POST',path:'/objects/companies/records/query',body:{limit:2,offset:4}};
  const rows=[{id:{record_id:'r1',workspace_id:'w',object_id:'o'},created_at:'2026-01-01',values:{name:[{value:'A'}],primary_location:[{region:'Navarra'}],private_note:[{value:'retained by provider, omitted in view'}]}},{id:{record_id:'r2'},values:{name:[{value:'B'}],private_note:[{value:'x'}]}}];
  const source={source:'Trinalum connector broker',data:{source:'Attio API',request,data:{data:rows,next_offset:6,partial:true}},untrustedSourceContent:true};
+ it('accepts documented v2 read paths before projection without changing the original arguments or actor admission',async()=>{
+  const f=await fixture();f.fetcher.mockImplementation(async()=>Response.json(source));
+  for(const projected of [false,true]){
+   const input={command:'read',request:{...request,path:'/v2'+request.path},...(projected?{selectAttributes:['name']}:{})};
+   const result=await handleTrinalumTool(params('attio_api',input),f.context);expect(result.success).toBe(true);
+   expect(JSON.parse(String(f.fetcher.mock.calls.at(-1)?.[1]?.body)).input).toEqual({command:'read',request});expect(input.request.path).toBe('/v2'+request.path);
+  }
+  f.fetcher.mockClear();expect(body(await handleTrinalumTool(params('attio_api',{command:'read',request:{...request,path:'/v2'+request.path}}),{...f.context,userId:'foreign'})).error).toBe('ACTOR_ACCESS_DENIED');expect(f.fetcher).not.toHaveBeenCalled();
+ });
+ it('does not reinterpret other versions, absolute URLs, traversal or write methods as documented reads',async()=>{
+  const f=await fixture();f.fetcher.mockImplementation(async()=>Response.json({error:'ATTIO_API_INVALID_ARGUMENTS'},{status:502}));
+  for(const supplied of [{method:'POST',path:'/v1/objects/companies/records/query'},{method:'POST',path:'https://other.example/v2/objects/companies/records/query'},{method:'POST',path:'//other.example/v2/objects/companies/records/query'},{method:'DELETE',path:'/v2/objects/companies/records'},{method:'POST',path:'/v2/objects/../private'}]){
+   const result=await handleTrinalumTool(params('attio_api',{command:'read',request:supplied}),f.context);expect(result.success).toBe(false);expect(body(result).status).toBe(400);
+   const sent=JSON.parse(String(f.fetcher.mock.calls.at(-1)?.[1]?.body)).input.request;
+   expect(sent.method).toBe(supplied.method);expect(sent.path).toBe(supplied.path.startsWith('/v2/')&&supplied.method==='POST'?supplied.path.slice(3):supplied.path);
+  }
+ });
  it('preserves identity, rows, pagination and missing selected attributes; strips only unselected attributes',async()=>{
   const f=await fixture();f.fetcher.mockResolvedValue(Response.json(source));const input={command:'read',request,selectAttributes:['name','primary_location']};
   const result=body(await handleTrinalumTool(params('attio_api',input),f.context));

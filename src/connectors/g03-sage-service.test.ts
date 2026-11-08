@@ -104,3 +104,16 @@ it('stops before another provider page when access is revoked during a batch', a
  await expect(g03SageReadBatchForIdentity('g03-production', user, {query:'Products', take:1})).rejects.toMatchObject({code:'SAGE_ACCESS_DENIED'});
  expect(read).toHaveBeenCalledTimes(1);
 });
+
+it('warms one reader before parallel pages and isolates every sibling session/catalog/login',async()=>{
+ await setup();const {SageReader}=await import('./g03-sage-api');const readers:InstanceType<typeof SageReader>[]=[];
+ type Session={token:string;catalog:Set<string>;expires:number;verifiedAt:string};
+ vi.spyOn(SageReader.prototype,'read').mockImplementation(async function(this:InstanceType<typeof SageReader>,query,_parameters,skip,take){
+  const own=this as unknown as {session:Session|null;login:unknown};const offset=Number(skip);readers.push(this);
+  if(offset===0){await new Promise(resolve=>setTimeout(resolve,1));own.session={token:'synthetic-warm',catalog:new Set(['Products']),expires:Date.now()+120000,verifiedAt:new Date().toISOString()};}
+  else {expect(this).not.toBe(readers[0]);expect(own.session?.token).toBe('synthetic-warm');expect(own.session?.catalog.has('Products')).toBe(true);expect(own.login).toBeNull();own.session!.catalog.clear();own.login=Promise.resolve('sibling-only');}
+  return {source:'SAGE',companyCode:'1',companyName:'synthetic',query,items:[{id:offset}],skip:offset,take:Number(take),nextOffset:offset===5?null:offset+1,limitReached:false,complete:offset===5,checkedAt:new Date().toISOString()} as never;
+ });
+ const result=await g03SageReadBatchForIdentity('g03-production',user,{query:'Products',take:1});
+ expect(result).toMatchObject({pages:6,complete:true});expect(new Set(readers).size).toBe(6);
+});

@@ -82,12 +82,15 @@ export async function g03SageReadBatchForIdentity(installationId: string, userId
     parameters = { FechaInicial: "1900-01-01", FechaFinal: today };
   }
   const reader = initial.reader.forkForRead();
+  let firstPage = true;
   const value = await collectSagePages(async (query, pageParameters, skip, take, pageSignal) => {
     pageSignal.throwIfAborted();
     const current = await g03SageAccess(installationId, userId);
     if (current.key !== initial.key) throw new SageError("SAGE_CONNECTION_CHANGED");
     pageSignal.throwIfAborted();
-    return reader.read(query, pageParameters, skip, take, pageSignal);
+    const pageReader = firstPage ? reader : reader.forkForRead();
+    firstPage = false;
+    return pageReader.read(query, pageParameters, skip, take, pageSignal);
   }, args.query, parameters, args.skip ?? 0, args.take ?? 50, signal);
   signal?.throwIfAborted();
   const fresh = await g03SageAccess(installationId, userId);
