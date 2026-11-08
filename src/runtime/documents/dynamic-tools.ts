@@ -46,6 +46,7 @@ type CreateArguments = Readonly<{
   format: LocalDocumentFormat;
   fileName: string;
   title: string;
+  includeTitle?: boolean;
   content: string;
   rows?: readonly (readonly LocalDocumentCell[])[];
   slides?: readonly LocalDocumentSlide[];
@@ -148,10 +149,11 @@ function parseRows(value: unknown): readonly (readonly LocalDocumentCell[])[] | 
 
 function parseArguments(value: unknown): CreateArguments {
   if (!isRecord(value)) throw new LocalDocumentDynamicToolError("LOCAL_DOCUMENT_ARGUMENTS_INVALID", "Document arguments must be an object.");
-  exactKeys(value, ["format", "fileName", "title", "content"], ["rows", "slides"]);
+  exactKeys(value, ["format", "fileName", "title", "content"], ["rows", "slides", "includeTitle"]);
   if (typeof value.format !== "string" || !FORMATS.includes(value.format as LocalDocumentFormat) ||
       typeof value.fileName !== "string" || !FILE_NAME_PATTERN.test(value.fileName) || value.fileName === "." || value.fileName === ".." ||
-      typeof value.title !== "string" || typeof value.content !== "string") {
+      typeof value.title !== "string" || typeof value.content !== "string"
+      || value.includeTitle !== undefined && typeof value.includeTitle !== "boolean") {
     throw new LocalDocumentDynamicToolError("LOCAL_DOCUMENT_ARGUMENTS_INVALID", "Document arguments are invalid.");
   }
   const format = value.format as LocalDocumentFormat;
@@ -162,6 +164,7 @@ function parseArguments(value: unknown): CreateArguments {
     format,
     fileName: value.fileName.normalize("NFC"),
     title: value.title,
+    ...(value.includeTitle === undefined ? {} : { includeTitle: value.includeTitle }),
     content: value.content,
     rows: parseRows(value.rows),
     ...(value.slides === undefined ? {} : { slides: normalizeDocumentSlides(value.slides) }),
@@ -724,6 +727,7 @@ async function handleSingleLocalDocumentDynamicToolCall(
       const generated = await generateLocalDocument({
         format: input.format,
         title: input.title,
+        includeTitle: input.includeTitle,
         content: reviewNotice ? `${reviewNotice}\n\n${input.content}` : input.content,
         rows: input.rows,
         spreadsheetLayout,

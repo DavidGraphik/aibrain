@@ -6,6 +6,21 @@ import { generateLocalDocument } from "@/runtime/documents/local-document-genera
 import { generatedPngFixture } from "../../../tests/helpers/png-fixture";
 
 describe("local document generator", () => {
+  it("omits only the optional Word heading while preserving exact body and title metadata", async () => {
+    const title = "Metadata title", content = "Exact requested phrase";
+    const result = await generateLocalDocument({ format: "docx", title, content, includeTitle: false });
+    const archive = await JSZip.loadAsync(result.data);
+    const document = await archive.file("word/document.xml")!.async("text");
+    expect(Array.from(document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/gu), match => match[1])).toEqual([content]);
+    expect(document).not.toContain("<w:b/>");
+    expect(await archive.file("docProps/core.xml")!.async("text")).toContain(`<dc:title>${title}</dc:title>`);
+  });
+  it.each([undefined, true])("preserves explicit identical Word heading and body when includeTitle is %s", async includeTitle => {
+    const result = await generateLocalDocument({ format: "docx", title: "Same phrase", content: "Same phrase", includeTitle });
+    const archive = await JSZip.loadAsync(result.data);
+    const document = await archive.file("word/document.xml")!.async("text");
+    expect(Array.from(document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/gu), match => match[1])).toEqual(["Same phrase", "Same phrase"]);
+  });
   it("keeps arrow direction and conversion meaning in the actual basic PDF text stream", async () => {
     const generated = await generateLocalDocument({ format: "pdf", title: "A → B", content: "toneladas → kg\nOrigen ← Destino\nA ↔ B\n2 × 3 = 6 €; condición confirmada" });
     const document = await PDFDocument.load(generated.data);

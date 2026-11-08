@@ -93,6 +93,7 @@ export const DOCUMENT_DYNAMIC_TOOLS: readonly DynamicToolSpec[] = Object.freeze(
           format: { type: "string", enum: ["pdf", "docx", "pptx", "xlsx"] },
           fileName: { type: "string", minLength: 1, maxLength: 160 },
           title: { type: "string", minLength: 1, maxLength: 500 },
+          includeTitle: { type: "boolean", default: true, description: "Word only: include a visible title heading. Set false for an exact/text-only body; title is still retained as document metadata." },
           content: { type: "string", minLength: 1, maxLength: 200_000, description: "Final document text, or a brief summary when slides/rows carry the actual content. Never a request to create content." },
           slides: SLIDES_SCHEMA,
           rows: {
@@ -128,6 +129,7 @@ export const DOCUMENT_DYNAMIC_TOOLS: readonly DynamicToolSpec[] = Object.freeze(
                 format: { type: "string", enum: ["pdf", "docx", "pptx", "xlsx"] },
                 fileName: { type: "string", minLength: 1, maxLength: 160 },
                 title: { type: "string", minLength: 1, maxLength: 500 },
+                includeTitle: { type: "boolean", default: true, description: "Word only: include a visible title heading. Set false for an exact/text-only body; title is still retained as document metadata." },
                 content: { type: "string", minLength: 1, maxLength: 200_000, description: "Final document text, or a brief summary when slides/rows carry the actual content. Never a request to create content." },
           slides: SLIDES_SCHEMA,
                 rows: {

@@ -285,6 +285,25 @@ function batchRequest(callId = "hello-world-batch") {
 }
 
 describe("local document dynamic tool", () => {
+  it("exposes an optional Word heading flag for single and batch documents and renders it through the tool", async () => {
+    for (const namespace of DOCUMENT_DYNAMIC_TOOLS) {
+      if (namespace.type !== "namespace") throw Error("document namespace missing");
+      const create = namespace.tools.find(tool => tool.name === "create")!;
+      const batch = namespace.tools.find(tool => tool.name === "create_batch")!;
+      expect(create.inputSchema).toMatchObject({ properties: { includeTitle: { type: "boolean", default: true } } });
+      expect(batch.inputSchema).toMatchObject({ properties: { files: { items: { properties: { includeTitle: { type: "boolean", default: true } } } } } });
+      expect((create.inputSchema as { required: string[] }).required).not.toContain("includeTitle");
+    }
+    const ctx = await context(USER_A), base = request("exact-body", "docx");
+    const params = { ...base, arguments: { ...base.arguments, title: "Metadata", content: "Only this phrase", includeTitle: false } };
+    const result = await handleLocalDocumentDynamicToolCall(params, ctx);
+    expect(result.response.success).toBe(true);
+    const bytes = await readFile(path.join(ctx.installation.paths.dataRoot, "generated-document-artifacts", USER_A, result.artifacts[0].id, "resultado.docx"));
+    const archive = await JSZip.loadAsync(bytes), document = await archive.file("word/document.xml")!.async("text");
+    expect(Array.from(document.matchAll(/<w:t[^>]*>(.*?)<\/w:t>/gu), match => match[1])).toEqual(["Only this phrase"]);
+    const invalid = await handleLocalDocumentDynamicToolCall({ ...params, callId: "bad-heading-flag", arguments: { ...params.arguments, includeTitle: "false" } }, ctx);
+    expect(invalid.response.success).toBe(false);
+  });
   it("declares unique document functions and keeps the richer schedule contract", () => {
     for (const namespace of DOCUMENT_DYNAMIC_TOOLS) {
       if (namespace.type !== "namespace") throw Error("document namespace missing");

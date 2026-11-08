@@ -26,6 +26,7 @@ export function isLocalDocumentFormula(value: unknown): value is LocalDocumentFo
 export type LocalDocumentInput = Readonly<{
   format: LocalDocumentFormat;
   title: string;
+  includeTitle?: boolean;
   content: string;
   rows?: readonly (readonly LocalDocumentCell[])[];
   slides?: readonly LocalDocumentSlide[];
@@ -93,6 +94,9 @@ function normalizedInput(input: LocalDocumentInput) {
     throw new LocalDocumentGenerationError("LOCAL_DOCUMENT_FORMAT_INVALID", "Document format is not supported.");
   }
   const title = cleanText(input.title, 500, "title");
+  if (input.includeTitle !== undefined && typeof input.includeTitle !== "boolean") {
+    throw new LocalDocumentGenerationError("LOCAL_DOCUMENT_INPUT_INVALID", "includeTitle must be a boolean.");
+  }
   if (input.verbatim && input.format !== "docx") {
     throw new LocalDocumentGenerationError("LOCAL_DOCUMENT_FORMAT_INVALID", "Verbatim translation requires Word format.");
   }
@@ -144,7 +148,7 @@ function normalizedInput(input: LocalDocumentInput) {
     throw new LocalDocumentGenerationError("LOCAL_DOCUMENT_ROWS_INVALID", "Schedule layout requires nine spreadsheet columns.");
   }
   if (input.arnallSchedule && (input.format !== "xlsx" || input.spreadsheetLayout !== "schedule")) throw new LocalDocumentGenerationError("LOCAL_DOCUMENT_ROWS_INVALID", "The approved schedule template requires an XLSX schedule.");
-  return { format: input.format, title, content, rows: input.rows, slides, sourcePng, spreadsheetLayout: input.spreadsheetLayout, arnallSchedule: input.arnallSchedule, verbatim: input.verbatim === true };
+  return { format: input.format, title, includeTitle: input.includeTitle !== false, content, rows: input.rows, slides, sourcePng, spreadsheetLayout: input.spreadsheetLayout, arnallSchedule: input.arnallSchedule, verbatim: input.verbatim === true };
 }
 
 export function normalizeDocumentSlides(value: unknown): readonly LocalDocumentSlide[] {
@@ -190,11 +194,11 @@ function appProperties(application: string) {
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>${xml(application)}</Application><AppVersion>1.0</AppVersion></Properties>`;
 }
 
-async function docxBytes(title: string, content: string, verbatim = false) {
-  const completeLines = [title, ...content.split("\n")];
+async function docxBytes(title: string, content: string, verbatim = false, includeTitle = true) {
+  const completeLines = [...(includeTitle ? [title] : []), ...content.split("\n")];
   const lines = verbatim ? completeLines : completeLines.slice(0, 5_000);
   const paragraphs = lines.map((raw, index) => {
-    const heading = index === 0 || (!verbatim && /^#{1,3}\s/u.test(raw));
+    const heading = includeTitle && index === 0 || (!verbatim && /^#{1,3}\s/u.test(raw));
     const bullet = !verbatim && /^[-*]\s+/u.test(raw);
     const value = verbatim ? raw : raw.replace(/^#{1,3}\s+/u, "").replace(/^[-*]\s+/u, "");
     if (!value.trim()) return "<w:p/>";
@@ -456,7 +460,7 @@ export async function generateLocalDocument(input: LocalDocumentInput): Promise<
     data = generated.data;
     pages = generated.pages;
   } else if (normalized.format === "docx") {
-    data = await docxBytes(normalized.title, normalized.content, normalized.verbatim);
+    data = await docxBytes(normalized.title, normalized.content, normalized.verbatim, normalized.includeTitle);
   } else if (normalized.format === "xlsx") {
     data = normalized.arnallSchedule ? await zipBytes(arnallScheduleParts(normalized.arnallSchedule)) : await xlsxBytes(normalized.title, normalized.content, normalized.rows, normalized.spreadsheetLayout);
   } else {
