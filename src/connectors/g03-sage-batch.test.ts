@@ -9,16 +9,17 @@ function page(skip:number,take:number,count:number,nextOffset:number|null,limitR
 }
 describe('bounded Sage read batches',()=>{
  it('follows the effective provider take without gaps and returns a resumable offset',async()=>{
-  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>page(skip,2,2,skip+2));
+  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number,_take:number)=>page(skip,2,2,skip+2));
   const first=await collectSagePages(read,'SalesOrders',range,0,50);
   expect(first).toMatchObject({pages:6,fromOffset:0,nextOffset:12,complete:false,reason:'page_budget'});
   expect(first.items).toEqual(Array.from({length:12},(_,id)=>({id})));
   expect(read.mock.calls.map(call=>call[2])).toEqual([0,2,4,6,8,10]);
+  expect(read.mock.calls.map(call=>call[3])).toEqual([50,2,2,2,2,2]);
   const last=await collectSagePages(async(_q,_p,skip)=>page(skip,2,1,null),'SalesOrders',range,first.nextOffset,50);
   expect(last).toMatchObject({fromOffset:12,pages:1,nextOffset:null,complete:true,items:[{id:12}]});
  });
  it('yields before a likely oversized fetch and resumes without losing records',async()=>{
-  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(90_000)}]}));
+  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(600_000)}]}));
   const result=await collectSagePages(read,'SalesOrders',range,0,1);
   expect(result).toMatchObject({pages:1,nextOffset:1,complete:false,reason:'response_budget'});
   expect(result.items).toHaveLength(1);
@@ -29,7 +30,7 @@ describe('bounded Sage read batches',()=>{
   expect(read.mock.calls.map(call=>call[2])).toEqual([0,1]);
  });
  it('retains the first unread offset when a later page grows unexpectedly',async()=>{
-  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(skip===0?30_000:140_000)}]}));
+  const read=vi.fn(async(_q:unknown,_p:unknown,skip:number)=>({...page(skip,1,1,skip+1),items:[{id:skip,text:'x'.repeat(skip===0?30_000:1_040_000)}]}));
   const result=await collectSagePages(read,'SalesOrders',range,0,1);
   expect(result).toMatchObject({pages:1,nextOffset:1,complete:false,reason:'response_budget'});
   const resumed=await collectSagePages(read,'SalesOrders',range,result.nextOffset,1);
@@ -91,4 +92,17 @@ it('propagates explicit stop to the active provider page',async()=>{
   signal.addEventListener('abort',()=>{observed=true;reject(new Error('aborted'));},{once:true});
  }),'SalesOrders',range,0,1,stop.signal);
  stop.abort();await expect(pending).rejects.toBeDefined();expect(observed).toBe(true);
+});
+
+it('fits six maximum-sized native pages plus actual metadata below1MiB without changing native page limits',async()=>{
+ const read=vi.fn(async(_q:unknown,_p:unknown,skip:number,_take:number)=>({...page(skip,25,25,skip+25),items:Array.from({length:25},(_,i)=>({id:skip+i,text:'x'.repeat(Math.floor((128*1024-1000)/25))})),nativeLineFields:{subquery:'Lines',requested:['LineasPosicion','UnidadesPendientes','UnidadesServidas'],returnedLineCount:25,documentsMissingLines:0,linesMissingRequestedFields:0,linesWithNullRequestedFields:0,notice:'Native source line metadata'}}));
+ const result=await collectSagePages(read,'SalesOrders',range,0,50);
+ expect(result).toMatchObject({pages:6,nextOffset:150,reason:'page_budget',complete:false,coverage:{maxBytes:1024*1024,atMostPages:6,maxMilliseconds:20000}});
+ expect(read.mock.calls.map(call=>call[3])).toEqual([50,25,25,25,25,25]);
+ expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(1024*1024);
+});
+it('retains further effective take reductions and rejects a page exceeding its requested take',async()=>{
+ const takes:number[]=[];const result=await collectSagePages(async(_q,_p,skip,take)=>{takes.push(take);const effective=skip===0?25:12;return page(skip,effective,effective,skip+effective);},'SalesOrders',range,0,50);
+ expect(takes).toEqual([50,25,12,12,12,12]);expect(result.nextOffset).toBe(85);
+ await expect(collectSagePages(async()=>page(0,50,50,50),'SalesOrders',range,0,25)).rejects.toMatchObject({code:'SAGE_PROVIDER_RESPONSE_INVALID'});
 });

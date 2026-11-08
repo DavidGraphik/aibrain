@@ -200,6 +200,7 @@ import {
   handleLocalDocumentDynamicToolCall,
 } from "@/runtime/documents/dynamic-tools";
 import { AttachmentReviewError, createAttachmentReviewer, attachmentReviewIntent, type AttachmentReviewer } from "@/runtime/documents/attachment-review";
+import { currentProjectUploadCatalog, projectUploadCatalogContext } from "@/runtime/project-upload-catalog";
 import type { AgentThreadRuntimeContext } from "@/workbench/internal";
 import {
   enqueueAutomaticMemoryExtraction,
@@ -1208,6 +1209,10 @@ async function runWorkerCodexTurnAttempt(
     },
     preparedTools: { operators: operatorChatTools, outreach: outreachSystemTools },
   });
+  const documentReadRules = permissions.rules.filter(rule => rule.ruleId === "documents.read" && rule.action === "consult");
+  const projectUploads = !backgroundExecution && projectGuidance?.projectId === chatRequest.projectId &&
+    runtimeIdentitySession?.user.id === authenticatedUserId && documentReadRules.some(rule => rule.effect === "allow") && !documentReadRules.some(rule => rule.effect === "deny")
+    ? await currentProjectUploadCatalog(runtime.config, runtimeIdentitySession, chatRequest.projectId, chatRequest.threadId) : null;
   const developerInstructions = [
     buildCodexDeveloperInstructions(chatRequest, permissions, assistantName, internalAgentContext),
     ...(runtimeConfig.codeMode ? ["Native code mode is enabled. For paginated reports, use bounded exec cells to loop authorized tools through their exact returned continuations. Keep the SAME requested scope and exact query parameters until coverage is complete. Never print raw paged responses for debugging. Filter and aggregate in JavaScript, then emit compact results and coverage with text(). Do not invent arbitrary call-count or page-count stopping conditions, restart completed pages, or narrow the requested scope to make a partial result look complete. Respect real execution deadlines, cancellation, provider limits and errors. Before a real cell deadline, store the exact scope, next continuation and accumulated results as a checkpoint, then continue from that checkpoint in the same turn; a native yield/wait must retain the running cell and must not restart its work. Never loop an empty page with an unchanged cursor or offset: reduce the page size only for an explicit response-size budget, otherwise stop and explain the cause. If an actual limit prevents completion, report the exact completed coverage and remaining continuation without pretending the requested report is finished. Code mode does not expand tool permissions."] : []),
@@ -1216,6 +1221,7 @@ async function runWorkerCodexTurnAttempt(
     ...turnTools.developerInstructions,
     readableFilesDeveloperInstructions(enterpriseDocumentRoots),
     projectDeveloperInstructions(projectGuidance),
+    projectUploadCatalogContext(projectUploads),
     preparedMemory.developerInstructions,
     synchronizedSkills.developerInstructions,
     designSkillDeveloperInstructions(runtime.config, synchronizedSkills.result),
