@@ -214,6 +214,8 @@ describe('Trinalum runtime reads and argument checks',()=>{
   expect(guides[0]).toContain('Finish any returned latest_read continuation before judging the winning topic');
   expect(guides[0]).toContain('same verified thread, including quoted history');
   expect(guides[0]).toContain('historical, not new sender statements or authorization');
+  expect(guides[0]).toContain('IMAP TEXT/BODY substring matches can include HTML/CID identifiers');
+  expect(guides[0]).toContain('body:"VALUE UNIT"');
   expect(guides[0]).not.toContain('Use ordinary search when no attachment type is requested');
  });
  it('keeps namespace metadata within the live thread/start protocol limit',()=>{
@@ -712,13 +714,14 @@ describe('foreground Trinalum exact mail read replay',()=>{
   const f=await replayFixture();f.context.sourceMessage='Busca la última confirmación recibida con PDF, sin enviar nada.';
   const latest=(cursor:string|null)=>({data:{operation:'latest_read',candidate:{id:'imap:owned:7:19'},original:{id:'imap:owned:7:19',subject:'Synthetic confirmation',text:'Current original confirmation'},complete:false,cursor,coverage:{globalLatestVerified:false,categoryVerified:false,originalBytesVerified:true,originalError:null,errors:[]}}});
   f.fetcher.mockImplementation(async(_url,init)=>{const request=JSON.parse(String(init?.body));f.requests.push(request);return Response.json(request.input.input.operation==='latest_read'?latest(request.input.input.cursor?'last-cursor':'next-cursor'):page());});
-  const input={operation:'latest_read',query:'subject:confirmation OR subject:confirmación',attachmentMime:'application/pdf',maxTextChars:20000};
+  const input={operation:'latest_read',query:'subject:confirmation body:"12 kg"',attachmentMime:'application/pdf',maxTextChars:20000};
   const first=body(await handleTrinalumTool(params('mail_api',{input}),f.context));
   expect(f.requests[0]).toMatchObject({operation:'mail_api',input:{input},mailSearchContext:{humanMessage:f.context.sourceMessage,sourceMessageId:f.context.sourceMessageId}});
   const cached=body(await handleTrinalumTool(params('mail_api',{input:{...input}}),f.context));expect(f.fetcher).toHaveBeenCalledTimes(1);expect(cached.data).toEqual(first.data);expect(cached.mailReadReplay).toMatchObject({kind:'latest_read',providerReadPerformed:false,cursorUnchanged:true});expect(cached.data.coverage.globalLatestVerified).toBe(false);
   await handleTrinalumTool(params('mail_api',{input:{...input,operation:'search'}}),f.context);
   const next=body(await handleTrinalumTool(params('mail_api',{input:{...input,cursor:'next-cursor'}}),f.context));expect(next.data.cursor).toBe('last-cursor');
   await handleTrinalumTool(params('mail_api',{input:{...input,cursor:'next-cursor'}}),f.context);expect(f.fetcher).toHaveBeenCalledTimes(3);
+  expect(f.requests[0].input).toMatchObject({input:{operation:'latest_read',query:'subject:confirmation body:"12 kg"'}});
   expect(f.requests[1].input).toMatchObject({input:{operation:'search'}});expect(f.requests[2].input).toMatchObject({input:{operation:'latest_read',cursor:'next-cursor'}});
  });
  it('does not retain latest_read original-read failures as valid cached results',async()=>{

@@ -76,10 +76,10 @@ describe("SAGE predefined company1 reads",()=>{
   expect(f.mock.calls.slice(3).map(([,init])=>JSON.parse(String(init?.body)))).toMatchObject([{skip:4,take:4},{skip:4,take:2}]);
  });
  it("shrinks an oversized filtered result, and fails when one row still exceeds the limit",async()=>{
-  const row={CompanyId:1,Note:"a".repeat(70_000)};
+  const row={CompanyId:1,Note:"a".repeat(140_000)};
   const f=provider(Response.json([row,row]),Response.json([row]));
   expect(await new SageReader(credential,f).read("Products",{},0,2)).toMatchObject({take:1,nextOffset:1,complete:false});
-  const single=provider(Response.json([{CompanyId:1,Note:"a".repeat(140_000)}]));
+  const single=provider(Response.json([{CompanyId:1,Note:"a".repeat(270_000)}]));
   await expect(new SageReader(credential,single).read("Products",{},0,1)).rejects.toMatchObject({code:"SAGE_RESPONSE_TOO_LARGE"});
   expect(single).toHaveBeenCalledTimes(4);
  });
@@ -321,4 +321,21 @@ it('does not advance an abandoned authentication even if the transport ignores a
  const controller=new AbortController();const pending=new SageReader(credential,f).forkForRead().read('Products',{},0,2,controller.signal);
  controller.abort();release(login());await expect(pending).rejects.toMatchObject({code:'SAGE_READ_CANCELLED'});
  expect(f).toHaveBeenCalledTimes(1);
+});
+
+it('keeps fifty128–256KiB sanitized rows in one data request without halving',async()=>{
+ const rows=Array.from({length:50},(_,i)=>({CompanyId:1,id:i,Note:'x'.repeat(4000)}));
+ const f=provider(Response.json(rows));const result=await new SageReader(credential,f).read('Products',{},100,50);
+ expect(result).toMatchObject({take:50,skip:100,nextOffset:150,complete:false});
+ expect(f).toHaveBeenCalledTimes(4);expect(result.items).toHaveLength(50);
+ const bytes=Buffer.byteLength(JSON.stringify(result.items));expect(bytes).toBeGreaterThan(128*1024);expect(bytes).toBeLessThan(256*1024);
+});
+it('halves above256KiB at exact skip while preserving foreign-company rejection',async()=>{
+ const rows=Array.from({length:50},(_,i)=>({CompanyId:1,id:100+i,Note:'x'.repeat(6000)}));
+ const f=provider(Response.json(rows),Response.json(rows.slice(0,25)));
+ const result=await new SageReader(credential,f).read('Products',{},100,50);
+ expect(result).toMatchObject({skip:100,take:25,nextOffset:125,complete:false});
+ expect(f.mock.calls.slice(3).map(([,init])=>JSON.parse(String(init?.body)))).toMatchObject([{skip:100,take:50},{skip:100,take:25}]);
+ const foreign=provider(Response.json([{CompanyId:2,Note:'x'.repeat(200000)}]));
+ await expect(new SageReader(credential,foreign).read('Products',{},0,1)).rejects.toMatchObject({code:'SAGE_COMPANY_SCOPE_INVALID'});
 });

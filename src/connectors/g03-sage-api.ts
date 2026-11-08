@@ -169,7 +169,7 @@ export class SageReader {
         if (rows.length > pageTake || rows.some(row => !Object.hasOwn(row,"CompanyId") && !Object.hasOwn(row,"CodigoEmpresa")
           || foreignCompany(row))) return fail("SAGE_COMPANY_SCOPE_INVALID");
         const items = publicData(rows);
-        if (Buffer.byteLength(JSON.stringify(items)) > 128 * 1024) return fail("SAGE_RESPONSE_TOO_LARGE");
+        if (Buffer.byteLength(JSON.stringify(items)) > 256 * 1024) return fail("SAGE_RESPONSE_TOO_LARGE");
         const requestedLineFields=NATIVE_LINE_FIELDS[body.queryName]?.split(",");
         const lines=rows.flatMap(row=>Array.isArray(row.Lines)?row.Lines.filter(sageRecord):[]);
         return { source: "SAGE", companyCode: "1", companyName, query: body.queryName, items, skip: body.skip, take: pageTake,
