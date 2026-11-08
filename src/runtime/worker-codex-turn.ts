@@ -1209,6 +1209,7 @@ async function runWorkerCodexTurnAttempt(
   });
   const developerInstructions = [
     buildCodexDeveloperInstructions(chatRequest, permissions, assistantName, internalAgentContext),
+    ...(runtimeConfig.codeMode ? ["Native code mode is enabled. For paginated reports, use exec to loop the authorized tools through their returned continuations until coverage is complete. Filter and aggregate in JavaScript before emitting results with text(), rather than filling the model context with raw pages. Respect provider limits and errors; if coverage remains partial, report it explicitly. Code mode does not expand tool permissions."] : []),
     localDocumentDeveloperInstructions(installationId),
     ...turnTools.developerInstructions,
     readableFilesDeveloperInstructions(enterpriseDocumentRoots),
@@ -1254,10 +1255,11 @@ async function runWorkerCodexTurnAttempt(
     approvalPolicy: quotaToolPermissions ? "never" as const : runtimeConfig.approvalPolicy,
     approvalsReviewer: SERVER_APPROVALS_REVIEWER,
     ...(quotaPermissionId ? { permissions: quotaPermissionId } : { sandbox: effectiveSandbox(runtimeConfig, chatRequest) }),
-    config: { web_search: "live", ...connectorAppConfig, ...connectorMcpConfig, ...analysisOverrides },
+    config: { web_search: "live", ...(runtimeConfig.codeMode ? { "features.code_mode": true, "features.code_mode_only": true } : {}), ...connectorAppConfig, ...connectorMcpConfig, ...analysisOverrides },
     developerInstructions,
   };
-  const reuseLoadedThread = !hostAnalysisPolicy && runtimeThreadId !== null &&
+  // Re-apply the opt-in through native resume even for a previously warm history.
+  const reuseLoadedThread = !runtimeConfig.codeMode && !hostAnalysisPolicy && runtimeThreadId !== null &&
     runtime.client.canReuseLoadedThread(runtimeThreadId, true) &&
     hasAppliedConnectedAppConfig(runtime.client, runtimeThreadId, availableAppIds, connectorMcpConfig, nativeAppTools) &&
     (!quotaToolPermissions || hasAttestedQuotaToolPermissions(runtime.client, runtimeThreadId, quotaToolPermissions));

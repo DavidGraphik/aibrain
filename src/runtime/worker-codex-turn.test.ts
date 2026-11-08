@@ -654,8 +654,9 @@ describe("worker Codex turn", () => {
     } finally { await rm(userRoot, { recursive: true, force: true }); }
   });
 
-  it.each(["new", "existing", "host", "host-abort"] as const)("attests quota profiles for a %s thread and downgrades the next turn without widening writes", async (kind) => {
+  it.each(["new", "existing", "host", "host-abort", "code-mode-new", "code-mode-existing"] as const)("attests quota profiles for a %s thread and downgrades the next turn without widening writes", async (kind) => {
     const isHost = kind.startsWith("host");
+    const codeMode = kind.startsWith("code-mode"), isNew = kind === "new" || kind === "code-mode-new";
     let controller = new AbortController();
     const workspace = await mkdtemp(path.join(tmpdir(), "aibrain-quota-tools-"));
     const roots = { workspace, staging: workspace, artifacts: path.join(workspace, "artifacts"),
@@ -674,7 +675,7 @@ describe("worker Codex turn", () => {
       message: { kind: "rpc-notification", rpc: {} } });
     const client = {
       // Exercise a loaded resume that reports the preceding turn's profile.
-      canReuseLoadedThread: () => false,
+      canReuseLoadedThread: () => codeMode,
       connectionSummary: async () => ({ connected: true }),
       router: { registerTurn: (_thread: string, _local: string, value: typeof handlers) => {
         handlers = value; return { bindRuntimeTurn() {}, dispose() {} };
@@ -720,18 +721,28 @@ describe("worker Codex turn", () => {
       const request = chatRequest();
       request.assistantMessageId = localTurnId;
       request.options.mode = mode;
-      await runWorkerCodexTurn(request, installationId, userId, index === 0 && kind === "new" ? null : "quota-thread", {
+      await runWorkerCodexTurn(request, installationId, userId, index === 0 && isNew ? null : "quota-thread", {
         tenantId: installationId, mode: "codex", codexBinary: "unused", codexHome: null,
-        workspace, model: null, approvalPolicy: "on-request", sandbox: "workspace-write",
+        workspace, model: null, approvalPolicy: "on-request", sandbox: "workspace-write", codeMode,
       }, { ...permissions(), turnId: localTurnId }, {} as never, memoryDependencies(), [], controller.signal, async () => {},
         undefined, "AiBrain", null, undefined, undefined, undefined, undefined, true, null, false,
         isHost ? { businessReads: true, webSearch: false, onViolation: violation } : undefined);
     }
     const threads = calls.filter(({ method }) => method === "thread/start" || method === "thread/resume");
-    expect(threads.map(({ method }) => method)).toEqual([kind === "new" ? "thread/start" : "thread/resume", "thread/resume"]);
+    expect(threads.map(({ method }) => method)).toEqual([isNew ? "thread/start" : "thread/resume", "thread/resume"]);
     expect(threads[0].params).toMatchObject({ permissions: isHost ? policy.readOnlyId : policy.workspaceWriteId, approvalPolicy: "never", config: { web_search: isHost ? "disabled" : "live" } });
     expect(threads[1].params).toMatchObject({ permissions: policy.readOnlyId, approvalPolicy: "never", config: { web_search: isHost ? "disabled" : "live" } });
     for (const thread of threads) expect(thread.params).not.toHaveProperty("sandbox");
+    for (const thread of threads) {
+      if (codeMode) {
+        expect(thread.params.config).toMatchObject({ "features.code_mode": true, "features.code_mode_only": true });
+        expect(thread.params.developerInstructions).toContain("Filter and aggregate in JavaScript");
+      } else {
+        expect(thread.params.config).not.toHaveProperty("features.code_mode");
+        expect(thread.params.config).not.toHaveProperty("features.code_mode_only");
+        expect(thread.params.developerInstructions).not.toContain("Native code mode is enabled");
+      }
+    }
     const turns = calls.filter(({ method }) => method === "turn/start");
     expect(turns.map(({ params }) => params.permissions)).toEqual([isHost ? policy.readOnlyId : policy.workspaceWriteId, policy.readOnlyId]);
     for (const { params } of turns) {

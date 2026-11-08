@@ -7,6 +7,8 @@ export type RuntimeConfig = {
   codexHome: string | null;
   workspace: string;
   model: string | null;
+  /** Experimental stock Codex code mode; enabled only by explicit server opt-in. */
+  codeMode?: boolean;
   approvalPolicy: "never" | "on-request";
   sandbox: "read-only" | "workspace-write";
 };
@@ -66,6 +68,7 @@ export function readRuntimeConfig(tenantId: string, workspaceKey = "workspace"):
       ? path.join(workspaceRoot, tenantId, "workspace")
       : path.join(workspaceRoot, tenantId, "projects", workspaceKey),
     model: configuredValue(process.env.CODEX_MODEL),
+    codeMode: process.env.CODEX_CODE_MODE === "1",
     approvalPolicy:
       process.env.CODEX_APPROVAL_POLICY === "on-request" ? "on-request" : "never",
     sandbox:

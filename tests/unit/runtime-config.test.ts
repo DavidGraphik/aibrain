@@ -13,6 +13,12 @@ function production() {
 }
 
 describe("runtime configuration", () => {
+  it.each([[undefined, false], ["0", false], ["true", false], ["1", true]] as const)("enables experimental native code mode only for the explicit server opt-in %s", (value, enabled) => {
+    production();
+    vi.stubEnv("CHAT_RUNTIME", "codex");
+    vi.stubEnv("CODEX_CODE_MODE", value);
+    expect(readRuntimeConfig("example-company").codeMode).toBe(enabled);
+  });
   it("fails closed when production does not explicitly select Codex", () => {
     production();
     vi.stubEnv("CHAT_RUNTIME", "");
