@@ -13,6 +13,8 @@ export class PrivateStdioAuthLane {
   private closed = false;
   private apiAuthenticated = false;
   private apiKey: string | null = null;
+  private refreshes = 0;
+  get busy() { return this.pending.size > 0 || this.refreshes > 0; }
   constructor(private readonly provider: SharedAuthProvider | undefined,
     private readonly write: (rpc: unknown) => Promise<void>, private readonly invalidRefresh: () => void,
     private readonly apiKeyProvider?: ServerModelApiKeyProvider) {
@@ -73,12 +75,13 @@ export class PrivateStdioAuthLane {
     const id = rpc.id, params = rpc.params;
     if ((typeof id !== "string" && typeof id !== "number") || !record(params) || params.reason !== "unauthorized" ||
         (params.previousAccountId != null && typeof params.previousAccountId !== "string")) { this.invalidRefresh(); return true; }
+    this.refreshes++;
     void this.provider!(params.previousAccountId as string | null | undefined, this.tokens?.accessToken).then(async tokens => {
       if (this.closed) return;
       this.tokens = tokens; await this.write({ id, result: tokens });
     }).catch(async () => {
       if (!this.closed) await this.write({ id, error: { code: -32603, message: "La sesión requiere reconexión del administrador." } }).catch(() => undefined);
-    });
+    }).finally(() => { this.refreshes--; });
     return true;
   }
   close() {

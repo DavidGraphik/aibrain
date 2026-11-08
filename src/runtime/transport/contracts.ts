@@ -97,6 +97,8 @@ export type TransportHealth = {
 };
 
 export interface AppServerTransport {
+  /** Live worker reclamation must also observe pending router/tool handlers. */
+  setIdleGuard?(guard: () => boolean): void;
   /** Omitted means the existing durable replay contract. */
   readonly capabilities?: AppServerTransportCapabilities;
   connect(): Promise<void>;

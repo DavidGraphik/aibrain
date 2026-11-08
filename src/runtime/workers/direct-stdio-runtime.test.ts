@@ -347,3 +347,149 @@ it("sponsored target transport blocks owner Apps on warm workers and stops after
   await expect(t.send({clientRequestId:"revoked",kind:"rpc-request",rpc:{id:"revoked",method:"thread/read",params:{threadId:"x"}}})).rejects.toThrow(modelAuth.ModelAuthUnavailableError);
   expect((await t.health()).pendingRequests).toBe(0);
 });
+
+async function idleFixture(userId?: string) {
+  const f = await context(userId);
+  await writeFile(f.child, `import{createInterface}from'node:readline';import{readFileSync,writeFileSync,existsSync}from'node:fs';
+  let pendingQuick;const processes=new Set(),send=rpc=>process.stdout.write(JSON.stringify(rpc)+'\\n');
+  createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params??{};
+    if(r.method==='thread/read'){
+      if(p.threadId==='release-quick-response'){pendingQuick?.();pendingQuick=null;}
+      if(p.threadId==='native-active')send({method:'thread/status/changed',params:{threadId:'native-thread',status:{type:'active',activeFlags:[]}}});
+      if(p.threadId==='native-idle')send({method:'thread/status/changed',params:{threadId:'native-thread',status:{type:'idle'}}});
+      if(p.threadId==='callback')send({id:'tool-request',method:'item/tool/call',params:{threadId:'tool-thread',turnId:'tool-turn',callId:'tool-call',namespace:'synthetic',tool:'hold',arguments:{}}});
+      if(p.threadId==='release-callback')send({method:'thread/name/updated',params:{threadId:'ack-thread',threadName:'released'}});
+      if(p.threadId==='hang')return;
+      send({id:r.id,result:{thread:{id:p.threadId,turns:[]}}});
+    }else if(r.method==='thread/resume'){
+      send({id:r.id,result:{thread:{id:'saved-native-thread',turns:JSON.parse(readFileSync('native-history.json','utf8'))}}});
+    }else if(r.method==='turn/start'){
+      const turn={id:'saved-turn',status:'completed',error:null,items:[]};
+      writeFileSync('native-history.json',JSON.stringify([turn]));send({id:r.id,result:{turn}});
+    }else if(r.method==='process/spawn'){
+      if(processes.has(p.processHandle))send({id:r.id,error:{code:-32600,message:'Process handle is already active'}});
+      else{
+        processes.add(p.processHandle);
+        if(p.command[0]==='quick-exit'){
+          processes.delete(p.processHandle);send({method:'process/exited',params:{processHandle:p.processHandle,exitCode:0,stdout:'',stdoutCapReached:false,stderr:'',stderrCapReached:false}});
+          pendingQuick=()=>send({id:r.id,result:{}});
+        }else send({id:r.id,result:{}});
+      }
+    }else if(r.method==='process/kill'){processes.delete(p.processHandle);send({method:'process/exited',params:{processHandle:p.processHandle,exitCode:0,stdout:'',stdoutCapReached:false,stderr:'',stderrCapReached:false}});send({id:r.id,result:{}});}
+  });`);
+  let clock = 0;
+  const t = transport(f, { idleTimeoutMs: 120_000, now: () => clock });
+  const router = new AppServerRpcRouter(t);
+  const read = (id: string) => router.request(request(id, id).rpc as never, 1000);
+  const advance = () => { clock += 120_001; };
+  return { ...f, t, router, read, advance };
+}
+
+it('reclaims a truly idle employee process, preserves native history, and reopens by resume without another turn/start', async () => {
+  const f = await idleFixture(), other = await idleFixture('22222222-2222-4222-8222-222222222222');
+  try {
+    await f.router.request({id:'one-intent',method:'turn/start',params:{threadId:'saved-native-thread',input:[]}} as never, 1000);
+    await other.read('independent');
+    f.advance();
+    await vi.waitFor(() => expect(f.t.reclaimIdle()).toBe(true));
+    await f.t.close();
+    expect(await f.t.health()).toMatchObject({state:'closed'});
+    expect(await other.t.health()).toMatchObject({healthy:true});
+    const second = transport(f, { idleTimeoutMs: 0 }), reopened = new AppServerRpcRouter(second);
+    try {
+      expect(await reopened.request({id:'resume-only',method:'thread/resume',params:{threadId:'saved-native-thread'}} as never,1000))
+        .toMatchObject({thread:{id:'saved-native-thread',turns:[{id:'saved-turn',status:'completed'}]}});
+      expect(JSON.parse(await readFile(path.join(f.ctx.workspace,'native-history.json'),'utf8'))).toHaveLength(1);
+    } finally { await reopened.close(); }
+  } finally { await f.router.close(); await other.router.close(); }
+});
+
+it('never reclaims an active native thread even when no local turn registration remains', async () => {
+  const f = await idleFixture();
+  try {
+    await f.read('native-active'); f.advance();
+    expect(f.t.reclaimIdle()).toBe(false);
+    await f.read('native-idle'); f.advance();
+    await vi.waitFor(() => expect(f.t.reclaimIdle()).toBe(true));
+  } finally { await f.router.close(); }
+});
+
+it('retains a disposed turn until its asynchronous provider tool actually finishes', async () => {
+  const f = await idleFixture(); let release!: () => void;
+  const tool = vi.fn(() => new Promise<never>(resolve => { release = () => resolve({success:true,contentItems:[]} as never); }));
+  const turn = f.router.registerTurn('tool-thread','tool-local',{onNotification(){},onFailure(){},onServerRequest:tool});
+  turn.bindRuntimeTurn('tool-turn');
+  try {
+    await f.read('callback'); await vi.waitFor(() => expect(tool).toHaveBeenCalledOnce());
+    turn.dispose(); f.advance(); expect(f.t.reclaimIdle()).toBe(false);
+    release(); await f.read('release-callback'); f.advance();
+    await vi.waitFor(() => expect(f.t.reclaimIdle()).toBe(true));
+  } finally { turn.dispose(); await f.router.close(); }
+});
+
+it('does not reclaim a pending/uncertain RPC or an independently spawned live job', async () => {
+  const f = await idleFixture(), pending = await idleFixture('22222222-2222-4222-8222-222222222222');
+  try {
+    await f.router.request({id:'job',method:'process/spawn',params:{processHandle:'live-job',command:['synthetic'],cwd:f.ctx.workspace}} as never,1000);
+    f.advance(); expect(f.t.reclaimIdle()).toBe(false);
+    await f.router.request({id:'exit-job',method:'process/kill',params:{processHandle:'live-job'}} as never,1000);
+    f.advance(); await vi.waitFor(() => expect(f.t.reclaimIdle()).toBe(true));
+    const uncertain = pending.read('hang').catch(() => undefined);
+    await vi.waitFor(async () => expect((await pending.t.health()).pendingRequests).toBe(1));
+    pending.advance(); expect(pending.t.reclaimIdle()).toBe(false);
+    await pending.router.close(); await uncertain;
+  } finally { await f.router.close(); await pending.router.close(); }
+});
+
+it('retains the original live job after sequential and concurrently pending duplicate spawn rejections', async () => {
+  const f = await idleFixture();
+  const spawnJob = (id: string) => f.router.request({id,method:'process/spawn',params:{processHandle:'same-live-handle',command:['synthetic'],cwd:f.ctx.workspace}} as never,1000);
+  try {
+    await spawnJob('original');
+    await expect(spawnJob('duplicate')).rejects.toThrow('already active');
+    const duplicates = await Promise.allSettled([spawnJob('concurrent-duplicate-a'),spawnJob('concurrent-duplicate-b')]);
+    expect(duplicates.map(result => result.status)).toEqual(['rejected','rejected']);
+    f.advance(); expect(f.t.reclaimIdle()).toBe(false);
+    await f.router.request({id:'actual-job-exit',method:'process/kill',params:{processHandle:'same-live-handle'}} as never,1000);
+    f.advance(); await vi.waitFor(() => expect(f.t.reclaimIdle()).toBe(true));
+  } finally { await f.router.close(); }
+});
+
+it('does not resurrect a quick process after exit precedes its spawn response, and protects a reused handle generation', async () => {
+  const f = await idleFixture(), reused = await idleFixture('22222222-2222-4222-8222-222222222222');
+  const spawnJob = (fixture: typeof f, id: string, command: string) => fixture.router.request({id,method:'process/spawn',params:{processHandle:'reusable-handle',command:[command],cwd:fixture.ctx.workspace}} as never,1000);
+  try {
+    const quick = spawnJob(f,'quick-original','quick-exit');
+    await f.read('release-quick-response'); await quick;
+    f.advance(); await vi.waitFor(() => expect(f.t.reclaimIdle()).toBe(true));
+    const first = spawnJob(reused,'old-generation','quick-exit');
+    await reused.read('exit-notification-barrier');
+    await spawnJob(reused,'new-generation','synthetic');
+    await reused.read('release-quick-response');
+    await first;
+    await expect(spawnJob(reused,'duplicate-new-generation','synthetic')).rejects.toThrow('already active');
+    reused.advance(); expect(reused.t.reclaimIdle()).toBe(false);
+    await reused.router.request({id:'new-generation-exit',method:'process/kill',params:{processHandle:'reusable-handle'}} as never,1000);
+    reused.advance(); await vi.waitFor(() => expect(reused.t.reclaimIdle()).toBe(true));
+  } finally { await f.router.close(); await reused.router.close(); }
+});
+
+it('does not reclaim a registered foreground/background turn or a worker before its grace expires', async () => {
+  const f = await idleFixture();
+  try {
+    await f.read('idle'); expect(f.t.reclaimIdle()).toBe(false);
+    const turn=f.router.registerTurn('active-thread','active-local',{onNotification(){},onFailure(){},onServerRequest:vi.fn()});
+    f.advance(); expect(f.t.reclaimIdle()).toBe(false);
+    turn.dispose(); await vi.waitFor(() => expect(f.t.reclaimIdle()).toBe(true));
+  } finally { await f.router.close(); }
+});
+
+it('automatically reclaims the idle process after the configured grace without a logout or a maintenance caller', async () => {
+  const f = await idleFixture();
+  const t = transport(f, { idleTimeoutMs: 40 }), router = new AppServerRpcRouter(t);
+  try {
+    await router.request(request('timer-only').rpc as never,1000);
+    await vi.waitFor(async () => expect((await t.health()).state).toBe('closed'),{timeout:1500,interval:20});
+    await t.close();
+  } finally { await router.close(); }
+});

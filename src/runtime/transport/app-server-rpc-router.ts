@@ -166,6 +166,9 @@ export class AppServerRpcRouter {
     this.onRequestMetric = options.onRequestMetric ?? null;
     this.onNotification = options.onNotification;
     this.onTurnBound = options.onTurnBound;
+    transport.setIdleGuard?.(() => !this.closed && !this.fatalError && this.turns.size === 0
+      && this.pending.size === 0 && this.timedOut.size === 0 && this.reservedRequestIds.size === 0
+      && this.inFlightEvents.size === 0 && this.scopeChains.size === 0);
   }
 
   start() {

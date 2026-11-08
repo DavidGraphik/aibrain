@@ -28,6 +28,12 @@ const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const MAX_OUTPUT_EVENTS = 4096;
 const MAX_IN_FLIGHT_REQUESTS = 512;
 
+export function configuredWorkerIdleTimeoutMs(value = process.env.AIBRAIN_CODEX_WORKER_IDLE_MS): number {
+  if (value === undefined) return 120_000;
+  if (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > 2_147_483_647) throw new Error("Worker idle timeout is invalid.");
+  return Number(value);
+}
+
 export class LiveStdioClosedError extends Error { readonly code = "TRANSPORT_LIVE_CLOSED"; }
 export class LiveStdioDuplicateSubmissionError extends Error { readonly code = "TRANSPORT_LIVE_DUPLICATE_SUBMISSION"; }
 
@@ -41,6 +47,8 @@ export type DirectStdioWorkerRuntimeFactoryOptions = {
   quotaToolPrivacy?: boolean;
   now?: () => number;
   runtimeInstanceId?: string;
+  /** Zero disables reclamation. Only quiescent live workers are eligible. */
+  idleTimeoutMs?: number;
 };
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -88,8 +96,21 @@ export class DirectStdioTransport implements AppServerTransport {
   private lineBytes = 0;
   private lastMessageAt: string | null = null;
   private connectedAt: string | null = null;
+  private idleGuard: (() => boolean) | null = null;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastActivity = 0;
+  private readonly nativeWork = new Set<string>();
+  private readonly completedTurns = new Map<string, string>();
+  private readonly nativeRequests = new Map<string, { method: string; threadId?: string; processHandle?: string; reservedProcess?: boolean }>();
+  private readonly processWorkOwners = new Map<string, string>();
+  private readonly exitedProcessRequests = new Set<string>();
+  private submissions = 0;
+  private ownerRefreshes = 0;
+  private readonly idleTimeoutMs: number;
 
   constructor(private readonly baseContext: WorkerLaunchContext, private readonly options: DirectStdioWorkerRuntimeFactoryOptions = {}) {
+    this.idleTimeoutMs = options.idleTimeoutMs ?? configuredWorkerIdleTimeoutMs();
+    if (!Number.isSafeInteger(this.idleTimeoutMs) || this.idleTimeoutMs < 0 || this.idleTimeoutMs > 2_147_483_647) throw new Error("Worker idle timeout is invalid.");
     this.context = { ...baseContext, transportAudit: workerTransportAuditRoot(baseContext.transportAudit, options.runtimeInstanceId) };
     if (options.apiKeyAuth && (options.sharedAuth || options.authForContext)) throw new Error("Model authentication modes cannot be mixed.");
     const personal = options.authForContext?.(baseContext);
@@ -97,6 +118,92 @@ export class DirectStdioTransport implements AppServerTransport {
     if (personal && options.sharedAuth || options.apiKeyAuth && (personal || options.sharedAuth)) throw new Error("Personal authentication cannot share an installation credential.");
     this.auth = new PrivateStdioAuthLane(personal ?? options.sharedAuth, rpc => this.writePrivate(rpc), () => this.fail(), options.apiKeyAuth);
     this.ownsProcessGroup = !options.processFactory && process.platform !== "win32";
+  }
+  setIdleGuard(guard: () => boolean) { this.idleGuard = guard; }
+  private activity() {
+    this.lastActivity = (this.options.now ?? Date.now)();
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    if (this.idleTimeoutMs && !this.retired) {
+      this.idleTimer = setTimeout(() => {
+        this.idleTimer = null;
+        if (!this.reclaimIdle()) this.activity();
+      }, this.idleTimeoutMs);
+      this.idleTimer.unref?.();
+    }
+  }
+  /** Synchronous check-and-retire: no send can enter between this fence and close. */
+  reclaimIdle(): boolean {
+    if (!this.idleTimeoutMs || !this.connected || this.retired || this.failure || !this.idleGuard
+      || (this.options.now ?? Date.now)() - this.lastActivity < this.idleTimeoutMs
+      || this.submissions || this.ownerRefreshes || this.auth.busy || this.pendingRequests.size || this.serverRequests.size
+      || this.pendingInputBytes || this.queue.length || this.lineBytes || this.nativeWork.size || !this.idleGuard()) return false;
+    void this.close().catch(() => undefined);
+    return true;
+  }
+
+  private observeNative(message: AppServerEvent["message"]) {
+    if (message.kind === "rpc-response") {
+      const key = JSON.stringify(message.rpc.id), request = this.nativeRequests.get(key);
+      this.nativeRequests.delete(key);
+      if (!request) return;
+      this.nativeWork.delete(`intent:${key}`);
+      if ("result" in message.rpc && record(message.rpc.result)) {
+        const result = message.rpc.result;
+        if (request.method === "process/spawn" && request.processHandle) {
+          const exited = this.exitedProcessRequests.delete(key), owner = this.processWorkOwners.get(request.processHandle);
+          if (!exited && (!owner || owner === key)) {
+            this.nativeWork.add(`process:${request.processHandle}`);
+            this.processWorkOwners.set(request.processHandle, key);
+          }
+        }
+        if (record(result.thread) && typeof result.thread.id === "string" && record(result.thread.status)) {
+          if (result.thread.status.type === "active") this.nativeWork.add(`thread:${result.thread.id}`);
+          // Existing idle observations cannot clear a separately observed turn or job.
+          else if (["idle", "notLoaded"].includes(String(result.thread.status.type))) this.nativeWork.delete(`thread:${result.thread.id}`);
+        }
+        if (request.method === "turn/start" && request.threadId && record(result.turn)
+          && typeof result.turn.id === "string" && this.completedTurns.get(request.threadId) !== result.turn.id
+          && !["completed", "failed", "interrupted"].includes(String(result.turn.status))) {
+          this.nativeWork.add(`turn:${request.threadId}:${result.turn.id}`);
+        }
+      } else if ("error" in message.rpc && request.method === "process/spawn" && request.processHandle
+        && request.reservedProcess && this.processWorkOwners.get(request.processHandle) === key) {
+        this.nativeWork.delete(`process:${request.processHandle}`);
+        this.processWorkOwners.delete(request.processHandle);
+      }
+      this.exitedProcessRequests.delete(key);
+      return;
+    }
+    if (message.kind !== "rpc-notification" || !record(message.rpc.params)) return;
+    const { method, params } = message.rpc;
+    if (method === "thread/started" && record(params.thread) && record(params.thread.status)
+      && params.thread.status.type === "active") this.nativeWork.add(`thread:${params.thread.id}`);
+    if (method === "thread/status/changed" && record(params.status)) {
+      const key = `thread:${params.threadId}`;
+      if (params.status.type === "active") this.nativeWork.add(key);
+      else if (["idle", "notLoaded"].includes(String(params.status.type))) this.nativeWork.delete(key);
+    }
+    if ((method === "turn/started" || method === "turn/completed") && record(params.turn)) {
+      const key = `turn:${params.threadId}:${params.turn.id}`;
+      if (method === "turn/started") this.nativeWork.add(key); else this.nativeWork.delete(key);
+      if (method === "turn/completed") this.completedTurns.set(params.threadId, params.turn.id);
+    }
+    if ((method === "item/started" || method === "item/completed") && record(params.item)) {
+      const key = `item:${params.threadId}:${params.turnId}:${params.item.id}`;
+      if (method === "item/started" || "status" in params.item && params.item.status === "inProgress") this.nativeWork.add(key); else this.nativeWork.delete(key);
+    }
+    if ((method === "hook/started" || method === "hook/completed") && record(params.run)) {
+      const key = `hook:${params.threadId}:${params.run.id}`;
+      if (method === "hook/started") this.nativeWork.add(key); else this.nativeWork.delete(key);
+    }
+    if (method === "thread/realtime/started") this.nativeWork.add(`realtime:${params.threadId}`);
+    if (method === "thread/realtime/closed") this.nativeWork.delete(`realtime:${params.threadId}`);
+    if (method === "process/exited") {
+      const owner = this.processWorkOwners.get(params.processHandle);
+      if (owner && this.nativeRequests.has(owner)) this.exitedProcessRequests.add(owner);
+      this.nativeWork.delete(`process:${params.processHandle}`);
+      this.processWorkOwners.delete(params.processHandle);
+    }
   }
 
   connect(): Promise<void> {
@@ -151,6 +258,7 @@ export class DirectStdioTransport implements AppServerTransport {
     await this.auth.bootstrap();
     if (this.retired || this.failure) throw new LiveStdioClosedError("Worker startup was cancelled.");
     this.connected = true; this.connectedAt = this.now();
+    this.activity();
   }
 
   private now() { return new Date((this.options.now ?? Date.now)()).toISOString(); }
@@ -172,16 +280,20 @@ export class DirectStdioTransport implements AppServerTransport {
   }
   private receiveLine(line: string, bytes: number) {
     if (this.retired) return;
+    this.activity();
     if (this.auth.consume(line)) return;
     const value = parseAppServerStdoutJson(line);
     // Preserve the existing private owner refresh boundary; no token event.
     if (installationOwnerAuthSocket(this.context.installationId) && record(value) && value.method === "account/chatgptAuthTokens/refresh") {
       const previous = record(value.params) && typeof value.params.previousAccountId === "string" ? value.params.previousAccountId : undefined;
+      this.ownerRefreshes++;
       void readInstallationOwnerAccess(this.context.installationId, previous).then(tokens => this.writePrivate({ id: value.id, result: tokens }))
-        .catch(() => this.writePrivate({ id: value.id, error: { code: -32000, message: "Installation owner authentication is unavailable." } }).catch(() => undefined));
+        .catch(() => this.writePrivate({ id: value.id, error: { code: -32000, message: "Installation owner authentication is unavailable." } }).catch(() => undefined))
+        .finally(() => { this.ownerRefreshes--; });
       return;
     }
     const message = parseAppServerOutput(value);
+    this.observeNative(message);
     if (message.kind === "rpc-response") this.pendingRequests.delete(JSON.stringify(message.rpc.id));
     if (message.kind === "rpc-notification") assertCodexServerNotification(message.rpc);
     if (message.kind === "rpc-request") {
@@ -202,6 +314,12 @@ export class DirectStdioTransport implements AppServerTransport {
   }
 
   async send(message: AppServerRequest) {
+    this.activity();
+    this.submissions++;
+    try { await this.sendActive(message); }
+    finally { this.submissions--; this.activity(); }
+  }
+  private async sendActive(message: AppServerRequest) {
     validateAppServerRequest(message);
     if (this.options.apiKeyAuth && "method" in message.rpc) assertServerModelRpc(message.rpc.method, "params" in message.rpc ? message.rpc.params : undefined);
     if (this.options.personalTestAuth) {
@@ -222,6 +340,21 @@ export class DirectStdioTransport implements AppServerTransport {
     // never queue different responses to the same outstanding request.
     if (message.kind === "rpc-response") this.serverRequests.delete(message.rpc.id);
     if (requestKey !== null) this.pendingRequests.add(requestKey);
+    if (message.kind === "rpc-request") {
+      const params: Record<string, unknown> = "params" in message.rpc && record(message.rpc.params) ? message.rpc.params : {};
+      const reservedProcess = message.rpc.method === "process/spawn" && typeof params.processHandle === "string"
+        && !this.nativeWork.has(`process:${params.processHandle}`);
+      this.nativeRequests.set(requestKey!, { method: message.rpc.method,
+        ...(typeof params.threadId === "string" ? { threadId: params.threadId } : {}),
+        ...(typeof params.processHandle === "string" ? { processHandle: params.processHandle } : {}),
+        ...(reservedProcess ? { reservedProcess: true } : {}),
+      });
+      if (["turn/start", "turn/steer", "process/spawn"].includes(message.rpc.method)) this.nativeWork.add(`intent:${requestKey}`);
+      if (reservedProcess && typeof params.processHandle === "string") {
+        this.nativeWork.add(`process:${params.processHandle}`);
+        this.processWorkOwners.set(params.processHandle, requestKey!);
+      }
+    }
     this.pendingInputBytes += bytes;
     const write = this.inputChain.then(async () => {
       if (this.options.personalTestAuth) await assertPersonalModelTest(this.baseContext);
@@ -261,6 +394,8 @@ export class DirectStdioTransport implements AppServerTransport {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.retired = true; this.auth.close();
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
     for (const waiter of this.waiters.splice(0)) waiter.resolve({ value: undefined, done: true });
     this.closePromise = (async () => {
       await this.startPromise?.catch(() => undefined);
