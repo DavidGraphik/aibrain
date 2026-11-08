@@ -490,6 +490,21 @@ describe('original attachment references and readable private mail review',()=>{
   const result=await prepare(f,'mail_action',email,{onFile,fetcher:async()=>Response.json({data:{status:'prepared',preview:{from:'manager-alias@example.invalid',to:[{name:'QA',address:'qa@example.test'}],cc:[],bcc:[],replyTo:[],subject:'Final QA',body:{contentType:'html',content:'<p>Complete <strong>final</strong> body</p><script>unwanted()</script>'},attachments:[{name:'original.pdf',size:123,contentType:'application/pdf'}]},original:file}})});
   expect(result.success).toBe(true);expect(onFile).toHaveBeenCalledWith(file,false);const preview=f.onReview.mock.calls[0][1];for(const text of ['**De:** manager-alias@example.invalid','**Para:** QA <qa@example.test>','**CC:**','**CCO:**','**Asunto:** Final QA','Complete final body','original.pdf','/connector-files/private-eml'])expect(preview).toContain(text);expect(preview).not.toContain('<script>');expect(preview).not.toContain('unwanted()');expect(JSON.stringify(result)).not.toContain(file.content_base64);expect(f.phases).toEqual([]);
  });
+ it('preserves typed provider rejection status on read errors without reclassifying other failures',async()=>{
+  const f=await fixture();
+  const read=async(payload:unknown,status=502)=>handleTrinalumTool(params('attio_api',{command:'read',request:{method:'GET',path:'/tasks/12345678-1234-4234-8234-123456789012'}}),{...f.context,fetcher:async()=>Response.json(payload,{status})});
+  for(const status of [400,404,409,422]){
+   const result=await read({error:'PROVIDER_REQUEST_REJECTED',providerStatus:status});
+   expect(result.success).toBe(false);expect(body(result)).toMatchObject({error:'PROVIDER_REQUEST_REJECTED',status});
+  }
+  for(const providerStatus of [undefined,null,'404',true,401,403,429,500])expect(body(await read({error:'PROVIDER_REQUEST_REJECTED',providerStatus})).status).toBe(502);
+  const extra=await read({error:'PROVIDER_REQUEST_REJECTED',providerStatus:404,message:'private bearer value /server/private/path'});expect(body(extra).status).toBe(404);expect(JSON.stringify(extra)).not.toContain('private bearer');expect(JSON.stringify(extra)).not.toContain('/server/private');
+  for(const error of ['PROVIDER_ACCESS_DENIED','PROVIDER_RATE_LIMITED'])expect(body(await read({error,providerStatus:404}))).toMatchObject({error,status:502});
+  expect(body(await read({error:'ACCESS_DENIED',providerStatus:404},403))).toMatchObject({status:403});
+  expect(body(await read({error:'PROVIDER_REQUEST_REJECTED',providerStatus:404},503))).toMatchObject({status:503});
+  const malformed=await handleTrinalumTool(params('attio_api',{command:'read',request:{method:'GET',path:'/tasks/12345678-1234-4234-8234-123456789012'}}),{...f.context,fetcher:async()=>new Response('HTTP404 not JSON',{status:502})});
+  expect(body(malformed)).toMatchObject({error:'CONNECTOR_REQUEST_FAILED',status:502});
+ });
  it('preserves fixed safe provider/schema error codes and hides arbitrary backend messages during preparation',async()=>{
   for(const error of ['SIBEMA_TARIFF_INVALID_ARGUMENTS','SIBEMA_TARIFF_REMARKS_TOO_LONG','MAIL_API_INVALID','ATTIO_API_INVALID_ARGUMENTS','SIBEMA_API_INVALID_ARGUMENTS','PROVIDER_ACCESS_DENIED','PROVIDER_RATE_LIMITED','PROVIDER_REQUEST_REJECTED']){const f=await fixture();const result=await prepare(f,'mail_action',email,{fetcher:async()=>Response.json({error,message:'private bearer credential /server/private/path',hint:'secret backend text'},{status:422})});expect(result.success).toBe(false);expect(body(result)).toMatchObject({error,status:422,hint:expect.any(String)});expect(JSON.stringify(result)).not.toContain('private bearer');expect(JSON.stringify(result)).not.toContain('/server/private');expect(JSON.stringify(result)).not.toContain('secret backend');}
  });

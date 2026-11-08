@@ -56,9 +56,18 @@ const mailFailureHints:Record<string,string>={
 class ConnectorRequestError extends Error {
   constructor(readonly code:string,readonly status:number){super(code);}
 }
+function connectorFailureStatus(body:Record<string,unknown>,status:number):number{
+  return status===502&&body.error==='PROVIDER_REQUEST_REJECTED'&&typeof body.providerStatus==='number'&&[400,404,409,422].includes(body.providerStatus)?body.providerStatus:status;
+}
 async function rejectedRequest(result:Response):Promise<never>{
   const raw=await result.text();
-  if(Buffer.byteLength(raw)<=8192){try{const body=JSON.parse(raw);if(typeof body.error==='string'&&Object.hasOwn(mailFailureHints,body.error))throw new ConnectorRequestError(body.error,result.status);}catch(error){if(error instanceof ConnectorRequestError)throw error;}}
+  if(Buffer.byteLength(raw)<=8192){try{
+    const body=JSON.parse(raw);
+    if(body&&typeof body==='object'&&!Array.isArray(body)&&typeof body.error==='string'&&Object.hasOwn(mailFailureHints,body.error)){
+      const status=connectorFailureStatus(body,result.status);
+      throw new ConnectorRequestError(body.error,status);
+    }
+  }catch(error){if(error instanceof ConnectorRequestError)throw error;}}
   throw new ConnectorRequestError('CONNECTOR_REQUEST_FAILED',result.status);
 }
 function validTaskDeadline(value: unknown): value is string {
@@ -203,7 +212,7 @@ export async function handleTrinalumTool(params: DynamicToolCallParams, context:
     });
     if (!result.ok){
       const text=await result.text();
-      if(Buffer.byteLength(text)<=8192){try{const body=JSON.parse(text);if(typeof body.error==='string'&&Object.hasOwn(mailFailureHints,body.error))return response(false,{error:body.error,status:result.status,hint:mailFailureHints[body.error]});}catch{}}
+      if(Buffer.byteLength(text)<=8192){try{const body=JSON.parse(text);if(body&&typeof body==='object'&&!Array.isArray(body)&&typeof body.error==='string'&&Object.hasOwn(mailFailureHints,body.error))return response(false,{error:body.error,status:connectorFailureStatus(body,result.status),hint:mailFailureHints[body.error]});}catch{}}
       return response(false, { error: "CONNECTOR_REQUEST_FAILED", status: result.status });
     }
     const body = await result.text();
