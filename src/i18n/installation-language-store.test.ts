@@ -1,12 +1,25 @@
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileInstallationLanguageStore } from "./installation-language-store";
 const roots: string[] = [];
 async function root() { const dir = await mkdtemp(path.join(os.tmpdir(), "aibrain-language-test-")); roots.push(dir); return dir; }
-afterEach(async () => { await Promise.all(roots.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 describe("installation language persistence", () => {
+  it.each(["ca", "es", "en"] as const)("uses configured %s only when no installation choice exists", async locale => {
+    vi.stubEnv("AIBRAIN_DEFAULT_UI_LOCALE", locale);
+    const dir = await root();
+    const store = new FileInstallationLanguageStore("company-a", dir);
+    expect(await store.read()).toBe(locale);
+    await store.write("es", "admin");
+    expect(await new FileInstallationLanguageStore("company-a", dir).read()).toBe("es");
+  });
+  it.each(["", "fr", "CA", " ca "])("rejects invalid configured locale %j", async locale => {
+    vi.stubEnv("AIBRAIN_DEFAULT_UI_LOCALE", locale);
+    expect(() => new FileInstallationLanguageStore("company-a", "/tmp/company-a")).toThrow("AIBRAIN_DEFAULT_UI_LOCALE");
+  });
+
   it("defaults to English and keeps each company's choice after a restart", async () => {
     const a = await root(), b = await root();
     const first = new FileInstallationLanguageStore("company-a", a);

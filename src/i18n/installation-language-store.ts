@@ -20,8 +20,12 @@ const schema = defineVersionedSchema<LanguageRecord>({
 /** Public presentation preference. The write caller must authorize the administrator. */
 export class FileInstallationLanguageStore {
   private readonly locks: ResourceLockManager;
+  private readonly defaultLocale: UiLocale;
   constructor(private readonly installationId: string, private readonly dataRoot: string) {
     if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(installationId) || !path.isAbsolute(dataRoot)) throw new Error("Invalid installation language boundary.");
+    const configured = process.env.AIBRAIN_DEFAULT_UI_LOCALE;
+    if (configured !== undefined && !isUiLocale(configured)) throw new Error("AIBRAIN_DEFAULT_UI_LOCALE must be ca, es or en.");
+    this.defaultLocale = configured ?? DEFAULT_UI_LOCALE;
     this.locks = new ResourceLockManager({ rootDirectory: path.join(dataRoot, "settings", "language-locks") });
   }
   private async validateDirectories(create: boolean) {
@@ -44,7 +48,7 @@ export class FileInstallationLanguageStore {
       if (record.installationId !== this.installationId) throw new Error("Language record belongs to another installation.");
       return record.locale;
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return DEFAULT_UI_LOCALE;
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return this.defaultLocale;
       throw error;
     }
   }

@@ -196,7 +196,7 @@ test('dated historical lookup uses the relevant live folder immediately instead 
  const archive='INBOX/Zeta/Acme/Aluminios Franco',folders=['INBOX',...Array.from({length:868},(_,i)=>'INBOX/Archive/'+i),archive];
  const f=await apiFixture(t,{last:50,folders,archive,subject:'Acme invoice INV1234 Aluminios Franco',receivedAt:'2026-10-21T08:00:00Z'});f.api.now=()=>Date.parse('2026-11-04T13:00:00Z');
  for(let uid=11;uid<=50;uid++){const other=source(uid);other.data.subject='Unrelated new mail';await save(f.api.config.dataDirectory,other);}
- const page=await f.api.read(mailbox,{operation:'search',query:'"Acme" "Franco" "INV1234" after:2026-10-19 before:2026-10-23',limit:10});
+ const page=await f.api.read(mailbox,{operation:'search',query:'"Acme" "Franco" "INV1234" after:2026-10-19 before:2026-10-23',limit:1});
  assert.equal(page.messages.length,1);assert.equal(page.messages[0].folder,archive);assert.equal(f.searches(),1);assert.equal(page.coverage.searchedThisPage,1);assert.equal(page.coverage.stopped,'matches_found');assert.equal(page.coverage.ownedSnapshots.readSnapshots,0);assert.equal(page.coverage.ownedSnapshots.stopped,'specific_company_folders_prefer_live');assert.equal(page.complete,false);assert.ok(page.cursor);
 });
 
@@ -244,8 +244,8 @@ test('generic latest received request starts live Inbox without source paging or
  const f=await apiFixture(t,{archive:'INBOX',folders:['Archive',...Array.from({length:45},(_,i)=>'Other/'+i),'INBOX']});let sources=0;f.api.store={getImapState(){sources++;throw Error('No source paging');}};
  const queries=[],search=f.imap.search;f.imap.search=async function(query){queries.push({path:this.path,query});return search.call(this,query);};
  const query='"confirmación" pedido',page=await f.api.read(mailbox,{operation:'search',query},{searchContext:{humanMessage:'Busca la última confirmación de pedido recibida con PDF; si no hay, la última oferta recibida con PDF.',sourceMessageId:'latest-human'}});
- assert.equal(sources,0);assert.equal(f.searches(),1);assert.equal(queries[0].path,'INBOX');assert.deepEqual(queries[0].query,{...compileImapQuery(query),uid:'1:10'});assert.equal(page.coverage.ownedSnapshots.stopped,'latest_received_prefers_live');assert.equal(page.coverage.totalFolders,47);assert.equal(page.complete,false);assert.ok(page.cursor);assert.equal(page.coverage.freshness.prioritizedInbox,'INBOX');assert.equal(page.coverage.freshness.globalLatestVerified,false);assert.match(page.warning,/not global chronological/);
- const state=f.api.uncursor(page.cursor);assert.equal(state.searchPlan.latestReceived,true);assert.equal(state.index,1);
+ assert.equal(sources,0);assert.equal(f.searches(),30);assert.equal(queries[0].path,'INBOX');assert.deepEqual(queries[0].query,{...compileImapQuery(query),uid:'1:10'});assert.equal(page.coverage.ownedSnapshots.stopped,'latest_received_prefers_live');assert.equal(page.coverage.totalFolders,47);assert.equal(page.complete,false);assert.ok(page.cursor);assert.equal(page.coverage.freshness.prioritizedInbox,'INBOX');assert.equal(page.coverage.freshness.globalLatestVerified,false);assert.match(page.warning,/not global chronological/);
+ const state=f.api.uncursor(page.cursor);assert.equal(state.searchPlan.latestReceived,true);assert.equal(state.index,30);
  let cursor=page.cursor,rest,rounds=0;do{rest=await f.api.read(mailbox,{operation:'search',query,cursor},{searchContext:{humanMessage:'Continúa',sourceMessageId:'next-human'}});cursor=rest.cursor;assert.ok(rest.coverage.searchedThisPage<=30);assert.equal(rest.coverage.totalFolders,47);assert.equal(rest.coverage.freshness.plan,'live_received_first');rounds++;assert.ok(rounds<=2);}while(cursor);assert.equal(rest.complete,true);assert.equal(f.searches(),47);
 });
 test('received-first honors configured Inbox and explicit folder while an outgoing latest request keeps its original hint behavior',async t=>{
@@ -258,7 +258,7 @@ test('bare reference uses authenticated human folder hints on the first SEARCH w
  const archive='INBOX/A-Aluminio/Teknik/A.Franco',f=await apiFixture(t,{archive,folders:['INBOX',...Array.from({length:80},(_,i)=>'Unrelated/'+i),archive]});let reads=0;
  f.api.store={getImapState(){reads++;throw Error('Do not read source state');}};const searches=[],original=f.imap.search;
  f.imap.search=async function(criteria){searches.push({path:this.path,criteria});return original.call(this,criteria);};
- const result=await f.api.read(mailbox,{operation:'search',query:'26EX1359',limit:20},{searchContext:humanContext});
+ const result=await f.api.read(mailbox,{operation:'search',query:'26EX1359',limit:1},{searchContext:humanContext});
  assert.equal(reads,0);assert.equal(f.searches(),1);assert.equal(searches[0].path,archive);assert.deepEqual(searches[0].criteria,{text:'26EX1359',uid:'1:10'});
  assert.equal(result.messages[0].id,reference(archive,9));assert.equal(result.coverage.ownedSnapshots.stopped,'human_context_folders_prefer_live');assert.equal(result.coverage.ownedSnapshots.readSnapshots,0);assert.deepEqual(result.coverage.planning,{humanContextForOrdering:true,literalQueryPreserved:true,referenceOmitted:false});
  assert.equal(result.complete,false);assert.ok(result.cursor);assert.equal(result.coverage.totalFolders,82);assert.equal(result.coverage.completedFolders,1);assert.ok(!JSON.stringify(searches).includes('since'));

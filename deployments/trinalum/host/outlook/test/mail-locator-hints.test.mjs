@@ -102,7 +102,7 @@ test('cold live continuation learns without retro-import; a new process/search t
  const f=await apiFixture(t),query='subject:"Acme 778899ZX" after:2001-01-01';let cursor,found;
  do{const p=await f.api().read(mailbox,{operation:'search',query,...(cursor?{cursor}:{})});cursor=p.cursor;if(p.messages.length)found=p;}while(!found&&cursor);
  assert.ok(f.searches.length>30);assert.equal(found.messages[0].id,ref(f.target));const coldCalls=f.searches.length;
- f.searches.length=0;f.flags();const warm=await f.api().read(mailbox,{operation:'search',query});
+ f.searches.length=0;f.flags();const warm=await f.api().read(mailbox,{operation:'search',query,limit:1});
  assert.equal(f.searches.length,1);assert.equal(f.searches[0].path,f.target);assert.deepEqual(f.searches[0].query,compileImapQuery(query));assert.equal(warm.messages[0].id,ref(f.target,7,'99'));assert.equal(warm.messages[0].isRead,true);assert.equal(warm.messages[0].originalVerified,false);
  assert.equal(warm.coverage.locatorFolderPriority.foldersPrioritized,1);assert.equal(warm.coverage.totalFolders,f.folders.length);assert.equal(warm.complete,false);assert.ok(coldCalls>f.searches.length);t.diagnostic(JSON.stringify({syntheticColdSearches:coldCalls,syntheticWarmSearches:f.searches.length,providerCriteriaUnchanged:true}));
 });
@@ -110,7 +110,7 @@ test('cold live continuation learns without retro-import; a new process/search t
 test('a strong company+reference hint orders a changed query but returns only a fresh provider match',async t=>{
  const f=await apiFixture(t),query='subject_reference:778899ZX Acme after:2001-01-01',compiled=compileImapQuery(query);
  await new MailLocatorHints(f.path,mailbox).remember(criteria,[match(f.target)],f.folders);
- f.flags();const page=await f.api().read(mailbox,{operation:'search',query},{searchContext:{humanMessage:'Busca el correo Acme 778899ZX',sourceMessageId:'human'}});
+ f.flags();const page=await f.api().read(mailbox,{operation:'search',query,limit:1},{searchContext:{humanMessage:'Busca el correo Acme 778899ZX',sourceMessageId:'human'}});
  assert.equal(f.searches.length,1);assert.equal(f.searches[0].path,f.target);const {uid,...providerCriteria}=f.searches[0].query;assert.equal(uid,'1:7');assert.deepEqual(providerCriteria,compiled);
  assert.equal(page.messages[0].id,ref(f.target,7,'99'));assert.equal(page.messages[0].originalVerified,false);assert.equal(page.complete,false);assert.equal(page.coverage.totalFolders,f.folders.length);
  const foreign=new MailLocatorHints(f.path,other);assert.deepEqual(await foreign.folders(compiled,f.folders),[]);
@@ -126,7 +126,7 @@ test('cold 870-folder search prioritizes a punctuation/accent-normalized company
  const imap={mailbox:{uidValidity:'99',uidNext:8},async list(){return folders.map(path=>({path}));},async getMailboxLock(folder,options){assert.equal(options.readOnly,true);this.path=folder;this.mailbox={uidValidity:'99',uidNext:8};return {release(){}};},async search(query){searches.push({path:this.path,query:structuredClone(query)});return this.path===target?[7]:[];},async fetchOne(uid){return {uid,envelope:{subject:'Fictalco 87654321-X:987654',messageId:'<current@example.test>'},internalDate:new Date('2026-11-04T00:00:00Z'),size:123,flags:new Set()};}};
  const key='11'.repeat(32),credential={password_encrypted:encryptToken('synthetic',key),folders_json:JSON.stringify({inbox:'INBOX'})},config={dataDirectory:path,mailboxes:[{address:mailbox,name:'Owner'}],tokenEncryptionKey:key},client={requiredCredential(){return credential;},async withImapPassword(_owner,_pass,fn){return fn(imap);}};
  const query='subject_reference:"87654321-X:987654" after:2026-11-03 before:2026-11-06 Fictalco',api=new MailApi({config,client,signatureProvider:null});
- const page=await api.read(mailbox,{operation:'search',query},{searchContext:{humanMessage:'Busca el correo de Fictalco con la referencia 87654321-X:987654',sourceMessageId:'human'}});
+ const page=await api.read(mailbox,{operation:'search',query,limit:1},{searchContext:{humanMessage:'Busca el correo de Fictalco con la referencia 87654321-X:987654',sourceMessageId:'human'}});
  assert.equal(searches.length,1);assert.equal(searches[0].path,target);const {uid,...providerCriteria}=searches[0].query;assert.equal(uid,'1:7');assert.deepEqual(providerCriteria,compileImapQuery(query));
  assert.equal(page.messages[0].id,ref(target,7,'99'));assert.equal(page.complete,false);assert.equal(page.coverage.totalFolders,870);assert.ok(page.cursor);
  assert.deepEqual(orderingMailSearchFoldersV2(compileImapQuery('correo'),folders),[]);
@@ -185,7 +185,7 @@ test('synthetic warm lookup and write overhead stays bounded without a provider 
 
 test('a warm signed plan survives metadata expiry/replacement and preserves deduplication position',async t=>{
  const f=await apiFixture(t),query='subject:"Acme 778899ZX" after:2001-01-01',api=f.api(),hints=new MailLocatorHints(f.path,mailbox);await hints.remember(criteria,[match(f.target)],f.folders);
- const first=await api.read(mailbox,{operation:'search',query}),before=api.uncursor(first.cursor);assert.equal(before.index,1);assert.equal(first.messages.length,1);
+ const first=await api.read(mailbox,{operation:'search',query,limit:1}),before=api.uncursor(first.cursor);assert.equal(before.index,1);assert.equal(first.messages.length,1);
  const value=JSON.parse(await readFile(hints.file));value.entries.forEach(e=>{e.learnedAt-=MAIL_LOCATOR_HINT_LIMITS.ttlMs;e.expiresAt-=MAIL_LOCATOR_HINT_LIMITS.ttlMs;});await writeFile(hints.file,JSON.stringify(value));
  f.searches.length=0;const next=await api.read(mailbox,{operation:'search',query,cursor:first.cursor},{searchContext:{humanMessage:'continue',sourceMessageId:'later'}}),after=api.uncursor(next.cursor);
  assert.deepEqual(after.locatorPlan,before.locatorPlan);assert.equal(after.index,31);assert.deepEqual(after.seenKeys,before.seenKeys);assert.equal(next.messages.length,0);assert.equal(f.searches.some(s=>s.path===f.target),false);
@@ -193,5 +193,5 @@ test('a warm signed plan survives metadata expiry/replacement and preserves dedu
 
 test('OR criteria remain byte-for-byte provider criteria with warm ordering and no cache-to-result authority',async t=>{
  const f=await apiFixture(t),query='subject:Acme OR from:Zenith',compiled=compileImapQuery(query);await new MailLocatorHints(f.path,mailbox).remember(compiled,[match(f.target)],f.folders);
- const page=await f.api().read(mailbox,{operation:'search',query});assert.equal(f.searches.length,1);assert.deepEqual(f.searches[0].query,compiled);assert.equal(page.messages[0].originalVerified,false);assert.equal(page.coverage.locatorFolderPriority.metadataNotResult,true);
+ const page=await f.api().read(mailbox,{operation:'search',query,limit:1});assert.equal(f.searches.length,1);assert.deepEqual(f.searches[0].query,compiled);assert.equal(page.messages[0].originalVerified,false);assert.equal(page.coverage.locatorFolderPriority.metadataNotResult,true);
 });

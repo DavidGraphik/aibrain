@@ -236,10 +236,31 @@ export function explicitPartialAttachmentReview(message: string, humanInput = tr
   return clauses.some(clause=>scoped.test(clause));
 }
 
+/** Inspecting one source is not an instruction to review every attached PDF. */
+export function explicitFullAttachmentReview(message: string, humanInput = true) {
+  if (!humanInput) return false;
+  const direct = normalizedText(message.split(/\n\s*(?:MAIL_BATCH_JSON|LIVE_[A-Z_]+|RESPONSE_WATCHDOG_BATCH_JSON|SIBEMA_BATCH_JSON)\b/iu)[0]!)
+    .replace(/```[\s\S]*?```|`[^`]*`|«[^»]*»|“[^”]*”|"[^"\n]*"/gu, " ")
+    .split("\n").filter(line => !/^\s*(?:>|\{|MAIL_BATCH_JSON|LIVE_[A-Z_]+|RESPONSE_WATCHDOG_BATCH_JSON|SIBEMA_BATCH_JSON)/iu.test(line)).join(" ");
+  // Asking whether translation is possible is not asking for a translation.
+  const instruction = direct.replace(/\b(?:explica|indica|dime|digues|diu|tell me|explain)\s+(?:si|if|whether)\s+(?:pots|podries|puedes|podrias|can|could)(?:\s+you)?\s+(?:traducir|traduir|translate)(?:lo|la|it)?\b/gu, " ");
+  if (explicitTranslationRequest(instruction)) return true;
+  const clauses = instruction.split(/[.!?;]\s*/u);
+  return clauses.some(clause => {
+    if (/\b(?:no|not|don't|no facis)\b.{0,50}\b(?:revis\w*|review|inspect\w*|analiz\w*|lee|llegeix|read)\b/u.test(clause)) return false;
+    const action = /\b(?:revisa|revisar|revisio|revision|analiza|inspecciona|llegeix|analitza|review|inspect|read|lee)\b/u.test(clause);
+    const whole = /\b(?:(?:todas?|todos?|totes|tots|all|every)\s+(?:(?:las|los|les|els|sus|the|its)\s+)?(?:paginas?|pagines?|pages?|documentos?|documents?|pdfs?|originales?|originals?|adjuntos?|attachments?)|(?:todo|toda|tot|tota|entire|whole)\s+(?:(?:el|la|the)\s+)?(?:documento|document|pdf)|(?:revision|revisio|review)(?:\s+visual)?\s+(?:complet[oa]?|full)|(?:full|complete)(?:\s+visual)?\s+review|el resto|la resta|the rest|remaining pages)\b/u.test(clause);
+    if (action && whole) return true;
+    // Unqualified document review is full; a focused page/section lookup is not.
+    return /\b(?:revisa|analiza|inspecciona|analitza|review|inspect|lee|llegeix|read)\s+(?:(?:visualmente|visualment|visually)\s+)?(?:(?:el|la|los|las|este|esta|estos|estas|the|this|these|el meu|aquest)\s+)?(?:(?:attached|adjunto|adjunta|adjunts?|adjuntes)\s+)?(?:documentos?|documents?|pdfs?|originales?|originals?|adjuntos?|attachments?)\b/u.test(clause) &&
+      !/\b(?:paginas?|pagines?|pages?|apartado|seccion|section|posicion|inicio|principio|final|beginning|end)\b/u.test(clause);
+  });
+}
+
 /** Foreground chat carries an automation-management session too; only the
  * trusted execution mode distinguishes a user's request from background work. */
 export function attachmentReviewIntent(message: string, backgroundExecution: boolean) {
   const humanInput = !backgroundExecution;
   return { translationRequested: explicitTranslationRequest(message, humanInput),
-    partial: explicitPartialAttachmentReview(message, humanInput), required: backgroundExecution };
+    partial: humanInput && (explicitPartialAttachmentReview(message, humanInput) || !explicitFullAttachmentReview(message, humanInput)), required: backgroundExecution };
 }

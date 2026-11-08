@@ -1,25 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {MailApi} from '../lib/mail-api.mjs';
+import {MailApi,compileImapQuery} from '../lib/mail-api.mjs';
+import {MailLocatorHints} from '../lib/mail-owned-search.mjs';
+import {mkdtemp,realpath,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {encryptToken} from '../lib/token-crypto.mjs';
 
 function fixture(parallel=true,{delay=30,failFolder=null,budget=12000,count=20,targetIndex=11,prefix='Archive',secondaryHang=false,connectTimeout=2000,pdf=false,uidsPerMatch=1,secondaryDelay=null,targetIndices=null}={}){
- const mailbox='owner@example.test',key='11'.repeat(32),folders=['INBOX',...Array.from({length:count-1},(_,i)=>`${prefix}/${String(i).padStart(4,'0')}`)],target=folders[targetIndex],targets=new Set(targetIndices?.map(i=>folders[i])??[target]),searches=[];let active=0,max=0,opened=0;
+ const mailbox='owner@example.test',key='11'.repeat(32),folders=['INBOX',...Array.from({length:count-1},(_,i)=>`${prefix}/${String(i).padStart(4,'0')}`)],target=folders[targetIndex],targets=new Set(targetIndices?.map(i=>folders[i])??[target]),searches=[],fetches=[];let active=0,max=0,opened=0;
  function connection(secondary=false){
-  let pending=null;return {usable:true,mailbox:{uidValidity:7,uidNext:8},async connect(){opened++;if(secondary&&secondaryHang)return new Promise(()=>{});},async list(){return folders.map(path=>({path}));},async getMailboxLock(path){this.path=path;this.mailbox={uidValidity:7,uidNext:8};return {release(){}};},async search(query){const path=this.path;searches.push({path,query});active++;max=Math.max(max,active);return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending=null;active--;if(path===failFolder)reject(Object.assign(Error('provider'),{code:'MAIL_SEARCH_PROVIDER_FAILED'}));else resolve(targets.has(path)?Array.from({length:uidsPerMatch},(_,i)=>7-i):[]);},secondary&&secondaryDelay!==null?secondaryDelay:delay);pending=()=>{clearTimeout(timer);pending=null;active--;reject(Error('closed'));};});},async fetchOne(uid){return {uid,envelope:{subject:'needle',messageId:'<own@example.test>'},internalDate:new Date('2026-11-04T00:00:00Z'),flags:new Set(),bodyStructure:pdf?{type:'multipart/mixed',childNodes:[{type:'application/pdf',disposition:'attachment',dispositionParameters:{filename:'test.pdf'}}]}:{type:'multipart/mixed',childNodes:[]}};},close(){this.usable=false;pending?.();}};
+  let pending=null;return {usable:true,mailbox:{uidValidity:7,uidNext:8},async connect(){opened++;if(secondary&&secondaryHang)return new Promise(()=>{});},async list(){return folders.map(path=>({path}));},async getMailboxLock(path){this.path=path;this.mailbox={uidValidity:7,uidNext:8};return {release(){}};},async search(query){const path=this.path;searches.push({path,query});active++;max=Math.max(max,active);return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending=null;active--;if(path===failFolder)reject(Object.assign(Error('provider'),{code:'MAIL_SEARCH_PROVIDER_FAILED'}));else resolve(targets.has(path)?Array.from({length:uidsPerMatch},(_,i)=>7-i):[]);},secondary&&secondaryDelay!==null?secondaryDelay:delay);pending=()=>{clearTimeout(timer);pending=null;active--;reject(Error('closed'));};});},async fetchOne(uid){fetches.push({path:this.path,uid});return {uid,envelope:{subject:'needle',messageId:'<own@example.test>'},internalDate:new Date('2026-11-04T00:00:00Z'),flags:new Set(),bodyStructure:pdf?{type:'multipart/mixed',childNodes:[{type:'application/pdf',disposition:'attachment',dispositionParameters:{filename:'test.pdf'}}]}:{type:'multipart/mixed',childNodes:[]}};},close(){this.usable=false;pending?.();}};
  }
  const credential={password_encrypted:encryptToken('synthetic',key),folders_json:'{}'},client={requiredCredential(owner){assert.equal(owner,mailbox);return credential;},async withImapPassword(owner,password,fn){assert.equal(owner,mailbox);assert.equal(password,'synthetic');const primary=connection();await primary.connect();return fn(primary);}};
  if(parallel)client.createImapPassword=(owner,password)=>{assert.equal(owner,mailbox);assert.equal(password,'synthetic');return connection(true);};
  const api=new MailApi({config:{dataDirectory:'/must-not-read-owned-store',mailboxes:[{address:mailbox,name:'Owner'}],tokenEncryptionKey:key},client,signatureProvider:null,parallelBudgetMs:budget,parallelConnectMs:connectTimeout});
- return {api,mailbox,searches,get max(){return max},get opened(){return opened},get active(){return active}};
+ return {api,mailbox,folders,searches,fetches,get max(){return max},get opened(){return opened},get active(){return active}};
 }
 
-test('two separate connections find same exact folder as serial with contiguous cursor',async()=>{
+test('two separate connections and serial finish the same full result page',async()=>{
  const serial=fixture(false),parallel=fixture(true),input={operation:'search',query:'needle',limit:20};
  const [a,b]=await Promise.all([serial.api.read(serial.mailbox,input),parallel.api.read(parallel.mailbox,input)]);
  assert.equal(a.messages.length,1);assert.equal(b.messages.length,1);assert.equal(a.messages[0].id,b.messages[0].id);
- assert.equal(a.complete,false);assert.equal(b.complete,false);assert.ok(a.cursor);assert.ok(b.cursor);
- assert.equal(serial.api.uncursor(a.cursor).index,parallel.api.uncursor(b.cursor).index);
+ assert.equal(a.complete,true);assert.equal(b.complete,true);assert.equal(a.cursor,null);assert.equal(b.cursor,null);
  assert.equal(parallel.max,2);assert.equal(parallel.opened,2);assert.equal(parallel.active,0);
  assert.deepEqual(b.coverage.parallelExecution,{attempted:true,mode:'parallel'});assert.equal(b.coverage.parallelTiming.connections,2);assert.ok(b.coverage.parallelTiming.selectMs>=0);assert.ok(b.coverage.parallelTiming.searchMs>=0);
 });
@@ -110,4 +113,35 @@ test('latest PDF page cannot consume beyond its metadata cap and retains folder 
 test('latest accumulation retains earlier match and reports later provider failure as partial',async()=>{
  const f=fixture(true,{count:5,targetIndex:0,failFolder:'Archive/0000',delay:2,pdf:true});const p=await f.api.read(f.mailbox,{operation:'search',query:'needle',freshness:'live_received_first',attachmentMime:'application/pdf',limit:10});
  assert.equal(p.messages.length,1);assert.equal(p.complete,false);assert.equal(p.coverage.errors[0].code,'MAIL_SEARCH_PROVIDER_FAILED');assert.equal(f.api.uncursor(p.cursor).index,1);assert.equal(f.active,0);
+});
+
+test('ordinary pages accumulate matching folders and resume exact unconsumed UID at the limit',async()=>{
+ for(const parallel of [false,true]){
+  const f=fixture(parallel,{delay:2,count:4,targetIndices:[0,1],uidsPerMatch:2});const request={operation:'search',query:'needle',limit:3};
+  const first=await f.api.read(f.mailbox,request);assert.equal(first.messages.length,3);assert.equal(first.complete,false);
+  const state=f.api.uncursor(first.cursor);assert.equal(state.index,1);assert.equal(state.beforeUid,7);
+  const second=await f.api.read(f.mailbox,{...request,cursor:first.cursor});assert.equal(second.messages.length,1);assert.equal(second.complete,true);
+  assert.equal(new Set([...first.messages,...second.messages].map(m=>m.id)).size,4);assert.equal(f.active,0);
+ }
+});
+test('limit1 remains first-match and never fetches speculative later metadata',async()=>{
+ const f=fixture(true,{delay:20,secondaryDelay:1,count:5,targetIndices:[0,1]});
+ const page=await f.api.read(f.mailbox,{operation:'search',query:'needle',limit:1});
+ assert.equal(page.messages.length,1);assert.equal(f.api.uncursor(page.cursor).index,1);assert.deepEqual(f.fetches,[{path:'INBOX',uid:7}]);assert.equal(f.active,0);
+});
+test('ordinary accumulation keeps earlier matches and exact cursor when the later folder times out',async()=>{
+ const f=fixture(true,{delay:2,secondaryDelay:100,budget:30,count:4,targetIndices:[0,1]});
+ const page=await f.api.read(f.mailbox,{operation:'search',query:'needle',limit:10});
+ assert.equal(page.messages.length,1);assert.equal(page.complete,false);assert.equal(page.coverage.stopped,'time_budget');assert.equal(f.api.uncursor(page.cursor).index,1);assert.equal(f.active,0);
+ f.api.parallelBudgetMs=2000;const resumed=await f.api.read(f.mailbox,{operation:'search',query:'needle',limit:10,cursor:page.cursor});
+ assert.equal(resumed.messages.length,1);assert.notEqual(resumed.messages[0].id,page.messages[0].id);assert.equal(resumed.complete,true);
+});
+test('warm locator priority remains serial until fully consumed then reuses the existing parallel pool',async t=>{
+ const f=fixture(true,{delay:2,count:5,targetIndices:[0,3],uidsPerMatch:2});const directory=await realpath(await mkdtemp(join(tmpdir(),'mail-priority-page-')));t.after(()=>rm(directory,{recursive:true,force:true}));f.api.config.dataDirectory=directory;
+ const query='subject:"needle ZX778899"',request={operation:'search',query,limit:1};
+ await new MailLocatorHints(directory,f.mailbox).remember(compileImapQuery(query),[{folder:'INBOX',id:'imap:SU5CT1g:7:7'}],f.folders);
+ const first=await f.api.read(f.mailbox,request);assert.equal(first.coverage.locatorFolderPriority.foldersPrioritized,1);assert.equal(f.api.uncursor(first.cursor).index,0);assert.equal(f.max,1);assert.equal(f.opened,1);
+ const second=await f.api.read(f.mailbox,{...request,cursor:first.cursor});assert.equal(f.api.uncursor(second.cursor).index,1);assert.equal(f.max,1);assert.equal(f.opened,2);
+ const third=await f.api.read(f.mailbox,{...request,limit:10,cursor:second.cursor});assert.equal(third.coverage.parallelExecution.mode,'parallel');assert.equal(f.max,2);assert.equal(third.messages.length,2);assert.equal(third.complete,true);
+ assert.equal(f.searches.filter(x=>x.path==='INBOX').length,2);assert.equal(new Set([...first.messages,...second.messages,...third.messages].map(m=>m.id)).size,4);assert.equal(f.active,0);
 });

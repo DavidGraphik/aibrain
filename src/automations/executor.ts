@@ -33,6 +33,7 @@ import { scheduledTurnOptions } from "@/automations/execution-context";
 import { automationResultNeedsReview } from "@/automations/result-review";
 import { WorkbenchNotFoundError } from "@/workbench/errors";
 import { automationTaskThreadId } from "./run-identities";
+import { userUiLocaleForInstallation } from "@/i18n/server";
 import { capacityContinuationKey } from "@/automations/capacity-continuation";
 
 function stableUuid(value: string) {
@@ -202,7 +203,7 @@ async function executeTurn(input: ScheduledExecutionInput, host: Awaited<ReturnT
     userMessageId,
     assistantMessageId,
     message: prompt,
-    preferences: { tone: host ? "direct" : "balanced", language: "es", showActivity: true },
+    preferences: { tone: host ? "direct" : "balanced", language: await userUiLocaleForInstallation(input.installation, input.session), showActivity: true },
     options: scheduledTurnOptions({
       skillsAuthorized: !host && input.task.executionContext.inheritAuthorizedSkills && featurePolicy.skills,
       connectorMentions,

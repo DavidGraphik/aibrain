@@ -6,6 +6,7 @@ import { DEFAULT_AUTOMATION_EXECUTION_CONTEXT, type AutomationTask } from "@/aut
 vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
+  userLocale: vi.fn(),
   hostExecution: vi.fn(),
   effectAuthorization: vi.fn(),
   runState: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   messages: [] as Array<Record<string, unknown>>,
 }));
 
+vi.mock("@/i18n/server", () => ({userUiLocaleForInstallation:mocks.userLocale}));
 vi.mock("@/automations/run-state", () => ({createAutomationRunState:mocks.runState}));
 vi.mock("@/automations/authorized-effects", () => ({createAutomationEffectAuthorization:mocks.effectAuthorization}));
 vi.mock("@/automations/host-analysis/execution", () => ({ hostExecution: mocks.hostExecution }));
@@ -107,6 +109,7 @@ beforeEach(() => {
   mocks.archiveGenerated.mockResolvedValue(true);
   mocks.effectAuthorization.mockReset();
   mocks.effectAuthorization.mockResolvedValue(undefined);
+  mocks.userLocale.mockReset().mockResolvedValue("es");
   mocks.runWorkerCodexTurn.mockReset();
   mocks.finishThreadTurn.mockClear();
   mocks.getThread.mockReset();
@@ -127,6 +130,17 @@ beforeEach(() => {
 });
 
 describe("scheduled automation execution", () => {
+  it("does not run the model when effective language records are malformed", async () => {
+    mocks.userLocale.mockRejectedValue(Error("Invalid language record"));
+    await expect(executeScheduledTurn({installation, session, task, runKey: `${task.id}:invalid-locale`})).rejects.toThrow("Invalid language record");
+    expect(mocks.runWorkerCodexTurn).not.toHaveBeenCalled();
+  });
+  it.each(["ca", "es", "en"])("uses the effective employee/installation language %s", async locale => {
+    mocks.userLocale.mockResolvedValue(locale);
+    await executeScheduledTurn({installation, session, task, runKey: `${task.id}:locale:${locale}`});
+    expect(mocks.userLocale).toHaveBeenCalledWith(installation, session);
+    expect(mocks.runWorkerCodexTurn.mock.calls[0][0].preferences.language).toBe(locale);
+  });
   it("runs without a browser session with live web, current skills and authorized @ connectors", async () => {
     await expect(executeScheduledTurn({
       installation,

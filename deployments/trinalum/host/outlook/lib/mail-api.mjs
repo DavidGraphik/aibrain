@@ -372,6 +372,7 @@ export class MailApi {
    }
    if(sentPlan!==undefined&&(!validMailLocatorPlan(sentPlan,digest(baseFolders),baseFolders.length)||sentPlan.indices.length>1))throw fail('Sent ordering plan changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');
    const locatorFolders=locatorPlan?.indices.map(index=>baseFolders[index])??[],sentFolders=sentPlan?.indices.map(index=>baseFolders[index])??[],initialPriority=[...new Set([...locatorFolders,...sentFolders])],initialSet=new Set(initialPriority),folders=[...initialPriority,...baseFolders.filter(path=>!initialSet.has(path))],priority=[...new Set([...initialPriority,...basePriority])];
+   const priorityBoundary=priority.length?Math.max(...priority.map(path=>folders.indexOf(path)))+1:0;
    const contextBoundary=contextFolders.length?Math.max(...contextFolders.map(path=>folders.indexOf(path)))+1:0;
    if(folder&&!folders.length)throw fail('Folder not found','MAIL_FOLDER_NOT_FOUND');const catalog=digest(folders);if(old&&old.catalog!==catalog)throw fail('Mailbox folders changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');
    const state=old??{binding,catalog,index:0,beforeUid:null,uidValidity:null,startedAt:new Date(started).toISOString(),searchPlan,folderOrderVersion:'v2',...(locatorPlan?{locatorPlan}:{}),...(sentPlan?{sentPlan}:{})};integer(state.index,'cursor index',0,folders.length);
@@ -395,19 +396,19 @@ export class MailApi {
     }
    }
    let parallelUsed=false,parallelExecution=null;
-   if(parallelCapable&&!locatorFolders.length&&folders.length-state.index>=2&&(!contextFolders.length||state.index+1<contextBoundary)&&this.now()<deadline-1000){
+   if(parallelCapable&&(!locatorFolders.length||state.index>=priorityBoundary)&&folders.length-state.index>=2&&(!contextFolders.length||state.index>=priorityBoundary||state.index+1<contextBoundary)&&this.now()<deadline-1000){
     const credential=this.client.requiredCredential(mailbox),password=decryptToken(credential.password_encrypted,this.config.tokenEncryptionKey);let other,connectTimer,parallelStarted=false;parallelExecution={attempted:true,mode:'serial_fallback',reason:'connection_unavailable'};
     try{
      other=this.client.createImapPassword(mailbox,password);
      await Promise.race([other.connect(),new Promise((_,reject)=>{connectTimer=setTimeout(()=>{try{other.close();}catch{}reject(fail('Second mail connection timed out','MAIL_PARALLEL_CONNECT_TIMEOUT'));},Math.max(1,Math.min(this.parallelConnectMs,deadline-this.now())));})]);
      if(connectTimer)clearTimeout(connectTimer);
-     const initial=state.index,initialBefore=state.beforeUid,initialValidity=state.uidValidity,clients=[imap,other],timing={selectMs:0,searchMs:0};let completedSearches=0;
-     const emptyPageLimit=freshReceived&&attachmentMime?120:30,parallelLimit=contextFolders.length?Math.min(freshReceived&&attachmentMime?120:20,contextBoundary-initial):emptyPageLimit,primaryGates=new Map();
-     parallelStarted=true;const accumulateLatest=Boolean(freshReceived&&attachmentMime);const page=await orderedFolderPairs({folders,start:initial,maxFolders:parallelLimit,continueOnMatches:accumulateLatest,maxMessages:limit,canContinue:()=>!attachmentMime||metadataChecked<metadataLimit,timeoutMs:Math.max(1,Math.min(this.parallelBudgetMs,deadline-this.now())),probe:async({folder:path,index,slot,signal})=>{
+     const initial=state.index,initialBefore=state.beforeUid,initialValidity=state.uidValidity,clients=[imap,other],timing={selectMs:0,searchMs:0};let completedSearches=0,pageMessages=0;
+     const emptyPageLimit=freshReceived&&attachmentMime?120:30,parallelLimit=contextFolders.length&&state.index<contextBoundary?Math.min(freshReceived&&attachmentMime?120:20,contextBoundary-initial):emptyPageLimit,primaryGates=new Map();
+     parallelStarted=true;const accumulateLatest=limit>1||Boolean(freshReceived&&attachmentMime);const page=await orderedFolderPairs({folders,start:initial,maxFolders:parallelLimit,continueOnMatches:accumulateLatest,maxMessages:limit,canContinue:()=>!attachmentMime||metadataChecked<metadataLimit,timeoutMs:Math.max(1,Math.min(this.parallelBudgetMs,deadline-this.now())),probe:async({folder:path,index,slot,signal})=>{
       const client=clients[slot],cancel=()=>{try{client.close();}catch{}};signal.addEventListener('abort',cancel,{once:true});let lock,settlePrimary;
       // The secondary's fetch budget waits for a result from the earlier
       // folder, including an authoritative empty STATUS/cache skip.
-      if(attachmentMime&&slot===0){let resolve;const ready=new Promise(r=>{resolve=r;});settlePrimary=resolve;primaryGates.set(index,ready);}
+      if(slot===0){let resolve;const ready=new Promise(r=>{resolve=r;});settlePrimary=resolve;primaryGates.set(index,ready);}
       const status=statusByFolder.get(path),firstContinued=index===initial&&initialBefore!==null;
       if(status&&index===initial&&initialValidity&&initialValidity!==status.uidValidity){settlePrimary?.(false);signal.removeEventListener('abort',cancel);throw fail('Folder generation changed; restart search','MAIL_SEARCH_CURSOR_EXPIRED');}
       if(!firstContinued&&status&&(status.messages==='0'||cachedEmpty.has(path))){settlePrimary?.(true);signal.removeEventListener('abort',cancel);return {messages:[],exhausted:true,beforeUid:null,uidValidity:status.uidValidity,statusSkipped:status.messages==='0'?'empty':'cached'};}
@@ -418,18 +419,18 @@ export class MailApi {
        let before=index===initial?initialBefore:null;const upper=before?before-1:Number(client.mailbox.uidNext)-1,bounded=scansMessageBodies(criteria)&&Number.isSafeInteger(upper)&&upper>0,lower=bounded?Math.max(1,upper-SEARCH_UID_WINDOW+1):1;
        const search={...criteria,...(bounded?{uid:`${lower}:${upper}`}:(before?{uid:`1:${before-1}`}:{}) )};t=performance.now();const found=before===1?[]:await client.search(search,{uid:true});timing.searchMs+=performance.now()-t;if(!Array.isArray(found))throw fail('Provider rejected search','MAIL_SEARCH_PROVIDER_FAILED');if(before!==1)completedSearches++;
        const uids=found.map(Number).filter(Number.isSafeInteger).filter(uid=>uid>0&&(!before||uid<before)).sort((a,b)=>b-a),foundMessages=[];let missingMetadata=false,anyMimeMatch=false;
-       if(attachmentMime&&slot===1){
+       if(slot===1){
         const primary=primaryGates.get(index-1);if(!primary)throw fail('Parallel ordering state missing','MAIL_SEARCH_PROVIDER_FAILED');let onAbort,proceed=false;
         try{if(!signal.aborted){const aborted=new Promise(resolve=>{onAbort=()=>resolve(false);signal.addEventListener('abort',onAbort,{once:true});});proceed=await Promise.race([primary,aborted]);}}
         finally{if(onAbort)signal.removeEventListener('abort',onAbort);}
         if(!proceed||signal.aborted)throw fail('Speculative folder cancelled','MAIL_SEARCH_PROVIDER_FAILED');
        }
        for(const uid of uids){
-        if(foundMessages.length>=limit||attachmentMime&&metadataChecked>=metadataLimit)break;
+        if(pageMessages>=limit||attachmentMime&&metadataChecked>=metadataLimit)break;
         const item=await client.fetchOne(uid,{uid:true,envelope:true,flags:true,internalDate:true,size:true,bodyStructure:true},{uid:true});if(attachmentMime)metadataChecked++;before=uid;if(!item){missingMetadata=true;continue;}
         const message=searchEnvelopeMessage(item,path,validity,uid),mimeMatch=!attachmentMime||message.attachments.some(a=>a.contentType?.toLowerCase()===attachmentMime);
         if(attachmentMime&&!mimeMatch&&(!message.attachmentMetadataAvailable||message.attachmentMetadataTruncated))throw fail('Attachment metadata unavailable; cannot attest this MIME filter','MAIL_ATTACHMENT_METADATA_UNAVAILABLE');
-        if(mimeMatch)anyMimeMatch=true;if(!mimeMatch||hasOwnedSearchKey(state.seenOwnedKeys,item.envelope?.messageId||ref(path,validity,uid)))continue;foundMessages.push(message);
+        if(mimeMatch)anyMimeMatch=true;if(!mimeMatch||hasOwnedSearchKey(state.seenOwnedKeys,item.envelope?.messageId||ref(path,validity,uid)))continue;foundMessages.push(message);pageMessages++;
        }
        let exhausted=false;if(!uids.length||before===uids.at(-1)){if(bounded&&lower>1)before=lower;else{exhausted=true;before=null;}}
        settlePrimary?.(exhausted&&(!foundMessages.length||accumulateLatest)&&(!attachmentMime||metadataChecked<metadataLimit));const cacheCandidate=!firstContinued&&exhausted&&!foundMessages.length&&!missingMetadata&&!anyMimeMatch&&status&&status.uidValidity===validity&&status.uidNext===nextBefore?{folder:path,status}:null;return {messages:foundMessages,exhausted,beforeUid:before,uidValidity:validity,...(cacheCandidate?{cacheCandidate}:{})};
@@ -467,9 +468,9 @@ export class MailApi {
       if(bounded&&lowerUid>1){state.beforeUid=lowerUid;state.uidValidity=validity;}
       else{if(!startedBeforeUid&&!missingMetadata&&!anyMimeMatch&&status&&status.uidValidity===validity&&status.uidNext===nextBefore)emptyCandidates.push({folder:path,status});state.index++;state.beforeUid=null;state.uidValidity=null;}
      }
-     if(messages.length){stopped='matches_found';break;}
+     if(messages.length>=limit){stopped='matches_found';break;}
      if(attachmentMime&&metadataChecked>=metadataLimit){stopped='attachment_metadata_page_limit';break;}
-     if(contextFolders.length&&state.index>=contextBoundary){stopped='context_exact_empty';break;}
+     if(!messages.length&&contextFolders.length&&state.index>=contextBoundary){stopped='context_exact_empty';break;}
     }catch(error){if(error.code==='MAIL_SEARCH_CURSOR_EXPIRED')throw error;errors.push({folder:path,code:error.code??'MAIL_SEARCH_FOLDER_FAILED'});stopped='folder_error';break;}finally{lock?.release();}
    }
    // An empty exact reference search is not proof that the invoice is absent

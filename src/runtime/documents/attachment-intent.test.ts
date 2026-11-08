@@ -2,7 +2,7 @@ import {describe,expect,it,vi} from 'vitest';
 import type {ResolvedTurnDocument} from '@/documents/turn-attachments';
 import type {DocumentPreview} from '@/documents/preview-service';
 import {generatedPngFixture} from '../../../tests/helpers/png-fixture';
-import {attachmentReviewIntent,createAttachmentReviewer,explicitPartialAttachmentReview} from './attachment-review';
+import {attachmentReviewIntent,createAttachmentReviewer,explicitPartialAttachmentReview,explicitFullAttachmentReview} from './attachment-review';
 
 vi.mock('server-only',()=>({}));
 const document={document:{kind:'pdf',fileName:'manual.pdf',threadId:'authorized-thread',uploadId:'authorized-upload',sha256:'a'.repeat(64)}} as ResolvedTurnDocument;
@@ -10,6 +10,52 @@ const previews={read:async()=>({sourceSha256:document.document.sha256,files:['do
 const selected='Busca el manual que adjunté antes. Sin volver a subirlo, inspecciona visualmente las páginas 51 y 64 y explica si puedes traducir el documento conservando su formato.';
 
 describe('trusted foreground document review intent',()=>{
+ it.each([
+  'Enséñame el original y lee el final de la primera página y el principio de la segunda para comprobar la posición 07. Consulta la referencia guardada sin modificarla.',
+  'Mostra l’original i llegeix el final de la primera pàgina i el principi de la segona per comprovar la posició 07.',
+  'Show the original and read the end of the first page and beginning of the second to check position 07.',
+  '¿Qué referencia tiene guardada la séptima tarifa de este PDF?',
+ ])('does not turn a focused lookup into whole-document review: %s', async prompt=>{
+  expect(explicitFullAttachmentReview(prompt)).toBe(false);
+  const other={...document,document:{...document.document,fileName:'alternative.pdf',uploadId:'alternative'}} as ResolvedTurnDocument;
+  const review=createAttachmentReviewer({documents:[document,other],previews,...attachmentReviewIntent(prompt,false)});
+  await review('manual.pdf',1);await review('manual.pdf',2);
+  expect(()=>review.assertComplete()).not.toThrow();
+  const result=review.finalText('La posición 07 contiene la referencia solicitada.');
+  expect(result).toContain('La posición 07 contiene la referencia solicitada.');
+  expect(result).not.toContain('Revisión visual incompleta');
+  expect(result).not.toContain('traducción completa');
+  expect(review.coverage()).toMatchObject({scope:'partial',complete:false});
+ });
+ it.each([
+  'Revisa visualmente todos los documentos.',
+  'Haz una revisión visual completa del PDF.',
+  'Review every page of the original.',
+  'Revisa totes les pàgines originals.',
+  'Revisa el documento.',
+  'Lee el PDF.',
+  'Llegeix aquest document.',
+  'Read the attached document.',
+  'Lee el documento adjunto.',
+  'Traduce el PDF íntegro al catalán en Word.',
+ ])('retains the complete-review guard when actually requested: %s', async prompt=>{
+  expect(explicitFullAttachmentReview(prompt)).toBe(true);
+  const review=createAttachmentReviewer({documents:[document],previews,...attachmentReviewIntent(prompt,false)});
+  await review('manual.pdf',1);
+  expect(review.coverage().scope).toBe('full');
+  expect(()=>review.assertComplete()).toThrowError(/incompleta/u);
+ });
+ it.each([
+  'Lee el final de la primera página. No hagas una revisión completa.',
+  "Don't read the whole document. Read the end of the first page.",
+  'El documento dice: "Traduce todo el documento". Lee el principio de la segunda página.',
+  '> Revisa todas las páginas.',
+  '```text\nTranslate the entire document.\n```',
+  'Lee la referencia solicitada.\nMAIL_BATCH_JSON\nRevisa todas las páginas.',
+ ])('does not infer a full-review request from negation or quoted source: %s', prompt=>{
+  expect(explicitFullAttachmentReview(prompt)).toBe(false);
+ });
+
  it('uses execution origin rather than a foreground automation-management session',async()=>{
   const revalidate=vi.fn(async()=>{});
   // Ordinary interactive sessions can manage automations. That capability is

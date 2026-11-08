@@ -32,7 +32,7 @@ test('owned sender must be an exact mandatory positive clause, preserving Boolea
 
 test('cold own-sender lookup starts in authenticated Sent with unmodified criteria and all47 folders retained',async t=>{
  const f=fixture(),before=rankMailSearchFolders(compileImapQuery(query),f.folders.map(x=>x.path));assert.equal(before.indexOf('Sent'),40);
- const page=await f.api.read(mailbox,{operation:'search',query,limit:100});
+ const page=await f.api.read(mailbox,{operation:'search',query,limit:1});
  assert.equal(f.searched.length,1);assert.equal(f.searched[0].path,'Sent');assert.deepEqual(f.searched[0].criteria,compileImapQuery(query));assert.equal(page.messages[0].id,ref('Sent'));
  assert.equal(page.complete,false);assert.equal(page.coverage.totalFolders,47);assert.equal(page.coverage.completedFolders,1);assert.equal(page.coverage.ownedSnapshots.readSnapshots,0);
  assert.deepEqual(page.coverage.ownedSenderFolderPriority,{source:'current_authenticated_sent_folder',prioritizedFolder:'Sent',liveQueryUnchanged:true,remainingFoldersPreserved:true});
@@ -47,16 +47,16 @@ test('moved sent originals remain reachable through the same cursor without dupl
 });
 
 test('signed Sent ordering is frozen across new human context and changed configuration/special-use metadata',async()=>{
- const f=fixture(),first=await f.api.read(mailbox,{operation:'search',query}),before=f.api.uncursor(first.cursor);assert.equal(before.index,1);
+ const f=fixture(),first=await f.api.read(mailbox,{operation:'search',query,limit:1}),before=f.api.uncursor(first.cursor);assert.equal(before.index,1);
  f.folders.find(x=>x.path==='Sent').specialUse=null;f.folders.find(x=>x.path==='Z-05').specialUse='\\Sent';f.credential.folders_json=JSON.stringify({sent:'Z-05'});f.matches.set('Z-05',[8]);f.searched.length=0;
  const next=await f.api.read(mailbox,{operation:'search',query,cursor:first.cursor},{searchContext:{humanMessage:'continúa',sourceMessageId:'new-human'}}),after=f.api.uncursor(next.cursor);
  assert.deepEqual(after.sentPlan,before.sentPlan);assert.deepEqual(after.seenKeys,before.seenKeys);assert.equal(after.index,31);assert.equal(f.searched[0].path,'INBOX');assert.equal(next.messages.length,0);
- f.searched.length=0;const fresh=await f.api.read(mailbox,{operation:'search',query});assert.equal(f.searched[0].path,'Z-05');assert.equal(fresh.messages[0].id,ref('Z-05',8));
+ f.searched.length=0;const fresh=await f.api.read(mailbox,{operation:'search',query,limit:1});assert.equal(f.searched[0].path,'Z-05');assert.equal(fresh.messages[0].id,ref('Z-05',8));
 });
 
 test('legacy cursors without a Sent plan keep their exact old catalog, index and remaining work',async()=>{
- const f=fixture(),first=await f.api.read(mailbox,{operation:'search',query}),legacy=f.api.uncursor(first.cursor);delete legacy.sentPlan;delete legacy.seenKeys;legacy.index=30;legacy.catalog=digest(rankMailSearchFolders(compileImapQuery(query),f.folders.map(x=>x.path)));f.searched.length=0;
- const next=await f.api.read(mailbox,{operation:'search',query,cursor:f.api.cursor(legacy)});assert.equal(f.searched[0].path,'A-29');assert.equal(f.searched.length,11);assert.equal(next.messages[0].folder,'Sent');assert.equal(f.api.uncursor(next.cursor).index,41);assert.equal(f.api.uncursor(next.cursor).sentPlan,undefined);assert.equal(next.coverage.ownedSenderFolderPriority,undefined);
+ const f=fixture(),first=await f.api.read(mailbox,{operation:'search',query,limit:1}),legacy=f.api.uncursor(first.cursor);delete legacy.sentPlan;delete legacy.seenKeys;legacy.index=30;legacy.catalog=digest(rankMailSearchFolders(compileImapQuery(query),f.folders.map(x=>x.path)));f.searched.length=0;
+ const next=await f.api.read(mailbox,{operation:'search',query,limit:1,cursor:f.api.cursor(legacy)});assert.equal(f.searched[0].path,'A-29');assert.equal(f.searched.length,11);assert.equal(next.messages[0].folder,'Sent');assert.equal(f.api.uncursor(next.cursor).index,41);assert.equal(f.api.uncursor(next.cursor).sentPlan,undefined);assert.equal(next.coverage.ownedSenderFolderPriority,undefined);
 });
 
 test('explicit folders and latest received retain their existing live plan; foreign or ambiguous senders do not gain priority',async()=>{
